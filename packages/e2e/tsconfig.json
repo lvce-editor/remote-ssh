@@ -1,0 +1,15 @@
+{
+  "compilerOptions": {
+    "target": "esnext",
+    "lib": ["esnext", "WebWorker"],
+    "module": "NodeNext",
+    "types": [],
+    "moduleResolution": "nodenext",
+    "rootDir": ".",
+    "skipLibCheck": true,
+    "noEmit": true,
+    "isolatedModules": true,
+    "strict": true
+  },
+  "include": ["src"]
+}

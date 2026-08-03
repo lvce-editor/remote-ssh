@@ -1,0 +1,11 @@
+{
+  "name": "build",
+  "version": "0.0.0-dev",
+  "description": "Build scripts for builtin.remote-ssh",
+  "type": "module",
+  "license": "MIT",
+  "devDependencies": {
+    "@lvce-editor/package-extension": "^3.7.0",
+    "esbuild": "^0.28.1"
+  }
+}

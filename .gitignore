@@ -1,0 +1,11 @@
+.tmp
+.vscode
+coverage
+dist
+dist2
+extension.tar.br
+*.log
+*.tsbuildinfo
+node_modules
+packages/*/node_modules
+packages/extension/dist
