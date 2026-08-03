@@ -1,0 +1,17 @@
+{
+  "name": "e2e",
+  "version": "0.0.0-dev",
+  "description": "End-to-end tests for the Remote SSH extension",
+  "scripts": {
+    "build:extension": "node ../build/src/build-extension.js",
+    "e2e": "npm run build:extension && node ./node_modules/@lvce-editor/test-with-playwright/bin/test-with-playwright.js --only-extension=../extension --test-path=.",
+    "e2e:headless": "npm run build:extension && node ./node_modules/@lvce-editor/test-with-playwright/bin/test-with-playwright.js --only-extension=../extension --test-path=. --headless",
+    "test": "node --test"
+  },
+  "type": "module",
+  "author": "Lvce Editor",
+  "license": "MIT",
+  "devDependencies": {
+    "@lvce-editor/test-with-playwright": "^22.19.0"
+  }
+}

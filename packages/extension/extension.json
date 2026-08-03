@@ -1,0 +1,22 @@
+{
+  "id": "builtin.remote-ssh",
+  "name": "Remote SSH",
+  "description": "Mock Remote SSH workspace provider",
+  "repository": "https://github.com/lvce-editor/remote-ssh",
+  "browser": "dist/remoteSshMain.js",
+  "contentSecurityPolicy": ["default-src 'none'", "script-src 'self'"],
+  "isolated": true,
+  "categories": ["Other"],
+  "activation": ["onCommand:remote-ssh.connect", "onFileSystem:remote-ssh"],
+  "commands": [
+    {
+      "id": "remote-ssh.connect",
+      "label": "SSH: Connect"
+    }
+  ],
+  "fileSystemProviders": [
+    {
+      "id": "remote-ssh"
+    }
+  ]
+}
