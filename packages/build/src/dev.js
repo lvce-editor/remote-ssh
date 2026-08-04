@@ -15,8 +15,23 @@ const context = await esbuild.context({
   target: 'esnext',
 })
 
+const nodeContext = await esbuild.context({
+  bundle: true,
+  entryPoints: [
+    path.join(root, 'packages', 'node', 'src', 'remoteSshClient.ts'),
+  ],
+  external: ['electron', 'node:*'],
+  format: 'esm',
+  outfile: path.join(extension, 'dist', 'remoteSshClient.js'),
+  platform: 'node',
+  sourcemap: true,
+  target: 'node22',
+})
+
 await context.rebuild()
 await context.watch()
+await nodeContext.rebuild()
+await nodeContext.watch()
 
 const server = spawn(
   process.execPath,
@@ -45,6 +60,7 @@ const server = spawn(
 const stop = async () => {
   server.kill()
   await context.dispose()
+  await nodeContext.dispose()
 }
 
 process.on('SIGINT', async () => {
@@ -59,5 +75,6 @@ process.on('SIGTERM', async () => {
 
 server.on('exit', async (code) => {
   await context.dispose()
+  await nodeContext.dispose()
   process.exit(code ?? 0)
 })

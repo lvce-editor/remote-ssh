@@ -1,7 +1,7 @@
 {
   "name": "builtin.remote-ssh",
   "version": "0.0.0-dev",
-  "description": "Mock Remote SSH extension for Lvce Editor",
+  "description": "Remote SSH extension for Lvce Editor",
   "main": "dist/remoteSshMain.js",
   "scripts": {
     "test": "node --unhandled-rejections=warn --experimental-vm-modules ../../node_modules/jest/bin/jest.js --detectOpenHandles --forceExit"
@@ -27,7 +27,7 @@
     }
   },
   "devDependencies": {
-    "@lvce-editor/api": "^8.82.0",
+    "@lvce-editor/api": "^8.83.1",
     "jest": "^30.4.2",
     "ts-jest": "^29.4.11"
   }

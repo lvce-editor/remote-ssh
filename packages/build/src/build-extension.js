@@ -4,20 +4,31 @@ import path from 'node:path'
 import { root } from './root.js'
 
 const extension = path.join(root, 'packages', 'extension')
-const entryPoint = path.join(extension, 'src', 'remoteSshMain.ts')
 const outdir = path.join(extension, 'dist')
-const outfile = path.join(outdir, 'remoteSshMain.js')
 
 fs.rmSync(outdir, { force: true, recursive: true })
 fs.mkdirSync(outdir, { recursive: true })
 
 await esbuild.build({
   bundle: true,
-  entryPoints: [entryPoint],
+  entryPoints: [path.join(extension, 'src', 'remoteSshMain.ts')],
   external: ['electron', 'node:*'],
   format: 'esm',
-  outfile,
+  outfile: path.join(outdir, 'remoteSshMain.js'),
   platform: 'browser',
   sourcemap: true,
   target: 'esnext',
+})
+
+await esbuild.build({
+  bundle: true,
+  entryPoints: [
+    path.join(root, 'packages', 'node', 'src', 'remoteSshClient.ts'),
+  ],
+  external: ['electron', 'node:*'],
+  format: 'esm',
+  outfile: path.join(outdir, 'remoteSshClient.js'),
+  platform: 'node',
+  sourcemap: true,
+  target: 'node22',
 })
