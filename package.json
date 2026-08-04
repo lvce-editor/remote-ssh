@@ -1,7 +1,7 @@
 {
   "name": "builtin.remote-ssh-monorepo",
   "version": "0.0.0-dev",
-  "description": "Mock Remote SSH extension monorepo for Lvce Editor",
+  "description": "Remote SSH extension monorepo for Lvce Editor",
   "type": "module",
   "scripts": {
     "build": "node packages/build/src/build.js",
@@ -20,9 +20,9 @@
   "license": "MIT",
   "devDependencies": {
     "@lerna/legacy-package-management": "^8.2.4",
-    "@lvce-editor/api": "^8.82.0",
+    "@lvce-editor/api": "^8.83.1",
     "@lvce-editor/eslint-config": "^18.1.0",
-    "@lvce-editor/server": "0.97.9",
+    "@lvce-editor/server": "0.97.25",
     "@types/node": "^26.0.1",
     "eslint": "^10.7.0",
     "jest": "^30.4.2",

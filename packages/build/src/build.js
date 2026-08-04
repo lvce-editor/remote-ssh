@@ -26,6 +26,18 @@ await esbuild.build({
   target: 'esnext',
 })
 
+await esbuild.build({
+  bundle: true,
+  entryPoints: [
+    path.join(root, 'packages', 'node', 'src', 'remoteSshClient.ts'),
+  ],
+  external: ['electron', 'node:*'],
+  format: 'esm',
+  outfile: path.join(bundleDirectory, 'remoteSshClient.js'),
+  platform: 'node',
+  target: 'node22',
+})
+
 await packageExtension({
   highestCompression: true,
   inDir: outdir,

@@ -1,0 +1,12 @@
+{
+  "name": "builtin.remote-ssh-node",
+  "version": "0.0.0-dev",
+  "description": "Node helpers for the built-in Remote SSH extension",
+  "type": "module",
+  "main": "dist/remoteSshClient.js",
+  "scripts": {
+    "test": "node --test \"test/**/*.test.ts\""
+  },
+  "author": "Lvce Editor",
+  "license": "MIT"
+}
