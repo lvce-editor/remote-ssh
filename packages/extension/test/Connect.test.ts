@@ -123,3 +123,26 @@ test('canceling configured host selection leaves workspace unchanged', async () 
   expect(connectRemote).not.toHaveBeenCalled()
   expect(setUri).not.toHaveBeenCalled()
 })
+
+test('falls back to free-form input when configured hosts cannot be read', async () => {
+  const showInput = jest.fn(async (_options: unknown) => 'user@example.com')
+  const showPick = jest.fn(async (_options: unknown) => undefined)
+  const setUri = jest.fn(async (_uri: string) => {})
+  const connectRemote = jest.fn(async (_uri: string) => {})
+  const getHosts = jest.fn(async (): Promise<readonly string[]> => {
+    throw new Error('RPC unavailable')
+  })
+
+  await connect(
+    showInput,
+    setUri,
+    connectRemote,
+    (callback) => callback(),
+    getHosts,
+    showPick,
+  )
+
+  expect(showInput).toHaveBeenCalledWith({ placeholder })
+  expect(showPick).not.toHaveBeenCalled()
+  expect(connectRemote).toHaveBeenCalledWith('remote-ssh://user@example.com/')
+})

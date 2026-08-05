@@ -1,4 +1,5 @@
 import { deepStrictEqual, strictEqual } from 'node:assert/strict'
+import { join } from 'node:path'
 import { test } from 'node:test'
 import {
   getSshConfigHosts,
@@ -51,7 +52,7 @@ void test('reads the config from the current user home directory', async () => {
   }, '/users/test-user')
 
   deepStrictEqual(hosts, ['work'])
-  strictEqual(receivedPath, '/users/test-user/.ssh/config')
+  strictEqual(receivedPath, join('/users/test-user', '.ssh', 'config'))
   strictEqual(receivedEncoding, 'utf8')
 })
 

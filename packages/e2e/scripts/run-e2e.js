@@ -256,10 +256,8 @@ const waitForSavedFile = async (filePath, expectedContent) => {
 const promptPlaceholder =
   'Enter SSH host (for example user@example.com or ssh -p 2222 user@example.com)'
 
-const openPromptScenario = async (page, port, scenario) => {
-  await page.goto(
-    `http://localhost:${port}/tests/remote-ssh.connect.html?scenario=${scenario}`,
-  )
+const openPromptScenario = async (page, port) => {
+  await page.goto(`http://localhost:${port}/tests/remote-ssh.connect.html`)
   const quickInput = page.locator('.QuickPick input')
   await expect(quickInput).toBeVisible({ timeout: 30_000 })
   await expect(quickInput).toHaveAttribute('placeholder', promptPlaceholder, {
@@ -350,37 +348,33 @@ const runRealSshTest = async () => {
     page.on('pageerror', (error) => {
       console.error(`[browser] ${error}`)
     })
-    await openPromptScenario(page, port, 'configured-hosts')
+    await openPromptScenario(page, port)
     await expectConfiguredHosts(page, ['work', 'staging', 'wildcard-safe'])
 
     await writeFile(sshConfigPath, 'Host "unterminated\n')
-    await openPromptScenario(page, port, 'invalid-config')
+    await openPromptScenario(page, port)
     await expectTextInputFallback(page)
 
     await writeFile(sshConfigPath, 'Host *\nHost *.example.com\n')
-    await openPromptScenario(page, port, 'wildcard-only-config')
+    await openPromptScenario(page, port)
     await expectTextInputFallback(page)
 
     await writeFile(sshConfigPath, '')
-    await openPromptScenario(page, port, 'empty-config')
+    await openPromptScenario(page, port)
     await expectTextInputFallback(page)
 
     await writeFile(sshConfigPath, 'Host unreadable\n')
     await chmod(sshConfigPath, 0o000)
-    await openPromptScenario(page, port, 'unreadable-config')
+    await openPromptScenario(page, port)
     await expectTextInputFallback(page)
     await chmod(sshConfigPath, 0o600)
 
     await rm(sshConfigPath)
-    await openPromptScenario(page, port, 'missing-config')
+    await openPromptScenario(page, port)
     await expectTextInputFallback(page)
 
     await writeFile(sshConfigPath, 'Host work staging\n')
-    const quickInput = await openPromptScenario(
-      page,
-      port,
-      'free-form-with-hosts',
-    )
+    const quickInput = await openPromptScenario(page, port)
     await expectConfiguredHosts(page, ['work', 'staging'])
     await quickInput.fill(sshServer.fixture.target)
     await page.keyboard.press('Enter')
@@ -396,7 +390,7 @@ const runRealSshTest = async () => {
     await expect(editorInput).toBeVisible({ timeout: 30_000 })
     await editorInput.focus()
     await expect(editorInput).toBeFocused()
-    await page.keyboard.press('End')
+    await editorInput.press('Control+End')
     await page.keyboard.type(
       sshServer.fixture.updatedContent.slice(
         sshServer.fixture.initialContent.length,

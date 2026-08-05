@@ -39,7 +39,12 @@ const getConnectionTarget = async (
   showPick: ShowQuickPick,
   getHosts: GetConfiguredHosts,
 ): Promise<string | undefined> => {
-  const hosts = await getHosts()
+  let hosts: readonly string[]
+  try {
+    hosts = await getHosts()
+  } catch {
+    return showInput({ placeholder })
+  }
   if (hosts.length === 0) {
     return showInput({ placeholder })
   }
