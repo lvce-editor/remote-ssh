@@ -109,8 +109,9 @@ export const toRemoteSshUri = (value: string): string => {
   if (url.port) {
     assertPort(url.port)
   }
-  if (url.hostname.startsWith('-')) {
-    throw new Error('SSH host must not start with a hyphen')
+  const username = decodeURIComponent(url.username)
+  if (username.startsWith('-') || url.hostname.startsWith('-')) {
+    throw new Error('SSH target must not start with a hyphen')
   }
   url.protocol = 'remote-ssh:'
   return url.href

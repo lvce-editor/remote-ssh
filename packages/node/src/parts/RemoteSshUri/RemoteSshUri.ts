@@ -27,6 +27,9 @@ export const parse = (uri: string): RemoteLocation => {
   const username = decodeURIComponent(url.username)
   const { hostname } = url
   const target = username ? `${username}@${hostname}` : hostname
+  if (target.startsWith('-')) {
+    throw new Error('SSH target must not start with a hyphen')
+  }
   const path = decodeURIComponent(url.pathname || '/')
   if (!path.startsWith('/') || path.includes('\0')) {
     throw new Error(`Invalid remote path: ${path}`)
