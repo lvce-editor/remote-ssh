@@ -7,6 +7,11 @@ Run `SSH: Connect`, enter an SSH destination, and LVCE opens the remote root as
 or a simple command such as `ssh -p 2222 user@host` to open a subfolder or use a
 custom port.
 
+When `~/.ssh/config` contains literal `Host` aliases, the connection prompt
+offers them as choices while continuing to accept a free-form destination.
+Wildcard and negated patterns are omitted. Missing, unreadable, empty, or
+malformed config entries fall back to the free-form prompt.
+
 The extension uses the system `ssh` executable and the remote machine's
 `python3`. Authentication comes from the user's existing OpenSSH config, agent,
 and keys. Connections are non-interactive, so password prompts are not yet
