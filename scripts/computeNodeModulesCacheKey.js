@@ -6,12 +6,10 @@ import { fileURLToPath } from 'node:url'
 const currentDirectory = dirname(fileURLToPath(import.meta.url))
 const root = join(currentDirectory, '..')
 const locations = [
-  'lerna.json',
+  'package.json',
   'package-lock.json',
-  'packages/build/package-lock.json',
-  'packages/e2e/package-lock.json',
-  'packages/extension/package-lock.json',
   '.github/workflows/ci.yml',
+  '.github/workflows/pr.yml',
   '.github/workflows/release.yml',
   'scripts/computeNodeModulesCacheKey.js',
 ]
