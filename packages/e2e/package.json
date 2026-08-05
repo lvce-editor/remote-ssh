@@ -13,6 +13,7 @@
   "license": "MIT",
   "devDependencies": {
     "@lvce-editor/test-with-playwright": "^22.20.0",
-    "@playwright/test": "^1.62.1"
+    "@playwright/test": "^1.62.1",
+    "e2e-helpers": "0.0.0-dev"
   }
 }
