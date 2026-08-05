@@ -37,6 +37,7 @@ const getSshArgs = (location: RemoteLocation): readonly string[] => {
     '-o',
     'StrictHostKeyChecking=accept-new',
     ...portArgs,
+    '--',
     location.target,
     RemoteHelper.command,
   ]

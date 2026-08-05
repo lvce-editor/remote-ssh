@@ -26,6 +26,7 @@ test.each([
   'ssh -p 70000 example.com',
   'ssh -l user other@example.com',
   'ssh://user:password@example.com',
+  'ssh://-oProxyCommand%3Decho@example.com',
   'ssh://example.com/?token=secret',
 ])('rejects invalid target %p', (input) => {
   expect(() => toRemoteSshUri(input)).toThrow()

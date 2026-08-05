@@ -38,3 +38,14 @@ void test('rejects invalid and cross-scheme uris', () => {
     /Passwords are not allowed/,
   )
 })
+
+void test('rejects targets that OpenSSH could interpret as options', () => {
+  throws(
+    () => parse('remote-ssh://-oProxyCommand=echo/'),
+    /SSH target must not start with a hyphen/,
+  )
+  throws(
+    () => parse('remote-ssh://-oProxyCommand%3Decho@example.com/'),
+    /SSH target must not start with a hyphen/,
+  )
+})
