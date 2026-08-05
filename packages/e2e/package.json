@@ -4,8 +4,8 @@
   "description": "End-to-end tests for the Remote SSH extension",
   "scripts": {
     "build:extension": "node ../build/src/build-extension.js",
-    "e2e": "npm run build:extension && node ./node_modules/@lvce-editor/test-with-playwright/bin/test-with-playwright.js --only-extension=../extension --test-path=.",
-    "e2e:headless": "npm run build:extension && node ./node_modules/@lvce-editor/test-with-playwright/bin/test-with-playwright.js --only-extension=../extension --test-path=. --headless",
+    "e2e": "npm run build:extension && test-with-playwright --only-extension=../extension --test-path=.",
+    "e2e:headless": "npm run build:extension && test-with-playwright --only-extension=../extension --test-path=. --headless",
     "test": "node --test"
   },
   "type": "module",
