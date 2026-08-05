@@ -1,6 +1,7 @@
 import { fork, spawn } from 'node:child_process'
 import {
   access,
+  chmod,
   cp,
   mkdir,
   mkdtemp,
@@ -252,6 +253,36 @@ const waitForSavedFile = async (filePath, expectedContent) => {
   )
 }
 
+const promptPlaceholder =
+  'Enter SSH host (for example user@example.com or ssh -p 2222 user@example.com)'
+
+const openPromptScenario = async (page, port) => {
+  await page.goto(`http://localhost:${port}/tests/remote-ssh.connect.html`)
+  const quickInput = page.locator('.QuickPick input')
+  await expect(quickInput).toBeVisible({ timeout: 30_000 })
+  await expect(quickInput).toHaveAttribute('placeholder', promptPlaceholder, {
+    timeout: 30_000,
+  })
+  await expect(page.locator('#TestOverlay[data-state="pass"]')).toBeVisible({
+    timeout: 30_000,
+  })
+  return quickInput
+}
+
+const expectConfiguredHosts = async (page, expectedHosts) => {
+  await expect(page.locator('.QuickPickItemLabel')).toHaveText(expectedHosts, {
+    timeout: 30_000,
+  })
+  await expect(page.locator('.QuickPickItemDescription')).toHaveText(
+    expectedHosts.map(() => 'SSH config'),
+    { timeout: 30_000 },
+  )
+}
+
+const expectTextInputFallback = async (page) => {
+  await expect(page.locator('.QuickPickItemLabel')).toHaveCount(0)
+}
+
 const runRealSshTest = async () => {
   const sshServer = await createSshServer()
   if (!sshServer) {
@@ -272,12 +303,32 @@ const runRealSshTest = async () => {
     const configRoot = join(runtimeRoot, 'config')
     const cacheRoot = join(runtimeRoot, 'cache')
     const dataRoot = join(runtimeRoot, 'data')
-    await Promise.all([mkdir(configRoot), mkdir(cacheRoot), mkdir(dataRoot)])
+    const homeRoot = join(runtimeRoot, 'home')
+    const sshRoot = join(homeRoot, '.ssh')
+    const sshConfigPath = join(sshRoot, 'config')
+    await Promise.all([
+      mkdir(configRoot),
+      mkdir(cacheRoot),
+      mkdir(dataRoot),
+      mkdir(sshRoot, { recursive: true }),
+    ])
+    await writeFile(
+      sshConfigPath,
+      [
+        'Host work staging',
+        '  HostName example.com',
+        'Host *.internal !blocked wildcard-safe',
+        '  HostName internal.example.com',
+        'Host WORK',
+        '',
+      ].join('\n'),
+    )
     const port = await getAvailablePort()
     lvceServer = await startLvceServer({
       env: {
         ...sshServer.env,
         BUILTIN_EXTENSIONS_PATH: prepared.builtinExtensionsPath,
+        HOME: homeRoot,
         XDG_CACHE_HOME: cacheRoot,
         XDG_CONFIG_HOME: configRoot,
         XDG_DATA_HOME: dataRoot,
@@ -297,17 +348,34 @@ const runRealSshTest = async () => {
     page.on('pageerror', (error) => {
       console.error(`[browser] ${error}`)
     })
-    await page.goto(`http://localhost:${port}/tests/remote-ssh.connect.html`)
-    const quickInput = page.locator('.QuickPick input')
-    await expect(quickInput).toBeVisible({ timeout: 30_000 })
-    await expect(quickInput).toHaveAttribute(
-      'placeholder',
-      'Enter SSH host (for example user@example.com or ssh -p 2222 user@example.com)',
-      { timeout: 30_000 },
-    )
-    await expect(page.locator('#TestOverlay[data-state="pass"]')).toBeVisible({
-      timeout: 30_000,
-    })
+    await openPromptScenario(page, port)
+    await expectConfiguredHosts(page, ['work', 'staging', 'wildcard-safe'])
+
+    await writeFile(sshConfigPath, 'Host "unterminated\n')
+    await openPromptScenario(page, port)
+    await expectTextInputFallback(page)
+
+    await writeFile(sshConfigPath, 'Host *\nHost *.example.com\n')
+    await openPromptScenario(page, port)
+    await expectTextInputFallback(page)
+
+    await writeFile(sshConfigPath, '')
+    await openPromptScenario(page, port)
+    await expectTextInputFallback(page)
+
+    await writeFile(sshConfigPath, 'Host unreadable\n')
+    await chmod(sshConfigPath, 0o000)
+    await openPromptScenario(page, port)
+    await expectTextInputFallback(page)
+    await chmod(sshConfigPath, 0o600)
+
+    await rm(sshConfigPath)
+    await openPromptScenario(page, port)
+    await expectTextInputFallback(page)
+
+    await writeFile(sshConfigPath, 'Host work staging\n')
+    const quickInput = await openPromptScenario(page, port)
+    await expectConfiguredHosts(page, ['work', 'staging'])
     await quickInput.fill(sshServer.fixture.target)
     await page.keyboard.press('Enter')
 
@@ -322,7 +390,7 @@ const runRealSshTest = async () => {
     await expect(editorInput).toBeVisible({ timeout: 30_000 })
     await editorInput.focus()
     await expect(editorInput).toBeFocused()
-    await page.keyboard.press('End')
+    await editorInput.press('Control+End')
     await page.keyboard.type(
       sshServer.fixture.updatedContent.slice(
         sshServer.fixture.initialContent.length,
