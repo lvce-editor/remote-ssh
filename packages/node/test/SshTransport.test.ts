@@ -24,8 +24,8 @@ void test('builds non-interactive OpenSSH arguments', () => {
     'StrictHostKeyChecking=accept-new',
     '-p',
     '2222',
+    '--',
     'user@example.com',
-    args[10],
   ])
 })
 
