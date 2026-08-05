@@ -13,7 +13,7 @@ import { tmpdir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { chromium, expect } from '@playwright/test'
-import { createSshServer } from './SshServer.js'
+import { createSshServer } from 'e2e-helpers'
 
 const currentDir = dirname(fileURLToPath(import.meta.url))
 const e2eRoot = join(currentDir, '..')
