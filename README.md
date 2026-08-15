@@ -12,15 +12,22 @@ offers them as choices while continuing to accept a free-form destination.
 Wildcard and negated patterns are omitted. Missing, unreadable, empty, or
 malformed config entries fall back to the free-form prompt.
 
-The extension uses the system `ssh` executable and the remote machine's
-`python3`. Authentication comes from the user's existing OpenSSH config, agent,
-and keys. Connections are non-interactive, so password prompts are not yet
-supported. New host keys are accepted by OpenSSH's `accept-new` policy; changed
-host keys are rejected.
+The extension uses the system `ssh` executable. Authentication comes from the
+user's existing OpenSSH config, agent, and keys. Connections are non-interactive,
+so password prompts are not yet supported. New host keys are accepted by
+OpenSSH's `accept-new` policy; changed host keys are rejected.
 
-The initial real implementation executes a small, stateless helper over SSH for
-each file operation. It does not install or autostart an LVCE server on the
-remote machine, and it does not persist a host list.
+On first connection, LVCE installs a private Node.js runtime and a versioned
+filesystem server under `~/.lvce-server`. The installer first downloads on the
+remote and falls back to downloading and transferring from the client. Release
+hashes are verified before either archive is installed. No system Node.js or
+Python installation is required.
+
+The filesystem server runs as a user-owned background process on a protected
+Unix socket. One SSH connector multiplexes filesystem requests for the open
+remote, and the server remains available for reconnects until it has been idle
+for three hours. The initial server target is Linux x64; other remote platforms
+report an explicit unsupported-platform error.
 
 ## Contributing
 
