@@ -6,6 +6,6 @@
   "license": "MIT",
   "devDependencies": {
     "@lvce-editor/package-extension": "^3.7.0",
-    "esbuild": "^0.28.1"
+    "esbuild": "^0.28.2"
   }
 }
