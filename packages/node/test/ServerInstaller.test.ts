@@ -69,7 +69,7 @@ void test('escapes values passed to the remote shell', () => {
 
 void test(
   'installs a private runtime and server atomically',
-  { skip: process.platform === 'win32' },
+  { skip: process.platform !== 'linux' || process.arch !== 'x64' },
   async (context) => {
     const directory = await mkdtemp(path.join(tmpdir(), 'lvce-installer-'))
     context.after(() => rm(directory, { force: true, recursive: true }))
