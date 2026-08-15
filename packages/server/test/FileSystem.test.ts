@@ -52,5 +52,8 @@ void test('rejects root mutations and existing rename targets', async (context) 
     execute({ newPath: two, operation: 'rename', path: one }),
     /File exists/,
   )
-  await rejects(execute({ operation: 'remove', path: '/' }), /remote root/)
+  await rejects(
+    execute({ operation: 'remove', path: path.parse(directory).root }),
+    /remote root/,
+  )
 })
