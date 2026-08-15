@@ -1,4 +1,5 @@
 import { fork, spawn } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import {
   access,
   chmod,
@@ -32,6 +33,78 @@ const testRunnerPath = join(
 
 const sleep = async (milliseconds) => {
   await new Promise((resolve) => setTimeout(resolve, milliseconds))
+}
+
+const getSha256 = async (filePath) => {
+  return createHash('sha256')
+    .update(await readFile(filePath))
+    .digest('hex')
+}
+
+const runProcessChecked = async (command, args) => {
+  const child = spawn(command, args, { stdio: ['ignore', 'pipe', 'pipe'] })
+  const stdout = []
+  const stderr = []
+  child.stdout.on('data', (chunk) => stdout.push(String(chunk)))
+  child.stderr.on('data', (chunk) => stderr.push(String(chunk)))
+  const { promise, reject, resolve } = Promise.withResolvers()
+  child.once('error', reject)
+  child.once('close', (code) => {
+    if (code !== 0) {
+      reject(new Error(stderr.join('') || stdout.join('')))
+      return
+    }
+    resolve()
+  })
+  return promise
+}
+
+const createRemoteServerArtifacts = async (runtimeRoot) => {
+  const artifactsRoot = join(runtimeRoot, 'artifacts')
+  const nodeRoot = join(artifactsRoot, 'node-test', 'bin')
+  const nodeArchiveName = 'node-test-linux-x64.tar.gz'
+  const nodeArchivePath = join(artifactsRoot, nodeArchiveName)
+  const serverArchiveName = 'lvce-remote-ssh-server-dev.tar.gz'
+  const serverArchivePath = join(repositoryRoot, serverArchiveName)
+  const remoteRoot = join(runtimeRoot, 'remote-server')
+  await mkdir(nodeRoot, { recursive: true })
+  await cp(process.execPath, join(nodeRoot, 'node'))
+  await chmod(join(nodeRoot, 'node'), 0o755)
+  await runProcessChecked('tar', [
+    '-czf',
+    nodeArchivePath,
+    '-C',
+    artifactsRoot,
+    'node-test',
+  ])
+  return {
+    env: {
+      LVCE_REMOTE_SSH_NODE_ARCHIVE_NAME: nodeArchiveName,
+      LVCE_REMOTE_SSH_NODE_ARCHIVE_SHA256: await getSha256(nodeArchivePath),
+      LVCE_REMOTE_SSH_NODE_ARCHIVE_URL: pathToFileURL(nodeArchivePath).href,
+      LVCE_REMOTE_SSH_NODE_VERSION: 'test-node',
+      LVCE_REMOTE_SSH_REMOTE_ROOT: remoteRoot,
+      LVCE_REMOTE_SSH_SERVER_ARCHIVE_NAME: serverArchiveName,
+      LVCE_REMOTE_SSH_SERVER_ARCHIVE_SHA256: await getSha256(serverArchivePath),
+      LVCE_REMOTE_SSH_SERVER_ARCHIVE_URL: pathToFileURL(serverArchivePath).href,
+      LVCE_REMOTE_SSH_SERVER_VERSION: 'dev',
+    },
+    remoteRoot,
+  }
+}
+
+const stopRemoteServer = async (remoteRoot) => {
+  if (!remoteRoot) {
+    return
+  }
+  try {
+    const state = JSON.parse(
+      await readFile(join(remoteRoot, 'run', 'server-dev.json'), 'utf8'),
+    )
+    process.kill(state.pid, 'SIGTERM')
+  } catch {
+    // The remote server may not have started or may already have exited.
+  }
 }
 
 const getAvailablePort = async () => {
@@ -293,10 +366,13 @@ const runRealSshTest = async () => {
   let browser
   let builtinExtensionPath
   let lvceServer
+  let remoteRoot
   let staticConfigContent
   let staticConfigPath
   try {
     const prepared = await prepareExtensions(runtimeRoot)
+    const remoteArtifacts = await createRemoteServerArtifacts(runtimeRoot)
+    remoteRoot = remoteArtifacts.remoteRoot
     builtinExtensionPath = prepared.builtinExtensionPath
     staticConfigContent = prepared.staticConfigContent
     staticConfigPath = prepared.staticConfigPath
@@ -327,6 +403,7 @@ const runRealSshTest = async () => {
     lvceServer = await startLvceServer({
       env: {
         ...sshServer.env,
+        ...remoteArtifacts.env,
         BUILTIN_EXTENSIONS_PATH: prepared.builtinExtensionsPath,
         HOME: homeRoot,
         XDG_CACHE_HOME: cacheRoot,
@@ -381,6 +458,16 @@ const runRealSshTest = async () => {
 
     const remoteFile = page.locator('.TreeItem[aria-label="file.txt"]')
     await expect(remoteFile).toBeVisible({ timeout: 30_000 })
+    const connectionCount = sshServer.getConnectionCount()
+    const remoteFolder = page.locator('.TreeItem[aria-label="folder"]')
+    await remoteFolder.click()
+    await expect(
+      page.locator('.TreeItem[aria-label="nested.txt"]'),
+    ).toBeVisible({
+      timeout: 5_000,
+    })
+    expect(sshServer.getConnectionCount()).toBe(connectionCount)
+    expect(sshServer.getOutput()).not.toContain('python')
     await remoteFile.click()
     const editor = page.locator('.Editor')
     await expect(editor).toContainText(sshServer.fixture.initialContent, {
@@ -406,6 +493,7 @@ const runRealSshTest = async () => {
     await cleanup([
       async () => browser?.close(),
       async () => stopProcess(lvceServer),
+      async () => stopRemoteServer(remoteRoot),
       async () => sshServer.dispose(),
       async () => {
         if (staticConfigPath && staticConfigContent) {

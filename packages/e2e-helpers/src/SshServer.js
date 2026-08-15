@@ -227,6 +227,8 @@ export const createSshServer = async () => {
   const root = await mkdtemp(join(tmpdir(), 'lvce-remote-ssh-e2e-'))
   const workspacePath = join(root, 'workspace')
   const filePath = join(workspacePath, 'file.txt')
+  const folderPath = join(workspacePath, 'folder')
+  const nestedFilePath = join(folderPath, 'nested.txt')
   const clientKeyPath = join(root, 'id_ed25519')
   const hostKeyPath = join(root, 'ssh_host_ed25519_key')
   const authorizedKeysPath = join(root, 'authorized_keys')
@@ -241,7 +243,9 @@ export const createSshServer = async () => {
 
   try {
     await mkdir(workspacePath)
+    await mkdir(folderPath)
     await writeFile(filePath, initialContent)
+    await writeFile(nestedFilePath, 'nested')
     await generateKey(sshKeygenPath, hostKeyPath)
     await generateKey(sshKeygenPath, clientKeyPath)
     await writeFile(
@@ -299,6 +303,12 @@ export const createSshServer = async () => {
     return {
       env,
       filePath,
+      getConnectionCount() {
+        return output.join('').match(/Accepted publickey/g)?.length || 0
+      },
+      getOutput() {
+        return output.join('')
+      },
       fixture: {
         initialContent,
         target: `ssh -p ${port} ${user}@${host}:${workspacePath}`,

@@ -4,6 +4,7 @@ import { rmSync, writeFileSync } from 'node:fs'
 import { readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
+import { buildServer } from './buildServer.js'
 import { root } from './root.js'
 
 const extension = path.join(root, 'packages', 'extension')
@@ -37,6 +38,7 @@ const staticConfig = JSON.parse(staticConfigContent)
 const headerIndex = staticConfig.headers.length
 const commitHash = path.basename(path.dirname(builtinExtensionsPath))
 const browserEntry = `/${commitHash}/extensions/builtin.remote-ssh/dist/remoteSshMain.js`
+const remoteSshServer = await buildServer()
 
 staticConfig.headers.push({
   'Cache-Control': 'no-store',
@@ -98,6 +100,7 @@ const context = await esbuild.context({
 
 const nodeContext = await esbuild.context({
   bundle: true,
+  define: remoteSshServer.define,
   entryPoints: [
     path.join(root, 'packages', 'node', 'src', 'remoteSshClient.ts'),
   ],
