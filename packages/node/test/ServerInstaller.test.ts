@@ -148,3 +148,28 @@ void test('declares an explicit unsupported-platform marker', () => {
   match(script, /Linux:x86_64/)
   strictEqual(script.includes('python'), false)
 })
+
+void test('can force the verified local transfer fallback', () => {
+  const previous = process.env.LVCE_REMOTE_SSH_FORCE_LOCAL_TRANSFER
+  process.env.LVCE_REMOTE_SSH_FORCE_LOCAL_TRANSFER = '1'
+  try {
+    const script = createInstallScript({
+      nodeArchiveName: 'node.tar.gz',
+      nodeArchiveSha256: 'node-sha',
+      nodeArchiveUrl: 'https://example.com/node.tar.gz',
+      nodeVersion: 'node',
+      protocolVersion: 1,
+      serverArchiveName: 'server.tar.gz',
+      serverArchiveSha256: 'server-sha',
+      serverArchiveUrl: 'https://example.com/server.tar.gz',
+      serverVersion: 'server',
+    })
+    match(script, /FORCE_LOCAL_TRANSFER=1/)
+  } finally {
+    if (previous === undefined) {
+      delete process.env.LVCE_REMOTE_SSH_FORCE_LOCAL_TRANSFER
+    } else {
+      process.env.LVCE_REMOTE_SSH_FORCE_LOCAL_TRANSFER = previous
+    }
+  }
+})

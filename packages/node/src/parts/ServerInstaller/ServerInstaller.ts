@@ -89,6 +89,8 @@ const escapeShell = (value: string): string => {
 
 // cspell:ignore esac
 export const createInstallScript = (manifest: ServerManifest): string => {
+  const forceLocalTransfer =
+    process.env.LVCE_REMOTE_SSH_FORCE_LOCAL_TRANSFER === '1' ? '1' : '0'
   const values = {
     nodeArchiveName: escapeShell(manifest.nodeArchiveName),
     nodeArchiveSha256: escapeShell(manifest.nodeArchiveSha256),
@@ -112,6 +114,7 @@ SERVER_ARCHIVE_NAME=${values.serverArchiveName}
 SERVER_SHA256=${values.serverArchiveSha256}
 SERVER_URL=${values.serverArchiveUrl}
 SERVER_VERSION=${values.serverVersion}
+FORCE_LOCAL_TRANSFER=${forceLocalTransfer}
 
 case "$(uname -s):$(uname -m)" in
   Linux:x86_64) ;;
@@ -168,6 +171,7 @@ trap 'exit 1' HUP INT TERM
 download() {
   url="$1"
   destination="$2"
+  [ "$FORCE_LOCAL_TRANSFER" = 1 ] && return 1
   if command -v curl >/dev/null 2>&1; then
     curl --fail --location --connect-timeout 10 --output "$destination" "$url" && return 0
   fi

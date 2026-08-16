@@ -1,5 +1,6 @@
 import { fork, spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
+import { createServer as createHttpServer } from 'node:http'
 import {
   access,
   chmod,
@@ -91,21 +92,57 @@ const createRemoteServerArtifacts = async (runtimeRoot) => {
       'node-test',
     ])
   }
+  const archivePaths = new Map([
+    [`/${nodeArchiveName}`, nodeArchivePath],
+    [`/${serverArchiveName}`, serverArchivePath],
+  ])
+  let requestCount = 0
+  const artifactServer = createHttpServer(async (request, response) => {
+    const archivePath = archivePaths.get(request.url || '')
+    if (!archivePath) {
+      response.statusCode = 404
+      response.end()
+      return
+    }
+    requestCount++
+    response.end(await readFile(archivePath))
+  })
+  await new Promise((resolve, reject) => {
+    artifactServer.once('error', reject)
+    artifactServer.listen(0, '127.0.0.1', resolve)
+  })
+  const address = artifactServer.address()
+  if (!address || typeof address === 'string') {
+    throw new Error('Failed to determine the archive server port')
+  }
+  const archiveBaseUrl = `http://127.0.0.1:${address.port}`
   return {
+    artifactServer,
     env: {
       LVCE_REMOTE_SSH_NODE_ARCHIVE_NAME: nodeArchiveName,
       LVCE_REMOTE_SSH_NODE_ARCHIVE_SHA256: await getSha256(nodeArchivePath),
-      LVCE_REMOTE_SSH_NODE_ARCHIVE_URL: pathToFileURL(nodeArchivePath).href,
+      LVCE_REMOTE_SSH_NODE_ARCHIVE_URL: `${archiveBaseUrl}/${nodeArchiveName}`,
       LVCE_REMOTE_SSH_NODE_VERSION: 'test-node',
+      LVCE_REMOTE_SSH_FORCE_LOCAL_TRANSFER: '1',
       LVCE_REMOTE_SSH_REMOTE_ROOT: remoteRoot,
       LVCE_REMOTE_SSH_BACKEND_SCRIPT: backendScript,
       LVCE_REMOTE_SSH_SERVER_ARCHIVE_NAME: serverArchiveName,
       LVCE_REMOTE_SSH_SERVER_ARCHIVE_SHA256: await getSha256(serverArchivePath),
-      LVCE_REMOTE_SSH_SERVER_ARCHIVE_URL: pathToFileURL(serverArchivePath).href,
+      LVCE_REMOTE_SSH_SERVER_ARCHIVE_URL: `${archiveBaseUrl}/${serverArchiveName}`,
       LVCE_REMOTE_SSH_SERVER_VERSION: 'dev',
     },
+    getRequestCount: () => requestCount,
     remoteRoot,
   }
+}
+
+const closeServer = (server) => {
+  if (!server) {
+    return Promise.resolve()
+  }
+  return new Promise((resolve, reject) => {
+    server.close((error) => (error ? reject(error) : resolve()))
+  })
 }
 
 const stopRemoteServer = async (remoteRoot) => {
@@ -453,6 +490,8 @@ const runRealSshTest = async () => {
     join(runtimeParent, 'lvce-remote-ssh-runtime-'),
   )
   let browser
+  let artifactServer
+  let getArtifactRequestCount
   let installedExtensionPaths = []
   let lvceServer
   let remoteRoot
@@ -461,6 +500,8 @@ const runRealSshTest = async () => {
   try {
     const prepared = await prepareExtensions(runtimeRoot)
     const remoteArtifacts = await createRemoteServerArtifacts(runtimeRoot)
+    artifactServer = remoteArtifacts.artifactServer
+    getArtifactRequestCount = remoteArtifacts.getRequestCount
     remoteRoot = remoteArtifacts.remoteRoot
     installedExtensionPaths = prepared.installedExtensionPaths
     staticConfigContent = prepared.staticConfigContent
@@ -576,6 +617,7 @@ const runRealSshTest = async () => {
     expect(p95).toBeLessThanOrEqual(1_000)
     expect(sshServer.getConnectionCount()).toBe(connectionCount)
     expect(sshServer.getOutput()).not.toContain('python')
+    expect(getArtifactRequestCount()).toBe(2)
     await remoteFile.click()
     const editor = page.locator('.Editor')
     await expect(editor).toContainText(sshServer.fixture.initialContent, {
@@ -662,6 +704,7 @@ const runRealSshTest = async () => {
       async () => stopProcess(lvceServer),
       async () => stopRemoteServer(remoteRoot),
       async () => sshServer.dispose(),
+      async () => closeServer(artifactServer),
       async () => {
         if (staticConfigPath && staticConfigContent) {
           await writeFile(staticConfigPath, staticConfigContent)
