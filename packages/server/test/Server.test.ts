@@ -6,10 +6,29 @@ import path from 'node:path'
 import { test } from 'node:test'
 
 interface ServerState {
+  readonly backendPid: number
   readonly pid: number
 }
 
+const stopState = (state: ServerState): void => {
+  try {
+    process.kill(state.backendPid, 'SIGTERM')
+  } catch {
+    // Already stopped.
+  }
+  try {
+    process.kill(state.pid, 'SIGKILL')
+  } catch {
+    // Already stopped.
+  }
+}
+
 const entry = path.join(import.meta.dirname, '..', 'src', 'remoteSshServer.ts')
+const backendEntry = path.join(
+  import.meta.dirname,
+  'fixtures',
+  'workspaceBackend.ts',
+)
 
 const readLine = (child: ChildProcessWithoutNullStreams): Promise<string> => {
   return new Promise((resolve, reject) => {
@@ -33,17 +52,24 @@ const connect = async (
   const child = spawn(process.execPath, [entry, 'connect-or-start'], {
     env: {
       ...process.env,
-      LVCE_REMOTE_SSH_IDLE_TIMEOUT: '200',
+      LVCE_REMOTE_SSH_IDLE_TIMEOUT: '2000',
+      LVCE_REMOTE_SSH_BACKEND_SCRIPT: backendEntry,
       LVCE_REMOTE_SSH_ROOT: root,
     },
     stdio: ['pipe', 'pipe', 'pipe'],
   })
   const ready = JSON.parse(await readLine(child)) as {
+    readonly backend: { readonly port: number; readonly token: string }
+    readonly capabilities: readonly string[]
     readonly protocolVersion: number
     readonly type: string
   }
   strictEqual(ready.type, 'ready')
   strictEqual(ready.protocolVersion, 1)
+  strictEqual(Number.isSafeInteger(ready.backend.port), true)
+  strictEqual(typeof ready.backend.token, 'string')
+  strictEqual(ready.capabilities.includes('workspaceBackend'), true)
+  strictEqual(ready.capabilities.includes('fileSystemProcess'), true)
   return child
 }
 
@@ -65,7 +91,7 @@ void test(
         const state = JSON.parse(
           await readFile(statePath, 'utf8'),
         ) as ServerState
-        process.kill(state.pid, 'SIGTERM')
+        stopState(state)
       } catch {
         // The idle timeout may already have stopped the daemon.
       }
@@ -83,18 +109,8 @@ void test(
       await readFile(statePath, 'utf8'),
     ) as ServerState
     strictEqual(secondState.pid, firstState.pid)
+    strictEqual(secondState.backendPid, firstState.backendPid)
 
-    second.stdin.write(
-      `${JSON.stringify({
-        id: 1,
-        method: 'fileSystem',
-        params: { operation: 'connect', path: root },
-      })}\n`,
-    )
-    const response = JSON.parse(await readLine(second)) as {
-      readonly id: number
-    }
-    strictEqual(response.id, 1)
     await stopConnector(second)
   },
 )
@@ -122,7 +138,7 @@ void test(
         const state = JSON.parse(
           await readFile(statePath, 'utf8'),
         ) as ServerState
-        process.kill(state.pid, 'SIGTERM')
+        stopState(state)
       } catch {
         // The idle timeout may already have stopped the daemon.
       }

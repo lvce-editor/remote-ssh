@@ -1,4 +1,4 @@
-import { match, strictEqual } from 'node:assert/strict'
+import { doesNotMatch, match, strictEqual } from 'node:assert/strict'
 import { execFile, spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import {
@@ -18,6 +18,7 @@ import type { ServerManifest } from '../src/parts/ServerManifest/ServerManifest.
 import {
   _escapeShell,
   createInstallScript,
+  createTransferCommand,
   installedMarker,
   unsupportedMarker,
 } from '../src/parts/ServerInstaller/ServerInstaller.ts'
@@ -147,4 +148,49 @@ void test('declares an explicit unsupported-platform marker', () => {
   match(script, new RegExp(unsupportedMarker))
   match(script, /Linux:x86_64/)
   strictEqual(script.includes('python'), false)
+})
+
+void test('can force the verified local transfer fallback', () => {
+  const previous = process.env.LVCE_REMOTE_SSH_FORCE_LOCAL_TRANSFER
+  process.env.LVCE_REMOTE_SSH_FORCE_LOCAL_TRANSFER = '1'
+  try {
+    const script = createInstallScript({
+      nodeArchiveName: 'node.tar.gz',
+      nodeArchiveSha256: 'node-sha',
+      nodeArchiveUrl: 'https://example.com/node.tar.gz',
+      nodeVersion: 'node',
+      protocolVersion: 1,
+      serverArchiveName: 'server.tar.gz',
+      serverArchiveSha256: 'server-sha',
+      serverArchiveUrl: 'https://example.com/server.tar.gz',
+      serverVersion: 'server',
+    })
+    match(script, /FORCE_LOCAL_TRANSFER=1/)
+  } finally {
+    if (previous === undefined) {
+      delete process.env.LVCE_REMOTE_SSH_FORCE_LOCAL_TRANSFER
+    } else {
+      process.env.LVCE_REMOTE_SSH_FORCE_LOCAL_TRANSFER = previous
+    }
+  }
+})
+
+void test('transfers archives into the setup version directory', () => {
+  const previous = process.env.LVCE_REMOTE_SSH_REMOTE_ROOT
+  process.env.LVCE_REMOTE_SSH_REMOTE_ROOT = "/tmp/root with ' quote"
+  try {
+    const command = createTransferCommand(
+      "version with ' quote",
+      'server.tar.gz',
+    )
+    match(command, /version='version with '\\'' quote'/)
+    match(command, /incoming="\$root\/incoming\/\$version"/)
+    doesNotMatch(command, /incoming="\$root\/incoming\/'/)
+  } finally {
+    if (previous === undefined) {
+      delete process.env.LVCE_REMOTE_SSH_REMOTE_ROOT
+    } else {
+      process.env.LVCE_REMOTE_SSH_REMOTE_ROOT = previous
+    }
+  }
 })

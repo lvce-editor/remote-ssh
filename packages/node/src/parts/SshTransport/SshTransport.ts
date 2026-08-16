@@ -1,17 +1,20 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
+import { createHash } from 'node:crypto'
+import { rm } from 'node:fs/promises'
+import { createServer } from 'node:net'
+import { tmpdir } from 'node:os'
+import path from 'node:path'
 import type { RemoteLocation } from '../RemoteSshUri/RemoteSshUri.ts'
 import { installServer } from '../ServerInstaller/ServerInstaller.ts'
 import { manifest } from '../ServerManifest/ServerManifest.ts'
-
-export interface RemoteRequest {
-  readonly content?: string
-  readonly newPath?: string
-  readonly operation: string
-  readonly path: string
-}
+import * as WorkspaceBackendRpc from '../WorkspaceBackendRpc/WorkspaceBackendRpc.ts'
 
 interface ReadyMessage {
   readonly arch: string
+  readonly backend: {
+    readonly port: number
+    readonly token: string
+  }
   readonly capabilities: readonly string[]
   readonly clientVersion: string
   readonly platform: string
@@ -20,32 +23,29 @@ interface ReadyMessage {
   readonly version: string
 }
 
-interface RpcResponse {
-  readonly error?: {
-    readonly code?: number | string
-    readonly message: string
-  }
-  readonly id: number | null
-  readonly result?: unknown
-}
-
-interface PendingRequest {
-  readonly reject: (error: Error) => void
-  readonly resolve: (value: unknown) => void
-  readonly timeout: NodeJS.Timeout
-}
-
 interface Connection {
-  readonly invoke: (request: RemoteRequest) => Promise<unknown>
+  readonly getWorkspaceBackend: () => Promise<WorkspaceBackend>
+  readonly invokeBackend: (
+    type: string,
+    method: string,
+    params: readonly unknown[],
+  ) => Promise<unknown>
 }
 
-export type RunSsh = (
+export interface WorkspaceBackend {
+  readonly token: string
+  readonly url: string
+  readonly workspacePath?: string
+}
+
+export type InvokeBackend = (
   location: RemoteLocation,
-  request: RemoteRequest,
+  type: string,
+  method: string,
+  ...params: readonly unknown[]
 ) => Promise<unknown>
 
 const installRequiredMarker = '__LVCE_REMOTE_SSH_INSTALL_REQUIRED__'
-const requestTimeout = 120_000
 const sshExecutable =
   process.platform === 'win32'
     ? 'C:\\Windows\\System32\\OpenSSH\\ssh.exe'
@@ -68,14 +68,34 @@ const getRemoteCommand = (): string => {
   const root = configuredRoot
     ? escapeShell(configuredRoot)
     : '"$HOME/.lvce-server"'
-  return `root=${root}; runtime="$root/runtimes/${manifest.nodeVersion}/bin/node"; server="$root/servers/${manifest.serverVersion}/lvce-remote-ssh-server.mjs"; if [ -x "$runtime" ] && [ -f "$server" ]; then LVCE_REMOTE_SSH_ROOT="$root" LVCE_REMOTE_SSH_CLIENT_VERSION=${escapeShell(manifest.serverVersion)} exec "$runtime" "$server" connect-or-start; else printf '${installRequiredMarker}\\n'; exit 86; fi`
+  const configuredBackend = process.env.LVCE_REMOTE_SSH_BACKEND_SCRIPT
+  const backendEnvironment = configuredBackend
+    ? ` LVCE_REMOTE_SSH_BACKEND_SCRIPT=${escapeShell(configuredBackend)}`
+    : ''
+  return `root=${root}; runtime="$root/runtimes/${manifest.nodeVersion}/bin/node"; server="$root/servers/${manifest.serverVersion}/lvce-remote-ssh-server.mjs"; if [ -x "$runtime" ] && [ -f "$server" ]; then LVCE_REMOTE_SSH_ROOT="$root" LVCE_REMOTE_SSH_CLIENT_VERSION=${escapeShell(manifest.serverVersion)}${backendEnvironment} exec "$runtime" "$server" connect-or-start; else printf '${installRequiredMarker}\\n'; exit 86; fi`
 }
 
-const getSshArgs = (location: RemoteLocation): readonly string[] => {
+const getControlPath = (location: RemoteLocation): string => {
+  const hash = createHash('sha256')
+    .update(location.identity)
+    .digest('hex')
+    .slice(0, 16)
+  return path.join(tmpdir(), `lvce-remote-ssh-${process.pid}-${hash}.sock`)
+}
+
+const getSshArgs = (
+  location: RemoteLocation,
+  controlPath = getControlPath(location),
+): readonly string[] => {
   return [
+    '-M',
+    '-S',
+    controlPath,
     '-T',
     '-o',
     'BatchMode=yes',
+    '-o',
+    'ControlPersist=3h',
     '-o',
     'ConnectTimeout=10',
     '-o',
@@ -87,22 +107,93 @@ const getSshArgs = (location: RemoteLocation): readonly string[] => {
   ]
 }
 
+const getAvailablePort = async (): Promise<number> => {
+  const server = createServer()
+  await new Promise<void>((resolve, reject) => {
+    server.once('error', reject)
+    server.listen(0, '127.0.0.1', resolve)
+  })
+  const address = server.address()
+  if (!address || typeof address === 'string') {
+    server.close()
+    throw new Error('Failed to allocate a local Remote SSH forwarding port')
+  }
+  const { port } = address
+  await new Promise<void>((resolve, reject) =>
+    server.close((error) => (error ? reject(error) : resolve())),
+  )
+  return port
+}
+
+const addForward = async (
+  location: RemoteLocation,
+  controlPath: string,
+  localPort: number,
+  remotePort: number,
+): Promise<void> => {
+  const child = spawn(
+    sshExecutable,
+    [
+      '-S',
+      controlPath,
+      '-O',
+      'forward',
+      '-o',
+      'ExitOnForwardFailure=yes',
+      '-L',
+      `127.0.0.1:${localPort}:127.0.0.1:${remotePort}`,
+      '--',
+      location.target,
+    ],
+    { stdio: ['ignore', 'pipe', 'pipe'] },
+  )
+  const stderr: Buffer[] = []
+  child.stderr.on('data', (chunk: Buffer) => {
+    stderr.push(chunk)
+  })
+  const code = await new Promise<number | null>((resolve, reject) => {
+    child.once('error', reject)
+    child.once('close', resolve)
+  })
+  if (code !== 0) {
+    throw new Error(
+      Buffer.concat(stderr).toString('utf8').trim() ||
+        `Failed to forward the remote workspace backend (status ${code})`,
+    )
+  }
+}
+
 class RemoteConnection implements Connection {
   private buffer = ''
   private closed = false
   private isReady = false
-  private nextRequestId = 1
-  private readonly pending = new Map<number, PendingRequest>()
+  private readonly backendRpcs = new Map<
+    string,
+    WorkspaceBackendRpc.WorkspaceBackendRpc
+  >()
   private readonly child: ChildProcessWithoutNullStreams
+  private readonly controlPath: string
+  private readonly localPort: number
+  private readonly location: RemoteLocation
   private readonly onClose: () => void
   private readyReject: (error: Error) => void = () => {}
   private readyResolve: () => void = () => {}
   private readonly ready: Promise<void>
   private readonly readyTimeout: NodeJS.Timeout
   private readonly stderr: Buffer[] = []
+  private workspaceBackend: WorkspaceBackend | undefined
 
-  constructor(child: ChildProcessWithoutNullStreams, onClose: () => void) {
+  constructor(
+    child: ChildProcessWithoutNullStreams,
+    location: RemoteLocation,
+    controlPath: string,
+    localPort: number,
+    onClose: () => void,
+  ) {
     this.child = child
+    this.location = location
+    this.controlPath = controlPath
+    this.localPort = localPort
     this.onClose = onClose
     this.ready = new Promise((resolve, reject) => {
       this.readyResolve = resolve
@@ -136,14 +227,14 @@ class RemoteConnection implements Connection {
     this.closed = true
     clearTimeout(this.readyTimeout)
     this.readyReject(error)
-    for (const pending of this.pending.values()) {
-      clearTimeout(pending.timeout)
-      pending.reject(error)
+    for (const rpc of this.backendRpcs.values()) {
+      rpc.dispose()
     }
-    this.pending.clear()
+    this.backendRpcs.clear()
     if (this.isReady) {
       this.onClose()
     }
+    void rm(this.controlPath, { force: true })
   }
 
   private handleData(chunk: Buffer): void {
@@ -166,9 +257,9 @@ class RemoteConnection implements Connection {
       this.close(new InstallRequiredError(installRequiredMarker))
       return
     }
-    let value: ReadyMessage | RpcResponse
+    let value: ReadyMessage
     try {
-      value = JSON.parse(line) as ReadyMessage | RpcResponse
+      value = JSON.parse(line) as ReadyMessage
     } catch {
       if (this.isReady) {
         this.close(new Error('Remote SSH server returned invalid JSON'))
@@ -181,41 +272,45 @@ class RemoteConnection implements Connection {
       this.child.kill()
       return
     }
-    if ('type' in value) {
-      if (
-        value.type !== 'ready' ||
-        value.protocolVersion !== manifest.protocolVersion ||
-        value.version !== manifest.serverVersion ||
-        value.clientVersion !== manifest.serverVersion ||
-        value.platform !== 'linux' ||
-        value.arch !== 'x64' ||
-        !Array.isArray(value.capabilities) ||
-        !value.capabilities.includes('fileSystem')
-      ) {
-        this.close(new Error('Remote SSH server protocol is incompatible'))
-        this.child.kill()
-        return
+    if (
+      value.type !== 'ready' ||
+      value.protocolVersion !== manifest.protocolVersion ||
+      value.version !== manifest.serverVersion ||
+      value.clientVersion !== manifest.serverVersion ||
+      value.platform !== 'linux' ||
+      value.arch !== 'x64' ||
+      !Array.isArray(value.capabilities) ||
+      !value.capabilities.includes('fileSystemProcess') ||
+      !value.capabilities.includes('workspaceBackend') ||
+      !value.backend ||
+      !Number.isSafeInteger(value.backend.port) ||
+      typeof value.backend.token !== 'string'
+    ) {
+      this.close(new Error('Remote SSH server protocol is incompatible'))
+      this.child.kill()
+      return
+    }
+    void this.handleReady(value)
+  }
+
+  private async handleReady(value: ReadyMessage): Promise<void> {
+    try {
+      await addForward(
+        this.location,
+        this.controlPath,
+        this.localPort,
+        value.backend.port,
+      )
+      this.workspaceBackend = {
+        token: value.backend.token,
+        url: `ws://127.0.0.1:${this.localPort}`,
       }
       this.isReady = true
       clearTimeout(this.readyTimeout)
       this.readyResolve()
-      return
-    }
-    if (value.id === null) {
-      return
-    }
-    const pending = this.pending.get(value.id)
-    if (!pending) {
-      return
-    }
-    clearTimeout(pending.timeout)
-    this.pending.delete(value.id)
-    if (value.error) {
-      const suffix =
-        value.error.code === undefined ? '' : ` (${String(value.error.code)})`
-      pending.reject(new Error(`${value.error.message}${suffix}`))
-    } else {
-      pending.resolve(value.result)
+    } catch (error) {
+      this.close(error instanceof Error ? error : new Error(String(error)))
+      this.child.kill()
     }
   }
 
@@ -223,22 +318,42 @@ class RemoteConnection implements Connection {
     await this.ready
   }
 
-  async invoke(request: RemoteRequest): Promise<unknown> {
+  async getWorkspaceBackend(): Promise<WorkspaceBackend> {
     await this.ready
-    if (this.closed) {
-      throw new Error('Remote SSH connection is closed')
+    if (!this.workspaceBackend) {
+      throw new Error('Remote workspace backend is unavailable')
     }
-    const id = this.nextRequestId++
-    return new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => {
-        this.pending.delete(id)
-        reject(new Error('Remote SSH operation timed out after 120 seconds'))
-      }, requestTimeout)
-      this.pending.set(id, { reject, resolve, timeout })
-      this.child.stdin.write(
-        `${JSON.stringify({ id, method: 'fileSystem', params: request })}\n`,
-      )
-    })
+    return this.workspaceBackend
+  }
+
+  async invokeBackend(
+    type: string,
+    method: string,
+    params: readonly unknown[],
+  ): Promise<unknown> {
+    await this.ready
+    const backend = await this.getWorkspaceBackend()
+    let rpc = this.backendRpcs.get(type)
+    if (!rpc) {
+      const url = new URL(`/websocket/${encodeURIComponent(type)}`, backend.url)
+      url.searchParams.set('token', backend.token)
+      const createdRpc = WorkspaceBackendRpc.create(url.href, undefined, () => {
+        if (this.backendRpcs.get(type) === createdRpc) {
+          this.backendRpcs.delete(type)
+        }
+      })
+      rpc = createdRpc
+      this.backendRpcs.set(type, rpc)
+    }
+    try {
+      return await rpc.invoke(method, ...params)
+    } catch (error) {
+      if (this.backendRpcs.get(type) === rpc) {
+        this.backendRpcs.delete(type)
+      }
+      rpc.dispose()
+      throw error
+    }
   }
 }
 
@@ -246,10 +361,19 @@ const spawnConnection = async (
   location: RemoteLocation,
   onClose: () => void,
 ): Promise<Connection> => {
-  const child = spawn(sshExecutable, getSshArgs(location), {
+  const controlPath = getControlPath(location)
+  await rm(controlPath, { force: true })
+  const localPort = await getAvailablePort()
+  const child = spawn(sshExecutable, getSshArgs(location, controlPath), {
     stdio: ['pipe', 'pipe', 'pipe'],
   })
-  const connection = new RemoteConnection(child, onClose)
+  const connection = new RemoteConnection(
+    child,
+    location,
+    controlPath,
+    localPort,
+    onClose,
+  )
   await connection.waitUntilReady()
   return connection
 }
@@ -289,9 +413,21 @@ const getConnection = (location: RemoteLocation): Promise<Connection> => {
   return connection
 }
 
-export const runSsh: RunSsh = async (location, request) => {
+export const invokeWorkspaceBackend: InvokeBackend = async (
+  location,
+  type,
+  method,
+  ...params
+) => {
   const connection = await getConnection(location)
-  return connection.invoke(request)
+  return connection.invokeBackend(type, method, params)
+}
+
+export const connectWorkspaceBackend = async (
+  location: RemoteLocation,
+): Promise<WorkspaceBackend> => {
+  const connection = await getConnection(location)
+  return connection.getWorkspaceBackend()
 }
 
 export const _getSshArgs = getSshArgs
