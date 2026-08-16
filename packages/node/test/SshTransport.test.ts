@@ -16,6 +16,7 @@ void test('builds one non-interactive persistent SSH command', () => {
   strictEqual(args[0], '-M')
   strictEqual(args.includes('-S'), true)
   strictEqual(args.includes('-T'), true)
+  strictEqual(args.includes('ControlPersist=3h'), true)
   strictEqual(args.at(-2), 'user@example.com')
   match(args.at(-1) || '', /connect-or-start/)
   match(args.at(-1) || '', /__LVCE_REMOTE_SSH_INSTALL_REQUIRED__/)

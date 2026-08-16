@@ -72,12 +72,7 @@ const getRemoteCommand = (): string => {
   const backendEnvironment = configuredBackend
     ? ` LVCE_REMOTE_SSH_BACKEND_SCRIPT=${escapeShell(configuredBackend)}`
     : ''
-  const configuredFileSystemProcess =
-    process.env.LVCE_REMOTE_SSH_FILE_SYSTEM_PROCESS_PATH
-  const fileSystemProcessEnvironment = configuredFileSystemProcess
-    ? ` LVCE_FILE_SYSTEM_PROCESS_PATH=${escapeShell(configuredFileSystemProcess)}`
-    : ''
-  return `root=${root}; runtime="$root/runtimes/${manifest.nodeVersion}/bin/node"; server="$root/servers/${manifest.serverVersion}/lvce-remote-ssh-server.mjs"; if [ -x "$runtime" ] && [ -f "$server" ]; then LVCE_REMOTE_SSH_ROOT="$root" LVCE_REMOTE_SSH_CLIENT_VERSION=${escapeShell(manifest.serverVersion)}${backendEnvironment}${fileSystemProcessEnvironment} exec "$runtime" "$server" connect-or-start; else printf '${installRequiredMarker}\\n'; exit 86; fi`
+  return `root=${root}; runtime="$root/runtimes/${manifest.nodeVersion}/bin/node"; server="$root/servers/${manifest.serverVersion}/lvce-remote-ssh-server.mjs"; if [ -x "$runtime" ] && [ -f "$server" ]; then LVCE_REMOTE_SSH_ROOT="$root" LVCE_REMOTE_SSH_CLIENT_VERSION=${escapeShell(manifest.serverVersion)}${backendEnvironment} exec "$runtime" "$server" connect-or-start; else printf '${installRequiredMarker}\\n'; exit 86; fi`
 }
 
 const getControlPath = (location: RemoteLocation): string => {
@@ -99,6 +94,8 @@ const getSshArgs = (
     '-T',
     '-o',
     'BatchMode=yes',
+    '-o',
+    'ControlPersist=3h',
     '-o',
     'ConnectTimeout=10',
     '-o',

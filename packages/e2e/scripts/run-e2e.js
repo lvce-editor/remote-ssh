@@ -63,7 +63,9 @@ const createRemoteServerArtifacts = async (runtimeRoot) => {
   const artifactsRoot = join(runtimeRoot, 'artifacts')
   const nodeRoot = join(artifactsRoot, 'node-test', 'bin')
   const nodeArchiveName = 'node-test-linux-x64.tar.gz'
-  const nodeArchivePath = join(artifactsRoot, nodeArchiveName)
+  const providedNodeArchivePath = process.env.LVCE_REMOTE_SSH_TEST_NODE_ARCHIVE
+  const nodeArchivePath =
+    providedNodeArchivePath || join(artifactsRoot, nodeArchiveName)
   const serverArchiveName = 'lvce-remote-ssh-server-dev.tar.gz'
   const serverArchivePath = join(repositoryRoot, serverArchiveName)
   const remoteRoot = join(runtimeRoot, 'remote-server')
@@ -77,16 +79,18 @@ const createRemoteServerArtifacts = async (runtimeRoot) => {
       'src',
       'server.js',
     )
-  await mkdir(nodeRoot, { recursive: true })
-  await cp(process.execPath, join(nodeRoot, 'node'))
-  await chmod(join(nodeRoot, 'node'), 0o755)
-  await runProcessChecked('tar', [
-    '-czf',
-    nodeArchivePath,
-    '-C',
-    artifactsRoot,
-    'node-test',
-  ])
+  if (!providedNodeArchivePath) {
+    await mkdir(nodeRoot, { recursive: true })
+    await cp(process.execPath, join(nodeRoot, 'node'))
+    await chmod(join(nodeRoot, 'node'), 0o755)
+    await runProcessChecked('tar', [
+      '-czf',
+      nodeArchivePath,
+      '-C',
+      artifactsRoot,
+      'node-test',
+    ])
+  }
   return {
     env: {
       LVCE_REMOTE_SSH_NODE_ARCHIVE_NAME: nodeArchiveName,
@@ -95,12 +99,6 @@ const createRemoteServerArtifacts = async (runtimeRoot) => {
       LVCE_REMOTE_SSH_NODE_VERSION: 'test-node',
       LVCE_REMOTE_SSH_REMOTE_ROOT: remoteRoot,
       LVCE_REMOTE_SSH_BACKEND_SCRIPT: backendScript,
-      ...(process.env.LVCE_REMOTE_SSH_FILE_SYSTEM_PROCESS_PATH
-        ? {
-            LVCE_REMOTE_SSH_FILE_SYSTEM_PROCESS_PATH:
-              process.env.LVCE_REMOTE_SSH_FILE_SYSTEM_PROCESS_PATH,
-          }
-        : {}),
       LVCE_REMOTE_SSH_SERVER_ARCHIVE_NAME: serverArchiveName,
       LVCE_REMOTE_SSH_SERVER_ARCHIVE_SHA256: await getSha256(serverArchivePath),
       LVCE_REMOTE_SSH_SERVER_ARCHIVE_URL: pathToFileURL(serverArchivePath).href,
@@ -280,6 +278,7 @@ const prepareExtensions = async (runtimeRoot) => {
       for (const relativePath of [
         'builtin.remote-ssh/dist/remoteSshMain.js',
         'builtin.git/dist/gitMain.js',
+        'builtin.git/git-worker/dist/gitWorkerMain.js',
       ]) {
         staticConfig.files[`/${commitHash}/extensions/${relativePath}`] =
           headerIndex
@@ -436,7 +435,23 @@ const runRealSshTest = async () => {
     return
   }
 
-  const runtimeRoot = await mkdtemp(join(tmpdir(), 'lvce-remote-ssh-runtime-'))
+  const warmFolders = Array.from(
+    { length: 5 },
+    (_, index) => `warm-${index + 1}`,
+  )
+  await Promise.all(
+    warmFolders.map(async (folder, index) => {
+      const folderPath = join(sshServer.fixture.workspacePath, folder)
+      await mkdir(folderPath)
+      await writeFile(join(folderPath, `child-${index + 1}.txt`), folder)
+    }),
+  )
+
+  const runtimeParent =
+    process.env.LVCE_REMOTE_SSH_TEST_RUNTIME_PARENT || tmpdir()
+  const runtimeRoot = await mkdtemp(
+    join(runtimeParent, 'lvce-remote-ssh-runtime-'),
+  )
   let browser
   let installedExtensionPaths = []
   let lvceServer
@@ -493,7 +508,9 @@ const runRealSshTest = async () => {
     const page = await browser.newPage()
     page.on('console', (message) => {
       if (message.type() === 'error') {
-        console.error(`[browser:${message.type()}] ${message.text()}`)
+        console.error(
+          `[browser:${message.type()}] ${message.text()} ${JSON.stringify(message.location())}`,
+        )
       }
     })
     page.on('pageerror', (error) => {
@@ -540,6 +557,23 @@ const runRealSshTest = async () => {
     ).toBeVisible({
       timeout: 5_000,
     })
+    const folderReadDurations = []
+    for (const [index, folder] of warmFolders.entries()) {
+      const start = performance.now()
+      await page.locator(`.TreeItem[aria-label="${folder}"]`).click()
+      await expect(
+        page.locator(`.TreeItem[aria-label="child-${index + 1}.txt"]`),
+      ).toBeVisible({ timeout: 1_000 })
+      folderReadDurations.push(performance.now() - start)
+    }
+    const sortedDurations = folderReadDurations.toSorted((a, b) => a - b)
+    const median = sortedDurations[Math.floor(sortedDurations.length / 2)]
+    const p95 = sortedDurations[Math.ceil(sortedDurations.length * 0.95) - 1]
+    console.log(
+      `Warm remote folder expansion: median ${median.toFixed(1)} ms, p95 ${p95.toFixed(1)} ms`,
+    )
+    expect(median).toBeLessThanOrEqual(500)
+    expect(p95).toBeLessThanOrEqual(1_000)
     expect(sshServer.getConnectionCount()).toBe(connectionCount)
     expect(sshServer.getOutput()).not.toContain('python')
     await remoteFile.click()
@@ -564,6 +598,7 @@ const runRealSshTest = async () => {
 
     await waitForSavedFile(sshServer.filePath, sshServer.fixture.updatedContent)
 
+    await page.keyboard.press('Control+Backquote')
     await page.locator('.PanelTab[name="Terminals"]').click()
     const terminal = page.locator('.XtermTerminal')
     await expect(terminal).toBeVisible({ timeout: 30_000 })
@@ -580,7 +615,7 @@ const runRealSshTest = async () => {
     await page.keyboard.press('Control+Shift+F')
     const search = page.locator('.Search')
     await expect(search).toBeVisible({ timeout: 30_000 })
-    const searchInput = search.locator('input').first()
+    const searchInput = search.locator('textarea[name="SearchValue"]')
     await searchInput.fill('REMOTE_SEARCH_SENTINEL')
     await expect(search.locator('[role="status"]')).toHaveText(
       '1 result in 1 file',
@@ -595,8 +630,32 @@ const runRealSshTest = async () => {
     const sourceControl = page.locator('.SourceControl')
     await expect(sourceControl).toBeVisible({ timeout: 30_000 })
     await expect(sourceControl).toContainText('file.txt', { timeout: 30_000 })
-    const branch = page.locator('.StatusBarItem[data-name="git.selectBranch"]')
-    await expect(branch).toHaveText('main', { timeout: 30_000 })
+    await expect(
+      page.getByRole('button', { exact: true, name: 'main' }),
+    ).toBeVisible({ timeout: 30_000 })
+
+    await page.keyboard.press('Control+Shift+P')
+    const commandInput = page.locator('.QuickPick input')
+    await expect(commandInput).toBeVisible({ timeout: 30_000 })
+    await commandInput.fill('>Developer: Open Process Explorer')
+    await expect(
+      page.locator('.QuickPickItemLabel', {
+        hasText: 'Developer: Open Process Explorer',
+      }),
+    ).toBeVisible({ timeout: 30_000 })
+    await page.keyboard.press('Enter')
+    const processExplorer = page.locator('.ProcessExplorer')
+    await expect(processExplorer).toBeVisible({ timeout: 30_000 })
+    await expect(
+      processExplorer.locator('.ProcessExplorerRow'),
+    ).not.toHaveCount(0, { timeout: 30_000 })
+    await expect(processExplorer).toContainText('shared-process', {
+      timeout: 30_000,
+    })
+    await expect(processExplorer).toContainText(
+      'extension-host-helper-process',
+      { timeout: 30_000 },
+    )
   } finally {
     await cleanup([
       async () => browser?.close(),
@@ -631,7 +690,8 @@ const main = async () => {
 
 try {
   await main()
+  process.exit(0)
 } catch (error) {
   console.error(error)
-  process.exitCode = 1
+  process.exit(1)
 }
