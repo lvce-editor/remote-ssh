@@ -41,20 +41,31 @@ const getSha256 = async (filePath) => {
 }
 
 const downloadVerified = async (url, expectedSha256) => {
-  const response = await fetch(url)
-  if (!response.ok) {
-    throw new Error(
-      `Failed to download ${url}: ${response.status} ${response.statusText}`,
-    )
+  let lastError
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      const response = await fetch(url)
+      if (!response.ok) {
+        throw new Error(
+          `Failed to download ${url}: ${response.status} ${response.statusText}`,
+        )
+      }
+      const content = Buffer.from(await response.arrayBuffer())
+      const actualSha256 = createHash('sha256').update(content).digest('hex')
+      if (actualSha256 !== expectedSha256) {
+        throw new Error(
+          `Invalid SHA-256 for ${url}: expected ${expectedSha256}, received ${actualSha256}`,
+        )
+      }
+      return content
+    } catch (error) {
+      lastError = error
+      if (attempt < 3) {
+        await new Promise((resolve) => setTimeout(resolve, attempt * 1000))
+      }
+    }
   }
-  const content = Buffer.from(await response.arrayBuffer())
-  const actualSha256 = createHash('sha256').update(content).digest('hex')
-  if (actualSha256 !== expectedSha256) {
-    throw new Error(
-      `Invalid SHA-256 for ${url}: expected ${expectedSha256}, received ${actualSha256}`,
-    )
-  }
-  return content
+  throw lastError
 }
 
 const getStaticExtensionsPath = async (lvceServerDirectory) => {
