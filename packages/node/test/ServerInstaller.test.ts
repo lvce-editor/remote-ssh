@@ -179,7 +179,10 @@ void test('transfers archives into the setup version directory', () => {
   const previous = process.env.LVCE_REMOTE_SSH_REMOTE_ROOT
   process.env.LVCE_REMOTE_SSH_REMOTE_ROOT = "/tmp/root with ' quote"
   try {
-    const command = createTransferCommand("version with ' quote", 'server.tar.gz')
+    const command = createTransferCommand(
+      "version with ' quote",
+      'server.tar.gz',
+    )
     match(command, /version='version with '\\'' quote'/)
     match(command, /incoming="\$root\/incoming\/\$version"/)
     doesNotMatch(command, /incoming="\$root\/incoming\/'/)
