@@ -291,17 +291,24 @@ const transferFile = async (
   localPath: string,
   fileName: string,
 ): Promise<void> => {
-  const version = escapeShell(manifest.serverVersion)
+  const command = createTransferCommand(manifest.serverVersion, fileName)
+  const result = await runSsh(location, command, createReadStream(localPath))
+  if (result.code !== 0) {
+    throw new Error(result.stderr || `Failed to transfer ${fileName}`)
+  }
+}
+
+export const createTransferCommand = (
+  serverVersion: string,
+  fileName: string,
+): string => {
+  const version = escapeShell(serverVersion)
   const name = escapeShell(fileName)
   const configuredRoot = process.env.LVCE_REMOTE_SSH_REMOTE_ROOT
   const root = configuredRoot
     ? escapeShell(configuredRoot)
     : '"$HOME/.lvce-server"'
-  const command = `root=${root}; incoming="$root/incoming/${version}"; mkdir -p "$incoming"; chmod 700 "$root" "$root/incoming" "$incoming"; cat > "$incoming"/${name}`
-  const result = await runSsh(location, command, createReadStream(localPath))
-  if (result.code !== 0) {
-    throw new Error(result.stderr || `Failed to transfer ${fileName}`)
-  }
+  return `root=${root}; version=${version}; incoming="$root/incoming/$version"; mkdir -p "$incoming"; chmod 700 "$root" "$root/incoming" "$incoming"; cat > "$incoming"/${name}`
 }
 
 const transferArchives = async (
