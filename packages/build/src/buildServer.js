@@ -148,7 +148,10 @@ export const buildServer = async () => {
       '--no-fund',
       '--package-lock=false',
     ],
-    { cwd: lvceServerDirectory },
+    {
+      cwd: lvceServerDirectory,
+      shell: process.platform === 'win32',
+    },
   )
   await installBuiltinExtensions(serverBuildDirectory, lvceServerDirectory)
   await rm(serverArchivePath, { force: true })
