@@ -229,6 +229,7 @@ export const createSshServer = async () => {
   const filePath = join(workspacePath, 'file.txt')
   const folderPath = join(workspacePath, 'folder')
   const nestedFilePath = join(folderPath, 'nested.txt')
+  const searchFilePath = join(workspacePath, 'search.txt')
   const clientKeyPath = join(root, 'id_ed25519')
   const hostKeyPath = join(root, 'ssh_host_ed25519_key')
   const authorizedKeysPath = join(root, 'authorized_keys')
@@ -246,6 +247,41 @@ export const createSshServer = async () => {
     await mkdir(folderPath)
     await writeFile(filePath, initialContent)
     await writeFile(nestedFilePath, 'nested')
+    await writeFile(searchFilePath, 'REMOTE_SEARCH_SENTINEL\n')
+    await writeFile(join(workspacePath, '.gitignore'), 'ignored.txt\n')
+    await writeFile(
+      join(workspacePath, 'ignored.txt'),
+      'REMOTE_SEARCH_SENTINEL\n',
+    )
+    await runProcessChecked('git', [
+      '-C',
+      workspacePath,
+      'init',
+      '--initial-branch',
+      'main',
+    ])
+    await runProcessChecked('git', [
+      '-C',
+      workspacePath,
+      'config',
+      'user.name',
+      'Remote SSH Test',
+    ])
+    await runProcessChecked('git', [
+      '-C',
+      workspacePath,
+      'config',
+      'user.email',
+      'remote-ssh@example.com',
+    ])
+    await runProcessChecked('git', ['-C', workspacePath, 'add', '.'])
+    await runProcessChecked('git', [
+      '-C',
+      workspacePath,
+      'commit',
+      '-m',
+      'Initial commit',
+    ])
     await generateKey(sshKeygenPath, hostKeyPath)
     await generateKey(sshKeygenPath, clientKeyPath)
     await writeFile(
@@ -313,6 +349,7 @@ export const createSshServer = async () => {
         initialContent,
         target: `ssh -p ${port} ${user}@${host}:${workspacePath}`,
         updatedContent,
+        workspacePath,
       },
       async dispose() {
         await stopProcess(server)

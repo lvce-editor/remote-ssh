@@ -1,7 +1,7 @@
 {
   "name": "builtin.remote-ssh-server",
   "version": "0.0.0-dev",
-  "description": "Remote filesystem server for the built-in Remote SSH extension",
+  "description": "Remote workspace backend manager for the built-in Remote SSH extension",
   "type": "module",
   "main": "dist/lvce-remote-ssh-server.mjs",
   "scripts": {

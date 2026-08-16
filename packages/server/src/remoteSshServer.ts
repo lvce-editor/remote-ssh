@@ -4,6 +4,7 @@ import { closeSync, openSync } from 'node:fs'
 import {
   chmod,
   mkdir,
+  readdir,
   readFile,
   rename,
   rm,
@@ -13,10 +14,6 @@ import {
 import { createServer, createConnection, type Socket } from 'node:net'
 import { homedir } from 'node:os'
 import path from 'node:path'
-import {
-  execute,
-  type RemoteFileSystemRequest,
-} from './parts/FileSystem/FileSystem.ts'
 
 declare const __LVCE_REMOTE_SSH_SERVER_VERSION__: string
 
@@ -39,6 +36,9 @@ const clientVersion =
   process.env.LVCE_REMOTE_SSH_CLIENT_VERSION || serverVersion
 
 interface ServerState {
+  readonly backendPid: number
+  readonly backendPort: number
+  readonly backendToken: string
   readonly pid: number
   readonly protocolVersion: number
   readonly socketPath: string
@@ -46,27 +46,8 @@ interface ServerState {
   readonly version: string
 }
 
-interface RpcRequest {
-  readonly id: number
-  readonly method: string
-  readonly params: RemoteFileSystemRequest
-}
-
 const writeJson = (socket: Socket, value: unknown): void => {
   socket.write(`${JSON.stringify(value)}\n`)
-}
-
-const getError = (
-  error: unknown,
-): { readonly code?: number | string; readonly message: string } => {
-  if (error instanceof Error) {
-    const code = (error as NodeJS.ErrnoException).errno
-    return {
-      ...(code === undefined ? {} : { code }),
-      message: error.message,
-    }
-  }
-  return { message: String(error) }
 }
 
 const createLineReader = (
@@ -90,29 +71,6 @@ const createLineReader = (
   }
   socket.on('data', onData)
   return () => socket.off('data', onData)
-}
-
-const handleRpcLine = async (socket: Socket, line: string): Promise<void> => {
-  let request: RpcRequest
-  try {
-    request = JSON.parse(line) as RpcRequest
-    if (
-      !Number.isSafeInteger(request.id) ||
-      request.method !== 'fileSystem' ||
-      !request.params
-    ) {
-      throw new TypeError('Invalid RPC request')
-    }
-  } catch (error) {
-    writeJson(socket, { error: getError(error), id: null })
-    return
-  }
-  try {
-    const result = await execute(request.params)
-    writeJson(socket, { id: request.id, result })
-  } catch (error) {
-    writeJson(socket, { error: getError(error), id: request.id })
-  }
 }
 
 const readState = async (): Promise<ServerState | undefined> => {
@@ -147,6 +105,9 @@ const isCurrentState = (
 ): state is ServerState => {
   return Boolean(
     state &&
+    Number.isSafeInteger(state.backendPid) &&
+    Number.isSafeInteger(state.backendPort) &&
+    typeof state.backendToken === 'string' &&
     state.protocolVersion === protocolVersion &&
     state.version === serverVersion,
   )
@@ -168,6 +129,150 @@ const waitForServer = async (): Promise<ServerState> => {
     await new Promise((resolve) => setTimeout(resolve, 25))
   }
   throw new Error(`Remote SSH server did not start; see ${logPath}`)
+}
+
+const getAvailablePort = async (): Promise<number> => {
+  const server = createServer()
+  await new Promise<void>((resolve, reject) => {
+    server.once('error', reject)
+    server.listen(0, '127.0.0.1', resolve)
+  })
+  const address = server.address()
+  if (!address || typeof address === 'string') {
+    server.close()
+    throw new Error('Failed to allocate the remote workspace backend port')
+  }
+  const { port } = address
+  await new Promise<void>((resolve, reject) =>
+    server.close((error) => (error ? reject(error) : resolve())),
+  )
+  return port
+}
+
+const canConnect = async (port: number): Promise<boolean> => {
+  try {
+    const socket = await new Promise<Socket>((resolve, reject) => {
+      const candidate = createConnection({ host: '127.0.0.1', port })
+      candidate.once('error', reject)
+      candidate.once('connect', () => resolve(candidate))
+    })
+    socket.destroy()
+    return true
+  } catch {
+    return false
+  }
+}
+
+const stopWorkspaceBackend = (pid: number): void => {
+  try {
+    process.kill(process.platform === 'win32' ? pid : -pid, 'SIGTERM')
+  } catch {
+    // The workspace backend may have already stopped.
+  }
+}
+
+const getBackendScript = (): string => {
+  if (process.env.LVCE_REMOTE_SSH_BACKEND_SCRIPT) {
+    return process.env.LVCE_REMOTE_SSH_BACKEND_SCRIPT
+  }
+  return path.join(
+    path.dirname(process.argv[1]),
+    'lvce-server',
+    'node_modules',
+    '@lvce-editor',
+    'server',
+    'src',
+    'server.js',
+  )
+}
+
+const getBuiltinExtensionsPath = async (): Promise<string | undefined> => {
+  if (process.env.LVCE_REMOTE_SSH_BUILTIN_EXTENSIONS_PATH) {
+    return process.env.LVCE_REMOTE_SSH_BUILTIN_EXTENSIONS_PATH
+  }
+  const bundledExtensionsPath = path.join(
+    path.dirname(process.argv[1]),
+    'lvce-server',
+    'extensions',
+  )
+  const bundledExtensionsStat = await stat(bundledExtensionsPath).catch(
+    () => undefined,
+  )
+  if (bundledExtensionsStat?.isDirectory()) {
+    return bundledExtensionsPath
+  }
+  const staticRoot = path.join(
+    path.dirname(process.argv[1]),
+    'lvce-server',
+    'node_modules',
+    '@lvce-editor',
+    'static-server',
+    'static',
+  )
+  try {
+    const entries = await readdir(staticRoot, { withFileTypes: true })
+    for (const entry of entries) {
+      if (!entry.isDirectory()) {
+        continue
+      }
+      const extensionsPath = path.join(staticRoot, entry.name, 'extensions')
+      const extensionsStat = await stat(extensionsPath).catch(() => undefined)
+      if (extensionsStat?.isDirectory()) {
+        return extensionsPath
+      }
+    }
+  } catch {
+    // The backend reports a useful error if a built-in node extension is requested later.
+  }
+  return undefined
+}
+
+const startWorkspaceBackend = async (
+  log: number,
+): Promise<{
+  readonly pid: number
+  readonly port: number
+  readonly token: string
+}> => {
+  const port = await getAvailablePort()
+  const token = randomBytes(32).toString('hex')
+  const builtinExtensionsPath = await getBuiltinExtensionsPath()
+  const child = spawn(
+    process.execPath,
+    [
+      getBackendScript(),
+      '--as-remote-ssh-server',
+      `--port=${port}`,
+      `--connection-token=${token}`,
+      `--idle-timeout=${idleTimeout}`,
+    ],
+    {
+      detached: true,
+      env: {
+        ...process.env,
+        ...(builtinExtensionsPath
+          ? {
+              BUILTIN_EXTENSIONS_PATH: builtinExtensionsPath,
+              LVCE_REMOTE_EXTENSIONS_PATH: builtinExtensionsPath,
+            }
+          : {}),
+      },
+      stdio: ['ignore', log, log],
+    },
+  )
+  child.unref()
+  const deadline = Date.now() + 30_000
+  while (Date.now() < deadline) {
+    if (await canConnect(port)) {
+      return { pid: child.pid!, port, token }
+    }
+    if (child.exitCode !== null) {
+      break
+    }
+    await new Promise((resolve) => setTimeout(resolve, 25))
+  }
+  stopWorkspaceBackend(child.pid!)
+  throw new Error(`LVCE remote workspace backend did not start; see ${logPath}`)
 }
 
 const acquireLock = async (): Promise<() => Promise<void>> => {
@@ -245,6 +350,9 @@ const runDaemon = async (): Promise<void> => {
   await chmod(runDirectory, 0o700)
   await rm(socketPath, { force: true })
   const token = randomBytes(32).toString('hex')
+  const log = openSync(logPath, 'a', 0o600)
+  const backend = await startWorkspaceBackend(log)
+  closeSync(log)
   let connectionCount = 0
   let idleTimer: NodeJS.Timeout | undefined
   const server = createServer((socket) => {
@@ -277,7 +385,18 @@ const runDaemon = async (): Promise<void> => {
           authenticated = true
           writeJson(socket, {
             arch: process.arch,
-            capabilities: ['fileSystem'],
+            backend: {
+              port: state.backendPort,
+              token: state.backendToken,
+            },
+            capabilities: [
+              'extensionHostHelperProcess',
+              'fileSystemProcess',
+              'processExplorer',
+              'searchProcess',
+              'terminalProcess',
+              'workspaceBackend',
+            ],
             clientVersion: value.clientVersion,
             platform: process.platform,
             protocolVersion,
@@ -289,7 +408,7 @@ const runDaemon = async (): Promise<void> => {
         }
         return
       }
-      void handleRpcLine(socket, line)
+      socket.destroy(new Error('Unexpected management protocol message'))
     })
     socket.once('close', () => {
       stopReading()
@@ -306,6 +425,9 @@ const runDaemon = async (): Promise<void> => {
   })
   await chmod(socketPath, 0o600)
   const state: ServerState = {
+    backendPid: backend.pid,
+    backendPort: backend.port,
+    backendToken: backend.token,
     pid: process.pid,
     protocolVersion,
     socketPath,
@@ -321,6 +443,7 @@ const runDaemon = async (): Promise<void> => {
       await rm(statePath, { force: true })
     }
     await rm(socketPath, { force: true })
+    stopWorkspaceBackend(backend.pid)
   }
   process.once('SIGTERM', () => server.close())
   process.once('SIGINT', () => server.close())

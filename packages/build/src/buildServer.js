@@ -1,7 +1,16 @@
 import * as esbuild from 'esbuild'
 import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { brotliDecompressSync } from 'node:zlib'
+import {
+  cp,
+  mkdir,
+  readFile,
+  readdir,
+  rm,
+  stat,
+  writeFile,
+} from 'node:fs/promises'
 import path from 'node:path'
 import { promisify } from 'node:util'
 import { root } from './root.js'
@@ -13,10 +22,80 @@ export const nodeArchiveName = `node-${nodeVersion}-linux-x64.tar.gz`
 export const nodeArchiveSha256 =
   '44836872d9aec49f1e6b52a9a922872db9a2b02d235a616a5681b6a85fec8d89'
 export const nodeArchiveUrl = `https://nodejs.org/dist/${nodeVersion}/${nodeArchiveName}`
+export const gitExtensionVersion = 'v5.21.0'
+export const gitExtensionArchiveName = `git-${gitExtensionVersion}.tar.br`
+export const gitExtensionArchiveSha256 =
+  '34bd50ece374b67e358ccf7ff45217cad223e91441c2a6442fbb2bdc9ba8cc1e'
+export const gitExtensionArchiveUrl = `https://github.com/lvce-editor/git/releases/download/${gitExtensionVersion}/${gitExtensionArchiveName}`
+
+const rootPackage = JSON.parse(
+  await readFile(path.join(root, 'package.json'), 'utf8'),
+)
+export const lvceServerVersion =
+  process.env.LVCE_REMOTE_SSH_LVCE_SERVER_VERSION ||
+  rootPackage.devDependencies['@lvce-editor/server']
 
 const getSha256 = async (filePath) => {
   const content = await readFile(filePath)
   return createHash('sha256').update(content).digest('hex')
+}
+
+const downloadVerified = async (url, expectedSha256) => {
+  const response = await fetch(url)
+  if (!response.ok) {
+    throw new Error(
+      `Failed to download ${url}: ${response.status} ${response.statusText}`,
+    )
+  }
+  const content = Buffer.from(await response.arrayBuffer())
+  const actualSha256 = createHash('sha256').update(content).digest('hex')
+  if (actualSha256 !== expectedSha256) {
+    throw new Error(
+      `Invalid SHA-256 for ${url}: expected ${expectedSha256}, received ${actualSha256}`,
+    )
+  }
+  return content
+}
+
+const getStaticExtensionsPath = async (lvceServerDirectory) => {
+  const staticRoot = path.join(
+    lvceServerDirectory,
+    'node_modules',
+    '@lvce-editor',
+    'static-server',
+    'static',
+  )
+  const entries = await readdir(staticRoot, { withFileTypes: true })
+  for (const entry of entries) {
+    if (entry.isDirectory()) {
+      const extensionsPath = path.join(staticRoot, entry.name, 'extensions')
+      const extensionsStat = await stat(extensionsPath).catch(() => undefined)
+      if (extensionsStat?.isDirectory()) {
+        return extensionsPath
+      }
+    }
+  }
+  throw new Error(`LVCE static server has no extension bundle in ${staticRoot}`)
+}
+
+const installBuiltinExtensions = async (
+  serverBuildDirectory,
+  lvceServerDirectory,
+) => {
+  const extensionsPath = path.join(lvceServerDirectory, 'extensions')
+  await cp(await getStaticExtensionsPath(lvceServerDirectory), extensionsPath, {
+    recursive: true,
+  })
+  const archive = await downloadVerified(
+    gitExtensionArchiveUrl,
+    gitExtensionArchiveSha256,
+  )
+  const tarPath = path.join(serverBuildDirectory, 'git-extension.tar')
+  const gitPath = path.join(extensionsPath, 'builtin.git')
+  await mkdir(gitPath, { recursive: true })
+  await writeFile(tarPath, brotliDecompressSync(archive))
+  await execFileAsync('tar', ['-xf', tarPath, '-C', gitPath])
+  await rm(tarPath, { force: true })
 }
 
 export const buildServer = async () => {
@@ -43,13 +122,31 @@ export const buildServer = async () => {
     platform: 'node',
     target: 'node24',
   })
+  const lvceServerDirectory = path.join(serverBuildDirectory, 'lvce-server')
+  await mkdir(lvceServerDirectory, { recursive: true })
+  await writeFile(
+    path.join(lvceServerDirectory, 'package.json'),
+    `${JSON.stringify({ private: true, dependencies: { '@lvce-editor/server': lvceServerVersion } }, undefined, 2)}\n`,
+  )
+  await execFileAsync(
+    'npm',
+    [
+      'install',
+      '--omit=dev',
+      '--no-audit',
+      '--no-fund',
+      '--package-lock=false',
+    ],
+    { cwd: lvceServerDirectory },
+  )
+  await installBuiltinExtensions(serverBuildDirectory, lvceServerDirectory)
   await rm(serverArchivePath, { force: true })
   await execFileAsync('tar', [
     '-czf',
     serverArchivePath,
     '-C',
     serverBuildDirectory,
-    serverFileName,
+    '.',
   ])
   const serverArchiveSha256 = await getSha256(serverArchivePath)
   const serverArchiveUrl = `https://github.com/lvce-editor/remote-ssh/releases/download/${version}/${serverArchiveName}`
@@ -58,6 +155,8 @@ export const buildServer = async () => {
     `${JSON.stringify(
       {
         nodeVersion,
+        gitExtensionVersion,
+        lvceServerVersion,
         platforms: {
           'linux-x64': {
             node: {

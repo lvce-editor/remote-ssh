@@ -1,30 +1,67 @@
 import * as RemoteSshUri from '../RemoteSshUri/RemoteSshUri.ts'
-import { runSsh, type RunSsh } from '../SshTransport/SshTransport.ts'
+import {
+  connectWorkspaceBackend,
+  invokeWorkspaceBackend,
+  type InvokeBackend,
+  type WorkspaceBackend,
+} from '../SshTransport/SshTransport.ts'
 
-const invoke = async (
-  operation: string,
+const toFileUri = (filePath: string): string => {
+  const url = new URL('file:///')
+  url.pathname = filePath
+  return url.href
+}
+
+const invoke = (
+  method: string,
   uri: string,
-  extra: Readonly<Record<string, unknown>> = {},
-  run: RunSsh = runSsh,
+  params: readonly unknown[] = [],
+  invokeBackend: InvokeBackend = invokeWorkspaceBackend,
 ): Promise<unknown> => {
   const location = RemoteSshUri.parse(uri)
-  return run(location, {
-    operation,
-    path: location.path,
-    ...extra,
-  })
+  return invokeBackend(
+    location,
+    'file-system-process',
+    method,
+    toFileUri(location.path),
+    ...params,
+  )
 }
 
-export const connect = (uri: string): Promise<unknown> => {
-  return invoke('connect', uri)
+const requireMutable = (filePath: string): void => {
+  if (filePath === '/') {
+    throw new Error('Cannot modify the remote root folder')
+  }
 }
 
-export const readDirWithFileTypes = (uri: string): Promise<unknown> => {
-  return invoke('readDirWithFileTypes', uri)
+const sortDirents = (value: unknown): readonly unknown[] => {
+  if (!Array.isArray(value)) {
+    throw new TypeError('Remote SSH directory read returned invalid entries')
+  }
+  return value
+    .map((entry) => (entry?.type === 9 ? { ...entry, type: 7 } : entry))
+    .toSorted((a, b) => String(a?.name).localeCompare(String(b?.name)))
+}
+
+export const connect = async (uri: string): Promise<WorkspaceBackend> => {
+  const location = RemoteSshUri.parse(uri)
+  const type = await invoke('FileSystem.stat', uri)
+  if (type !== 3) {
+    throw new Error(`Not a directory: ${location.path}`)
+  }
+  return {
+    ...(await connectWorkspaceBackend(location)),
+    workspacePath: location.path,
+  }
+}
+
+export const readDirWithFileTypes = async (uri: string): Promise<unknown> => {
+  const result = await invoke('FileSystem.readDirWithFileTypes', uri)
+  return sortDirents(result)
 }
 
 export const readFile = async (uri: string): Promise<string> => {
-  const result = await invoke('readFile', uri)
+  const result = await invoke('FileSystem.readFile', uri, ['base64'])
   if (typeof result !== 'string') {
     throw new TypeError('Remote SSH read returned invalid content')
   }
@@ -32,17 +69,24 @@ export const readFile = async (uri: string): Promise<string> => {
 }
 
 export const writeFile = (uri: string, content: string): Promise<unknown> => {
-  return invoke('writeFile', uri, {
-    content: Buffer.from(content).toString('base64'),
-  })
+  const location = RemoteSshUri.parse(uri)
+  requireMutable(location.path)
+  return invoke('FileSystem.writeFile', uri, [
+    Buffer.from(content).toString('base64'),
+    'base64',
+  ])
 }
 
 export const mkdir = (uri: string): Promise<unknown> => {
-  return invoke('mkdir', uri)
+  const location = RemoteSshUri.parse(uri)
+  requireMutable(location.path)
+  return invoke('FileSystem.mkdir', uri)
 }
 
 export const remove = (uri: string): Promise<unknown> => {
-  return invoke('remove', uri)
+  const location = RemoteSshUri.parse(uri)
+  requireMutable(location.path)
+  return invoke('FileSystem.forceRemove', uri)
 }
 
 export const rename = async (
@@ -54,11 +98,34 @@ export const rename = async (
   if (oldLocation.identity !== newLocation.identity) {
     throw new Error('Cannot rename across SSH hosts')
   }
-  return runSsh(oldLocation, {
-    newPath: newLocation.path,
-    operation: 'rename',
-    path: oldLocation.path,
-  })
+  requireMutable(oldLocation.path)
+  requireMutable(newLocation.path)
+  try {
+    await invokeWorkspaceBackend(
+      newLocation,
+      'file-system-process',
+      'FileSystem.stat',
+      toFileUri(newLocation.path),
+    )
+    const error = new Error(
+      `File exists: ${newLocation.path}`,
+    ) as NodeJS.ErrnoException
+    error.code = 'EEXIST'
+    throw error
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+      throw error
+    }
+  }
+  return invokeWorkspaceBackend(
+    oldLocation,
+    'file-system-process',
+    'FileSystem.rename',
+    toFileUri(oldLocation.path),
+    toFileUri(newLocation.path),
+  )
 }
 
 export const _invoke = invoke
+export const _sortDirents = sortDirents
+export const _toFileUri = toFileUri
