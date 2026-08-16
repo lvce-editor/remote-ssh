@@ -40,7 +40,11 @@ jobs:
           node-version-file: '.nvmrc'
       - run: npm ci
       - run: npm run build
+        env:
+          LVCE_REMOTE_SSH_SERVER_VERSION: ${{ needs.create-release.outputs.version }}
       - run: npm run build:static
+        env:
+          LVCE_REMOTE_SSH_SERVER_VERSION: ${{ needs.create-release.outputs.version }}
       - run: npm test
       - run: npm run type-check
       - run: npm run lint
@@ -51,6 +55,14 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: gh release upload "${{ needs.create-release.outputs.version }}" "remote-ssh-${{ needs.create-release.outputs.version }}.tar.br"
+      - name: Upload remote server archive
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "${{ needs.create-release.outputs.version }}" "lvce-remote-ssh-server-${{ needs.create-release.outputs.version }}.tar.gz"
+      - name: Upload remote server manifest
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "${{ needs.create-release.outputs.version }}" "lvce-remote-ssh-server-manifest-${{ needs.create-release.outputs.version }}.json"
       - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

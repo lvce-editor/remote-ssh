@@ -1,0 +1,12 @@
+{
+  "name": "builtin.remote-ssh-server",
+  "version": "0.0.0-dev",
+  "description": "Remote workspace backend manager for the built-in Remote SSH extension",
+  "type": "module",
+  "main": "dist/lvce-remote-ssh-server.mjs",
+  "scripts": {
+    "test": "node --test \"test/**/*.test.ts\""
+  },
+  "author": "Lvce Editor",
+  "license": "MIT"
+}

@@ -2,6 +2,7 @@ import { packageExtension } from '@lvce-editor/package-extension'
 import * as esbuild from 'esbuild'
 import fs from 'node:fs'
 import path from 'node:path'
+import { buildServer } from './buildServer.js'
 import { root } from './root.js'
 
 const extension = path.join(root, 'packages', 'extension')
@@ -16,6 +17,8 @@ fs.copyFileSync(
   path.join(outdir, 'extension.json'),
 )
 
+const server = await buildServer()
+
 await esbuild.build({
   bundle: true,
   entryPoints: [path.join(extension, 'src', 'remoteSshMain.ts')],
@@ -28,6 +31,7 @@ await esbuild.build({
 
 await esbuild.build({
   bundle: true,
+  define: server.define,
   entryPoints: [
     path.join(root, 'packages', 'node', 'src', 'remoteSshClient.ts'),
   ],

@@ -1,6 +1,12 @@
 import { expect, jest, test } from '@jest/globals'
 import { connect, placeholder } from '../src/parts/Connect/Connect.ts'
 
+const backend = {
+  token: 'secret',
+  url: 'ws://127.0.0.1:45123',
+  workspacePath: '/work',
+}
+
 test('cancellation leaves the workspace unchanged', async () => {
   const showInput = jest.fn(
     async (_options?: { readonly placeholder?: string }) => undefined,
@@ -31,10 +37,10 @@ test.each(['', ' '.repeat(3), '\n\t'])(
   },
 )
 
-test('connects and switches to the remote root', async () => {
+test('connects and switches to the remote backend', async () => {
   const showInput = jest.fn(async () => '  user@example.com  ')
   const setUri = jest.fn(async (_uri: string) => {})
-  const connectRemote = jest.fn(async (_uri: string) => {})
+  const connectRemote = jest.fn(async (_uri: string) => backend)
   const getHosts = jest.fn(async () => [] as readonly string[])
 
   await connect(
@@ -46,7 +52,10 @@ test('connects and switches to the remote root', async () => {
   )
 
   expect(connectRemote).toHaveBeenCalledWith('remote-ssh://user@example.com/')
-  expect(setUri).toHaveBeenCalledWith('remote-ssh://user@example.com/')
+  expect(setUri.mock.calls).toContainEqual([
+    'remote-ssh://user@example.com/',
+    backend,
+  ])
 })
 
 test('does not switch workspaces when SSH connection fails', async () => {
@@ -67,7 +76,7 @@ test('shows SSH config hosts and accepts a selected host', async () => {
   const showInput = jest.fn(async () => undefined)
   const showPick = jest.fn(async (_options: unknown) => 'staging')
   const setUri = jest.fn(async (_uri: string) => {})
-  const connectRemote = jest.fn(async (_uri: string) => {})
+  const connectRemote = jest.fn(async (_uri: string) => backend)
   const getHosts = jest.fn(async () => ['work', 'staging'])
 
   await connect(
@@ -89,14 +98,14 @@ test('shows SSH config hosts and accepts a selected host', async () => {
     placeholder,
   })
   expect(connectRemote).toHaveBeenCalledWith('remote-ssh://staging/')
-  expect(setUri).toHaveBeenCalledWith('remote-ssh://staging/')
+  expect(setUri.mock.calls).toContainEqual(['remote-ssh://staging/', backend])
 })
 
 test('accepts a free-form target while showing SSH config hosts', async () => {
   const showInput = jest.fn(async () => undefined)
   const showPick = jest.fn(async (_options: unknown) => 'user@example.com')
   const setUri = jest.fn(async (_uri: string) => {})
-  const connectRemote = jest.fn(async (_uri: string) => {})
+  const connectRemote = jest.fn(async (_uri: string) => backend)
   const getHosts = jest.fn(async () => ['work'])
 
   await connect(
@@ -128,7 +137,7 @@ test('falls back to free-form input when configured hosts cannot be read', async
   const showInput = jest.fn(async (_options: unknown) => 'user@example.com')
   const showPick = jest.fn(async (_options: unknown) => undefined)
   const setUri = jest.fn(async (_uri: string) => {})
-  const connectRemote = jest.fn(async (_uri: string) => {})
+  const connectRemote = jest.fn(async (_uri: string) => backend)
   const getHosts = jest.fn(async (): Promise<readonly string[]> => {
     throw new Error('RPC unavailable')
   })

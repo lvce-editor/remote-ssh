@@ -1,6 +1,7 @@
 import * as esbuild from 'esbuild'
 import fs from 'node:fs'
 import path from 'node:path'
+import { buildServer } from './buildServer.js'
 import { root } from './root.js'
 
 const extension = path.join(root, 'packages', 'extension')
@@ -8,6 +9,8 @@ const outdir = path.join(extension, 'dist')
 
 fs.rmSync(outdir, { force: true, recursive: true })
 fs.mkdirSync(outdir, { recursive: true })
+
+const server = await buildServer()
 
 await esbuild.build({
   bundle: true,
@@ -22,6 +25,7 @@ await esbuild.build({
 
 await esbuild.build({
   bundle: true,
+  define: server.define,
   entryPoints: [
     path.join(root, 'packages', 'node', 'src', 'remoteSshClient.ts'),
   ],

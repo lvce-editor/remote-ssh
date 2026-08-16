@@ -1,12 +1,11 @@
-import { deepStrictEqual, throws } from 'node:assert/strict'
+import { match, strictEqual } from 'node:assert/strict'
 import { test } from 'node:test'
-import { marker } from '../src/parts/RemoteHelper/RemoteHelper.ts'
 import {
+  _getRemoteCommand,
   _getSshArgs,
-  _parseResponse,
 } from '../src/parts/SshTransport/SshTransport.ts'
 
-void test('builds non-interactive OpenSSH arguments', () => {
+void test('builds one non-interactive persistent SSH command', () => {
   const args = _getSshArgs({
     identity: '["user","example.com","2222"]',
     path: '/',
@@ -14,29 +13,19 @@ void test('builds non-interactive OpenSSH arguments', () => {
     target: 'user@example.com',
   })
 
-  deepStrictEqual(args.slice(0, 11), [
-    '-T',
-    '-o',
-    'BatchMode=yes',
-    '-o',
-    'ConnectTimeout=10',
-    '-o',
-    'StrictHostKeyChecking=accept-new',
-    '-p',
-    '2222',
-    '--',
-    'user@example.com',
-  ])
+  strictEqual(args[0], '-M')
+  strictEqual(args.includes('-S'), true)
+  strictEqual(args.includes('-T'), true)
+  strictEqual(args.includes('ControlPersist=3h'), true)
+  strictEqual(args.at(-2), 'user@example.com')
+  match(args.at(-1) || '', /connect-or-start/)
+  match(args.at(-1) || '', /__LVCE_REMOTE_SSH_INSTALL_REQUIRED__/)
 })
 
-void test('parses a marked helper response after login output', () => {
-  deepStrictEqual(
-    _parseResponse(`Welcome\n${marker}{"ok":true,"result":[1]}\n`),
-    { ok: true, result: [1] },
-  )
-})
-
-void test('rejects missing and invalid helper responses', () => {
-  throws(() => _parseResponse('Welcome\n'), /no response/)
-  throws(() => _parseResponse(`${marker}{bad json}`), /invalid response/)
+void test('uses versioned private runtime and server paths', () => {
+  const command = _getRemoteCommand()
+  match(command, /\$root\/runtimes\/v24\.15\.0\/bin\/node/)
+  match(command, /\$root\/servers\/dev\/lvce-remote-ssh-server\.mjs/)
+  match(command, /LVCE_REMOTE_SSH_CLIENT_VERSION='dev'/)
+  strictEqual(command.includes('python'), false)
 })

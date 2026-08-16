@@ -4,6 +4,8 @@ coverage
 dist
 dist2
 extension.tar.br
+lvce-remote-ssh-server-*.tar.gz
+lvce-remote-ssh-server-manifest-*.json
 *.log
 *.tsbuildinfo
 node_modules

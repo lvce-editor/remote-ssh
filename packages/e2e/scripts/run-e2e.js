@@ -1,4 +1,6 @@
 import { fork, spawn } from 'node:child_process'
+import { createHash } from 'node:crypto'
+import { createServer as createHttpServer } from 'node:http'
 import {
   access,
   chmod,
@@ -32,6 +34,129 @@ const testRunnerPath = join(
 
 const sleep = async (milliseconds) => {
   await new Promise((resolve) => setTimeout(resolve, milliseconds))
+}
+
+const getSha256 = async (filePath) => {
+  return createHash('sha256')
+    .update(await readFile(filePath))
+    .digest('hex')
+}
+
+const runProcessChecked = async (command, args) => {
+  const child = spawn(command, args, { stdio: ['ignore', 'pipe', 'pipe'] })
+  const stdout = []
+  const stderr = []
+  child.stdout.on('data', (chunk) => stdout.push(String(chunk)))
+  child.stderr.on('data', (chunk) => stderr.push(String(chunk)))
+  const { promise, reject, resolve } = Promise.withResolvers()
+  child.once('error', reject)
+  child.once('close', (code) => {
+    if (code !== 0) {
+      reject(new Error(stderr.join('') || stdout.join('')))
+      return
+    }
+    resolve()
+  })
+  return promise
+}
+
+const createRemoteServerArtifacts = async (runtimeRoot) => {
+  const artifactsRoot = join(runtimeRoot, 'artifacts')
+  const nodeRoot = join(artifactsRoot, 'node-test', 'bin')
+  const nodeArchiveName = 'node-test-linux-x64.tar.gz'
+  const providedNodeArchivePath = process.env.LVCE_REMOTE_SSH_TEST_NODE_ARCHIVE
+  const nodeArchivePath =
+    providedNodeArchivePath || join(artifactsRoot, nodeArchiveName)
+  const serverArchiveName = 'lvce-remote-ssh-server-dev.tar.gz'
+  const serverArchivePath = join(repositoryRoot, serverArchiveName)
+  const remoteRoot = join(runtimeRoot, 'remote-server')
+  const backendScript =
+    process.env.LVCE_REMOTE_SSH_BACKEND_SCRIPT ||
+    join(
+      repositoryRoot,
+      'node_modules',
+      '@lvce-editor',
+      'server',
+      'src',
+      'server.js',
+    )
+  if (!providedNodeArchivePath) {
+    await mkdir(nodeRoot, { recursive: true })
+    await cp(process.execPath, join(nodeRoot, 'node'))
+    await chmod(join(nodeRoot, 'node'), 0o755)
+    await runProcessChecked('tar', [
+      '-czf',
+      nodeArchivePath,
+      '-C',
+      artifactsRoot,
+      'node-test',
+    ])
+  }
+  const archivePaths = new Map([
+    [`/${nodeArchiveName}`, nodeArchivePath],
+    [`/${serverArchiveName}`, serverArchivePath],
+  ])
+  let requestCount = 0
+  const artifactServer = createHttpServer(async (request, response) => {
+    const archivePath = archivePaths.get(request.url || '')
+    if (!archivePath) {
+      response.statusCode = 404
+      response.end()
+      return
+    }
+    requestCount++
+    response.end(await readFile(archivePath))
+  })
+  await new Promise((resolve, reject) => {
+    artifactServer.once('error', reject)
+    artifactServer.listen(0, '127.0.0.1', resolve)
+  })
+  const address = artifactServer.address()
+  if (!address || typeof address === 'string') {
+    throw new Error('Failed to determine the archive server port')
+  }
+  const archiveBaseUrl = `http://127.0.0.1:${address.port}`
+  return {
+    artifactServer,
+    env: {
+      LVCE_REMOTE_SSH_NODE_ARCHIVE_NAME: nodeArchiveName,
+      LVCE_REMOTE_SSH_NODE_ARCHIVE_SHA256: await getSha256(nodeArchivePath),
+      LVCE_REMOTE_SSH_NODE_ARCHIVE_URL: `${archiveBaseUrl}/${nodeArchiveName}`,
+      LVCE_REMOTE_SSH_NODE_VERSION: 'test-node',
+      LVCE_REMOTE_SSH_FORCE_LOCAL_TRANSFER: '1',
+      LVCE_REMOTE_SSH_REMOTE_ROOT: remoteRoot,
+      LVCE_REMOTE_SSH_BACKEND_SCRIPT: backendScript,
+      LVCE_REMOTE_SSH_SERVER_ARCHIVE_NAME: serverArchiveName,
+      LVCE_REMOTE_SSH_SERVER_ARCHIVE_SHA256: await getSha256(serverArchivePath),
+      LVCE_REMOTE_SSH_SERVER_ARCHIVE_URL: `${archiveBaseUrl}/${serverArchiveName}`,
+      LVCE_REMOTE_SSH_SERVER_VERSION: 'dev',
+    },
+    getRequestCount: () => requestCount,
+    remoteRoot,
+  }
+}
+
+const closeServer = (server) => {
+  if (!server) {
+    return Promise.resolve()
+  }
+  return new Promise((resolve, reject) => {
+    server.close((error) => (error ? reject(error) : resolve()))
+  })
+}
+
+const stopRemoteServer = async (remoteRoot) => {
+  if (!remoteRoot) {
+    return
+  }
+  try {
+    const state = JSON.parse(
+      await readFile(join(remoteRoot, 'run', 'server-dev.json'), 'utf8'),
+    )
+    process.kill(state.pid, 'SIGTERM')
+  } catch {
+    // The remote server may not have started or may already have exited.
+  }
 }
 
 const getAvailablePort = async () => {
@@ -105,6 +230,9 @@ const runPromptTest = async () => {
 }
 
 const getBuiltinExtensionsPath = async () => {
+  if (process.env.LVCE_REMOTE_SSH_LOCAL_LVCE_DIST) {
+    return join(process.env.LVCE_REMOTE_SSH_LOCAL_LVCE_DIST, 'extensions')
+  }
   const sharedProcessEntryPath = fileURLToPath(
     import.meta.resolve('@lvce-editor/shared-process'),
   )
@@ -121,21 +249,39 @@ const getBuiltinExtensionsPath = async () => {
 
 const prepareExtensions = async (runtimeRoot) => {
   const builtinExtensionsPath = await getBuiltinExtensionsPath()
-  const builtinExtensionPath = join(builtinExtensionsPath, 'builtin.remote-ssh')
+  const gitExtensionPath = join(
+    repositoryRoot,
+    '.tmp',
+    'remote-ssh-server',
+    'lvce-server',
+    'extensions',
+    'builtin.git',
+  )
+  const extensions = [
+    { id: 'builtin.remote-ssh', source: extensionPath },
+    { id: 'builtin.git', source: gitExtensionPath },
+  ]
+  const installedExtensionPaths = extensions.map(({ id }) =>
+    join(builtinExtensionsPath, id),
+  )
   let staticConfigContent
   let staticConfigPath
-  try {
-    await access(builtinExtensionPath)
-    throw new Error(
-      `Refusing to replace existing built-in extension: ${builtinExtensionPath}`,
-    )
-  } catch (error) {
-    if (error && error.code !== 'ENOENT') {
-      throw error
+  for (const installedExtensionPath of installedExtensionPaths) {
+    try {
+      await access(installedExtensionPath)
+      throw new Error(
+        `Refusing to replace existing built-in extension: ${installedExtensionPath}`,
+      )
+    } catch (error) {
+      if (error && error.code !== 'ENOENT') {
+        throw error
+      }
     }
   }
   try {
-    await cp(extensionPath, builtinExtensionPath, { recursive: true })
+    for (const [index, { source }] of extensions.entries()) {
+      await cp(source, installedExtensionPaths[index], { recursive: true })
+    }
 
     const testExtensionPath = join(runtimeRoot, 'extension')
     await cp(extensionPath, testExtensionPath, { recursive: true })
@@ -146,36 +292,43 @@ const prepareExtensions = async (runtimeRoot) => {
       `${JSON.stringify({ ...manifest, builtin: true }, undefined, 2)}\n`,
     )
 
-    staticConfigPath = join(
-      builtinExtensionsPath,
-      '..',
-      '..',
-      '..',
-      'config.json',
-    )
-    staticConfigContent = await readFile(staticConfigPath, 'utf8')
-    const staticConfig = JSON.parse(staticConfigContent)
-    const headerIndex = staticConfig.headers.length
-    staticConfig.headers.push({
-      'Cache-Control': 'no-store',
-      'Content-Security-Policy':
-        "default-src 'none'; connect-src 'self'; script-src 'self';",
-      'Content-Type': 'text/javascript',
-      'Cross-Origin-Embedder-Policy': 'require-corp',
-      'Cross-Origin-Resource-Policy': 'same-origin',
-    })
-    const commitHash = basename(dirname(builtinExtensionsPath))
-    staticConfig.files[
-      `/${commitHash}/extensions/builtin.remote-ssh/dist/remoteSshMain.js`
-    ] = headerIndex
-    await writeFile(
-      staticConfigPath,
-      `${JSON.stringify(staticConfig, undefined, 2)}\n`,
-    )
+    if (!process.env.LVCE_REMOTE_SSH_LOCAL_LVCE_DIST) {
+      staticConfigPath = join(
+        builtinExtensionsPath,
+        '..',
+        '..',
+        '..',
+        'config.json',
+      )
+      staticConfigContent = await readFile(staticConfigPath, 'utf8')
+      const staticConfig = JSON.parse(staticConfigContent)
+      const headerIndex = staticConfig.headers.length
+      staticConfig.headers.push({
+        'Cache-Control': 'no-store',
+        'Content-Security-Policy':
+          "default-src 'none'; connect-src 'self' ws://127.0.0.1:* ws://localhost:*; script-src 'self';",
+        'Content-Type': 'text/javascript',
+        'Cross-Origin-Embedder-Policy': 'require-corp',
+        'Cross-Origin-Resource-Policy': 'same-origin',
+      })
+      const commitHash = basename(dirname(builtinExtensionsPath))
+      for (const relativePath of [
+        'builtin.remote-ssh/dist/remoteSshMain.js',
+        'builtin.git/dist/gitMain.js',
+        'builtin.git/git-worker/dist/gitWorkerMain.js',
+      ]) {
+        staticConfig.files[`/${commitHash}/extensions/${relativePath}`] =
+          headerIndex
+      }
+      await writeFile(
+        staticConfigPath,
+        `${JSON.stringify(staticConfig, undefined, 2)}\n`,
+      )
+    }
 
     return {
       builtinExtensionsPath,
-      builtinExtensionPath,
+      installedExtensionPaths,
       staticConfigContent,
       staticConfigPath,
       testExtensionPath,
@@ -184,7 +337,9 @@ const prepareExtensions = async (runtimeRoot) => {
     if (staticConfigContent && staticConfigPath) {
       await writeFile(staticConfigPath, staticConfigContent)
     }
-    await rm(builtinExtensionPath, { force: true, recursive: true })
+    for (const installedExtensionPath of installedExtensionPaths) {
+      await rm(installedExtensionPath, { force: true, recursive: true })
+    }
     throw error
   }
 }
@@ -204,19 +359,31 @@ const cleanup = async (tasks) => {
 }
 
 const startLvceServer = async ({ env, onlyExtensionPath, port }) => {
-  const serverPath = join(
-    repositoryRoot,
-    'node_modules',
-    '@lvce-editor',
-    'server',
-    'src',
-    'server.js',
-  )
+  const serverPath = process.env.LVCE_REMOTE_SSH_LOCAL_LVCE_DIST
+    ? process.env.LVCE_REMOTE_SSH_LOCAL_LVCE_SERVER_PATH ||
+      process.env.LVCE_REMOTE_SSH_BACKEND_SCRIPT
+    : join(
+        repositoryRoot,
+        'node_modules',
+        '@lvce-editor',
+        'server',
+        'src',
+        'server.js',
+      )
   const child = fork(serverPath, {
     detached: true,
     env: {
       ...env,
-      ONLY_EXTENSION: onlyExtensionPath,
+      ...(process.env.LVCE_REMOTE_SSH_LOCAL_LVCE_DIST
+        ? {
+            LVCE_STATIC_ROOT: join(
+              process.env.LVCE_REMOTE_SSH_LOCAL_LVCE_DIST,
+              'playground',
+              'static',
+            ),
+          }
+        : {}),
+      ...(onlyExtensionPath ? { ONLY_EXTENSION: onlyExtensionPath } : {}),
       PORT: String(port),
       TEST_PATH: e2eRoot,
     },
@@ -257,9 +424,25 @@ const promptPlaceholder =
   'Enter SSH host (for example user@example.com or ssh -p 2222 user@example.com)'
 
 const openPromptScenario = async (page, port) => {
-  await page.goto(`http://localhost:${port}/tests/remote-ssh.connect.html`)
+  const response = await page.goto(
+    `http://localhost:${port}/tests/remote-ssh.connect.html`,
+  )
+  if (!response?.ok()) {
+    throw new Error(`Remote SSH test page returned HTTP ${response?.status()}`)
+  }
   const quickInput = page.locator('.QuickPick input')
-  await expect(quickInput).toBeVisible({ timeout: 30_000 })
+  try {
+    await expect(quickInput).toBeVisible({ timeout: 30_000 })
+  } catch (error) {
+    const body = await page
+      .locator('body')
+      .innerText()
+      .catch(() => '')
+    throw new Error(
+      `Remote SSH prompt did not open at ${page.url()}; page text: ${JSON.stringify(body.slice(0, 4000))}`,
+      { cause: error },
+    )
+  }
   await expect(quickInput).toHaveAttribute('placeholder', promptPlaceholder, {
     timeout: 30_000,
   })
@@ -289,15 +472,38 @@ const runRealSshTest = async () => {
     return
   }
 
-  const runtimeRoot = await mkdtemp(join(tmpdir(), 'lvce-remote-ssh-runtime-'))
+  const warmFolders = Array.from(
+    { length: 5 },
+    (_, index) => `warm-${index + 1}`,
+  )
+  await Promise.all(
+    warmFolders.map(async (folder, index) => {
+      const folderPath = join(sshServer.fixture.workspacePath, folder)
+      await mkdir(folderPath)
+      await writeFile(join(folderPath, `child-${index + 1}.txt`), folder)
+    }),
+  )
+
+  const runtimeParent =
+    process.env.LVCE_REMOTE_SSH_TEST_RUNTIME_PARENT || tmpdir()
+  const runtimeRoot = await mkdtemp(
+    join(runtimeParent, 'lvce-remote-ssh-runtime-'),
+  )
   let browser
-  let builtinExtensionPath
+  let artifactServer
+  let getArtifactRequestCount
+  let installedExtensionPaths = []
   let lvceServer
+  let remoteRoot
   let staticConfigContent
   let staticConfigPath
   try {
     const prepared = await prepareExtensions(runtimeRoot)
-    builtinExtensionPath = prepared.builtinExtensionPath
+    const remoteArtifacts = await createRemoteServerArtifacts(runtimeRoot)
+    artifactServer = remoteArtifacts.artifactServer
+    getArtifactRequestCount = remoteArtifacts.getRequestCount
+    remoteRoot = remoteArtifacts.remoteRoot
+    installedExtensionPaths = prepared.installedExtensionPaths
     staticConfigContent = prepared.staticConfigContent
     staticConfigPath = prepared.staticConfigPath
     const configRoot = join(runtimeRoot, 'config')
@@ -327,13 +533,14 @@ const runRealSshTest = async () => {
     lvceServer = await startLvceServer({
       env: {
         ...sshServer.env,
+        ...remoteArtifacts.env,
         BUILTIN_EXTENSIONS_PATH: prepared.builtinExtensionsPath,
         HOME: homeRoot,
         XDG_CACHE_HOME: cacheRoot,
         XDG_CONFIG_HOME: configRoot,
         XDG_DATA_HOME: dataRoot,
       },
-      onlyExtensionPath: prepared.testExtensionPath,
+      onlyExtensionPath: undefined,
       port,
     })
     browser = await chromium.launch({
@@ -342,7 +549,9 @@ const runRealSshTest = async () => {
     const page = await browser.newPage()
     page.on('console', (message) => {
       if (message.type() === 'error') {
-        console.error(`[browser] ${message.text()}`)
+        console.error(
+          `[browser:${message.type()}] ${message.text()} ${JSON.stringify(message.location())}`,
+        )
       }
     })
     page.on('pageerror', (error) => {
@@ -381,6 +590,34 @@ const runRealSshTest = async () => {
 
     const remoteFile = page.locator('.TreeItem[aria-label="file.txt"]')
     await expect(remoteFile).toBeVisible({ timeout: 30_000 })
+    const connectionCount = sshServer.getConnectionCount()
+    const remoteFolder = page.locator('.TreeItem[aria-label="folder"]')
+    await remoteFolder.click()
+    await expect(
+      page.locator('.TreeItem[aria-label="nested.txt"]'),
+    ).toBeVisible({
+      timeout: 5_000,
+    })
+    const folderReadDurations = []
+    for (const [index, folder] of warmFolders.entries()) {
+      const start = performance.now()
+      await page.locator(`.TreeItem[aria-label="${folder}"]`).click()
+      await expect(
+        page.locator(`.TreeItem[aria-label="child-${index + 1}.txt"]`),
+      ).toBeVisible({ timeout: 1_000 })
+      folderReadDurations.push(performance.now() - start)
+    }
+    const sortedDurations = folderReadDurations.toSorted((a, b) => a - b)
+    const median = sortedDurations[Math.floor(sortedDurations.length / 2)]
+    const p95 = sortedDurations[Math.ceil(sortedDurations.length * 0.95) - 1]
+    console.log(
+      `Warm remote folder expansion: median ${median.toFixed(1)} ms, p95 ${p95.toFixed(1)} ms`,
+    )
+    expect(median).toBeLessThanOrEqual(500)
+    expect(p95).toBeLessThanOrEqual(1_000)
+    expect(sshServer.getConnectionCount()).toBe(connectionCount)
+    expect(sshServer.getOutput()).not.toContain('python')
+    expect(getArtifactRequestCount()).toBe(2)
     await remoteFile.click()
     const editor = page.locator('.Editor')
     await expect(editor).toContainText(sshServer.fixture.initialContent, {
@@ -402,19 +639,80 @@ const runRealSshTest = async () => {
     await page.keyboard.press('Control+S')
 
     await waitForSavedFile(sshServer.filePath, sshServer.fixture.updatedContent)
+
+    await page.keyboard.press('Control+Backquote')
+    await page.locator('.PanelTab[name="Terminals"]').click()
+    const terminal = page.locator('.XtermTerminal')
+    await expect(terminal).toBeVisible({ timeout: 30_000 })
+    await terminal.click()
+    await page.keyboard.type('pwd; echo REMOTE_TERMINAL_SENTINEL')
+    await page.keyboard.press('Enter')
+    await expect(terminal).toContainText('REMOTE_TERMINAL_SENTINEL', {
+      timeout: 30_000,
+    })
+    await expect(terminal).toContainText(sshServer.fixture.workspacePath, {
+      timeout: 30_000,
+    })
+
+    await page.keyboard.press('Control+Shift+F')
+    const search = page.locator('.Search')
+    await expect(search).toBeVisible({ timeout: 30_000 })
+    const searchInput = search.locator('textarea[name="SearchValue"]')
+    await searchInput.fill('REMOTE_SEARCH_SENTINEL')
+    await expect(search.locator('[role="status"]')).toHaveText(
+      '1 result in 1 file',
+      {
+        timeout: 30_000,
+      },
+    )
+    await expect(search).toContainText('search.txt')
+    await expect(search).not.toContainText('ignored.txt')
+
+    await page.keyboard.press('Control+Shift+G')
+    const sourceControl = page.locator('.SourceControl')
+    await expect(sourceControl).toBeVisible({ timeout: 30_000 })
+    await expect(sourceControl).toContainText('file.txt', { timeout: 30_000 })
+    await expect(
+      page.getByRole('button', { exact: true, name: 'main' }),
+    ).toBeVisible({ timeout: 30_000 })
+
+    await page.keyboard.press('Control+Shift+P')
+    const commandInput = page.locator('.QuickPick input')
+    await expect(commandInput).toBeVisible({ timeout: 30_000 })
+    await commandInput.fill('>Developer: Open Process Explorer')
+    await expect(
+      page.locator('.QuickPickItemLabel', {
+        hasText: 'Developer: Open Process Explorer',
+      }),
+    ).toBeVisible({ timeout: 30_000 })
+    await page.keyboard.press('Enter')
+    const processExplorer = page.locator('.ProcessExplorer')
+    await expect(processExplorer).toBeVisible({ timeout: 30_000 })
+    await expect(
+      processExplorer.locator('.ProcessExplorerRow'),
+    ).not.toHaveCount(0, { timeout: 30_000 })
+    await expect(processExplorer).toContainText('shared-process', {
+      timeout: 30_000,
+    })
+    await expect(processExplorer).toContainText(
+      'extension-host-helper-process',
+      { timeout: 30_000 },
+    )
   } finally {
     await cleanup([
       async () => browser?.close(),
       async () => stopProcess(lvceServer),
+      async () => stopRemoteServer(remoteRoot),
       async () => sshServer.dispose(),
+      async () => closeServer(artifactServer),
       async () => {
         if (staticConfigPath && staticConfigContent) {
           await writeFile(staticConfigPath, staticConfigContent)
         }
       },
       async () => {
-        if (builtinExtensionPath) {
-          await rm(builtinExtensionPath, { force: true, recursive: true })
+        for (const installedExtensionPath of installedExtensionPaths) {
+          await rm(installedExtensionPath, { force: true, recursive: true })
         }
       },
       async () => rm(runtimeRoot, { force: true, recursive: true }),
@@ -435,7 +733,8 @@ const main = async () => {
 
 try {
   await main()
+  process.exit(0)
 } catch (error) {
   console.error(error)
-  process.exitCode = 1
+  process.exit(1)
 }
