@@ -16,6 +16,7 @@ import { delimiter, dirname, join } from 'node:path'
 const host = '127.0.0.1'
 const timeout = 120_000
 const initialContent = 'before'
+const remoteTerminalMarker = 'remote-ssh-pty-host'
 const updatedContent = 'before after'
 
 const sleep = async (milliseconds) => {
@@ -197,6 +198,7 @@ const buildSshdConfig = ({
     'PermitRootLogin no',
     'UsePAM no',
     'PrintMotd no',
+    `SetEnv LVCE_REMOTE_SSH_E2E_MARKER=${remoteTerminalMarker}`,
     'LogLevel VERBOSE',
     'StrictModes no',
     `AllowUsers ${user}`,
@@ -347,6 +349,7 @@ export const createSshServer = async () => {
       },
       fixture: {
         initialContent,
+        remoteTerminalMarker,
         target: `ssh -p ${port} ${user}@${host}:${workspacePath}`,
         updatedContent,
         workspacePath,
