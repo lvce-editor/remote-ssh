@@ -645,11 +645,14 @@ const runRealSshTest = async () => {
     const terminal = page.locator('.XtermTerminal')
     await expect(terminal).toBeVisible({ timeout: 30_000 })
     await terminal.click()
-    await page.keyboard.type('pwd; echo REMOTE_TERMINAL_SENTINEL')
+    await page.keyboard.type(
+      'pwd; printf "REMOTE_TERMINAL_SENTINEL:%s\\n" "$LVCE_REMOTE_SSH_E2E_MARKER"',
+    )
     await page.keyboard.press('Enter')
-    await expect(terminal).toContainText('REMOTE_TERMINAL_SENTINEL', {
-      timeout: 30_000,
-    })
+    await expect(terminal).toContainText(
+      `REMOTE_TERMINAL_SENTINEL:${sshServer.fixture.remoteTerminalMarker}`,
+      { timeout: 30_000 },
+    )
     await expect(terminal).toContainText(sshServer.fixture.workspacePath, {
       timeout: 30_000,
     })
