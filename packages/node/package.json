@@ -8,5 +8,8 @@
     "test": "node --test \"test/**/*.test.ts\""
   },
   "author": "Lvce Editor",
-  "license": "MIT"
+  "license": "MIT",
+  "dependencies": {
+    "@lvce-editor/rpc": "^6.19.1"
+  }
 }
