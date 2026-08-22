@@ -36,3 +36,20 @@ await esbuild.build({
   sourcemap: true,
   target: 'node22',
 })
+
+await esbuild.build({
+  banner: {
+    js: "import { createRequire as __createRequire } from 'node:module'; const require = __createRequire(import.meta.url);",
+  },
+  bundle: true,
+  define: server.define,
+  entryPoints: [
+    path.join(root, 'packages', 'node', 'src', 'remoteSshProcess.ts'),
+  ],
+  external: ['electron', 'node:*'],
+  format: 'esm',
+  outfile: path.join(outdir, 'remoteSshProcess.js'),
+  platform: 'node',
+  sourcemap: true,
+  target: 'node22',
+})

@@ -15,7 +15,7 @@
     "e2e:headless": "npm run e2e:headless --workspace=packages/e2e",
     "format": "prettier --write .",
     "lint": "eslint . && prettier --check .",
-    "test": "npm test --workspaces --if-present",
+    "test": "npm run build:extension && npm test --workspaces --if-present",
     "type-check": "tsc -b"
   },
   "author": "Lvce Editor",

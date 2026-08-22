@@ -12,9 +12,9 @@
   "rpc": [
     {
       "id": "builtin.remote-ssh.node",
-      "type": "node",
+      "type": "node-process",
       "name": "Remote SSH",
-      "url": "dist/remoteSshClient.js"
+      "url": "dist/remoteSshProcess.js"
     }
   ],
   "categories": ["Other"],
