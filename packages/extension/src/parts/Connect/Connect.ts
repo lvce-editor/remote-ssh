@@ -1,4 +1,9 @@
-import { executeCommand, showQuickInput, showQuickPick } from '@lvce-editor/api'
+import {
+  executeCommand,
+  showNotification,
+  showQuickInput,
+  showQuickPick,
+} from '@lvce-editor/api'
 import * as RemoteCli from '../RemoteCli/RemoteCli.ts'
 import * as Rpc from '../Rpc/Rpc.ts'
 import * as SshTarget from '../SshTarget/SshTarget.ts'
@@ -8,6 +13,7 @@ export const placeholder =
 
 export type ShowQuickInput = typeof showQuickInput
 export type ShowQuickPick = typeof showQuickPick
+export type ShowNotification = typeof showNotification
 export type SetWorkspaceUri = (
   uri: string,
   backend: WorkspaceBackend,
@@ -44,6 +50,13 @@ const getWorkspaceBackend = (value: unknown): WorkspaceBackend => {
     throw new TypeError('Remote SSH server did not provide a workspace backend')
   }
   return backend as WorkspaceBackend
+}
+
+const getErrorMessage = (error: unknown): string => {
+  if (error instanceof Error) {
+    return error.message
+  }
+  return String(error)
 }
 
 const setRemoteWorkspaceUri: SetWorkspaceUri = async (
@@ -106,13 +119,23 @@ export const connect = async (
   getHosts: GetConfiguredHosts = getConfiguredHosts,
   showPick: ShowQuickPick = showQuickPick,
   watchRemoteCli: WatchRemoteCli = RemoteCli.watch,
+  notify: ShowNotification = showNotification,
 ): Promise<void> => {
   const value = await getConnectionTarget(showInput, showPick, getHosts)
   if (!value || !value.trim()) {
     return
   }
   const workspaceUri = SshTarget.toRemoteSshUri(value)
-  const backend = getWorkspaceBackend(await connectRemote(workspaceUri))
+  let backend: WorkspaceBackend
+  try {
+    backend = getWorkspaceBackend(await connectRemote(workspaceUri))
+  } catch (error) {
+    await notify(
+      'error',
+      `Failed to connect to SSH target: ${getErrorMessage(error)}`,
+    )
+    throw error
+  }
   schedule(() => {
     void setUri(workspaceUri, backend).then(() => watchRemoteCli(workspaceUri))
   })
