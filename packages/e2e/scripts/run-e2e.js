@@ -656,6 +656,9 @@ const runRealSshTest = async () => {
     await expect(terminal).toContainText(sshServer.fixture.workspacePath, {
       timeout: 30_000,
     })
+    await page.keyboard.type('command -v lvce')
+    await page.keyboard.press('Enter')
+    await expect(terminal).toContainText('/bin/lvce', { timeout: 30_000 })
 
     await page.keyboard.press('Control+Shift+F')
     const search = page.locator('.Search')

@@ -6,6 +6,7 @@ import {
   _toFileUri,
   mkdir,
   remove,
+  waitForOpenRequest,
 } from '../src/parts/SshFileSystem/SshFileSystem.ts'
 
 void test('converts remote POSIX paths to encoded file URIs', () => {
@@ -59,4 +60,39 @@ void test('preserves sorting and legacy symbolic-link behavior', () => {
 void test('rejects root mutations before contacting the backend', () => {
   throws(() => mkdir('remote-ssh://example.com/'), /remote root/)
   throws(() => remove('remote-ssh://example.com/'), /remote root/)
+})
+
+void test('maps remote CLI folder requests onto the current SSH authority', async () => {
+  const result = await waitForOpenRequest(
+    'remote-ssh://user@example.com:2222/work',
+    async (location) => {
+      deepStrictEqual(location, {
+        identity: '["user","example.com","2222"]',
+        path: '/work',
+        port: '2222',
+        target: 'user@example.com',
+      })
+      return { kind: 'folder', path: '/home/project with spaces' }
+    },
+  )
+
+  deepStrictEqual(result, {
+    kind: 'folder',
+    uri: 'remote-ssh://user@example.com:2222/home/project%20with%20spaces',
+    workspaceUri:
+      'remote-ssh://user@example.com:2222/home/project%20with%20spaces',
+  })
+})
+
+void test('maps remote CLI files and their workspace folder', async () => {
+  const result = await waitForOpenRequest(
+    'remote-ssh://example.com/',
+    async () => ({ kind: 'file', path: '/home/user/readme.md' }),
+  )
+
+  deepStrictEqual(result, {
+    kind: 'file',
+    uri: 'remote-ssh://example.com/home/user/readme.md',
+    workspaceUri: 'remote-ssh://example.com/home/user',
+  })
 })

@@ -1,5 +1,5 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
-import { strictEqual } from 'node:assert/strict'
+import { deepStrictEqual, strictEqual } from 'node:assert/strict'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -70,6 +70,7 @@ const connect = async (
   strictEqual(typeof ready.backend.token, 'string')
   strictEqual(ready.capabilities.includes('workspaceBackend'), true)
   strictEqual(ready.capabilities.includes('fileSystemProcess'), true)
+  strictEqual(ready.capabilities.includes('remoteCli'), true)
   return child
 }
 
@@ -78,6 +79,26 @@ const stopConnector = async (
 ): Promise<void> => {
   child.stdin.end()
   await new Promise<void>((resolve) => child.once('close', () => resolve()))
+}
+
+const run = async (
+  command: string,
+  args: readonly string[],
+  cwd: string,
+): Promise<void> => {
+  const child = spawn(command, args, {
+    cwd,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  })
+  const stderr: Buffer[] = []
+  child.stderr.on('data', (chunk: Buffer) => stderr.push(chunk))
+  const code = await new Promise<number | null>((resolve, reject) => {
+    child.once('error', reject)
+    child.once('close', resolve)
+  })
+  if (code !== 0) {
+    throw new Error(Buffer.concat(stderr).toString('utf8'))
+  }
 }
 
 void test(
@@ -112,6 +133,37 @@ void test(
     strictEqual(secondState.backendPid, firstState.backendPid)
 
     await stopConnector(second)
+  },
+)
+
+void test(
+  'relays the installed remote lvce command to the connector',
+  { skip: process.platform === 'win32' },
+  async (context) => {
+    const root = await mkdtemp(path.join(tmpdir(), 'lvce-server-cli-'))
+    const statePath = path.join(root, 'run', 'server-dev.json')
+    context.after(async () => {
+      try {
+        const state = JSON.parse(
+          await readFile(statePath, 'utf8'),
+        ) as ServerState
+        stopState(state)
+      } catch {
+        // The idle timeout may already have stopped the daemon.
+      }
+      await rm(root, { force: true, recursive: true })
+    })
+
+    const connector = await connect(root)
+    const openRequestPromise = readLine(connector)
+    await run(path.join(root, 'bin', 'lvce'), ['/home'], root)
+
+    deepStrictEqual(JSON.parse(await openRequestPromise), {
+      kind: 'folder',
+      path: '/home',
+      type: 'open',
+    })
+    await stopConnector(connector)
   },
 )
 

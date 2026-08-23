@@ -23,6 +23,17 @@ interface ReadyMessage {
   readonly version: string
 }
 
+export interface OpenRequest {
+  readonly kind: 'file' | 'folder'
+  readonly path: string
+}
+
+interface OpenMessage extends OpenRequest {
+  readonly type: 'open'
+}
+
+type ServerMessage = OpenMessage | ReadyMessage
+
 interface Connection {
   readonly getWorkspaceBackend: () => Promise<WorkspaceBackend>
   readonly invokeBackend: (
@@ -30,6 +41,7 @@ interface Connection {
     method: string,
     params: readonly unknown[],
   ) => Promise<unknown>
+  readonly waitForOpenRequest: () => Promise<OpenRequest>
 }
 
 export interface WorkspaceBackend {
@@ -176,6 +188,11 @@ class RemoteConnection implements Connection {
   private readonly localPort: number
   private readonly location: RemoteLocation
   private readonly onClose: () => void
+  private readonly openRequests: OpenRequest[] = []
+  private readonly openRequestWaiters: Array<{
+    readonly reject: (error: Error) => void
+    readonly resolve: (request: OpenRequest) => void
+  }> = []
   private readyReject: (error: Error) => void = () => {}
   private readyResolve: () => void = () => {}
   private readonly ready: Promise<void>
@@ -231,6 +248,10 @@ class RemoteConnection implements Connection {
       rpc.dispose()
     }
     this.backendRpcs.clear()
+    for (const waiter of this.openRequestWaiters) {
+      waiter.reject(error)
+    }
+    this.openRequestWaiters.length = 0
     if (this.isReady) {
       this.onClose()
     }
@@ -257,9 +278,9 @@ class RemoteConnection implements Connection {
       this.close(new InstallRequiredError(installRequiredMarker))
       return
     }
-    let value: ReadyMessage
+    let value: ServerMessage
     try {
-      value = JSON.parse(line) as ReadyMessage
+      value = JSON.parse(line) as ServerMessage
     } catch {
       if (this.isReady) {
         this.close(new Error('Remote SSH server returned invalid JSON'))
@@ -272,6 +293,23 @@ class RemoteConnection implements Connection {
       this.child.kill()
       return
     }
+    if (value.type === 'open') {
+      if (
+        !this.isReady ||
+        (value.kind !== 'file' && value.kind !== 'folder') ||
+        typeof value.path !== 'string' ||
+        !path.isAbsolute(value.path) ||
+        value.path.includes('\0')
+      ) {
+        this.close(
+          new Error('Remote SSH server returned an invalid open request'),
+        )
+        this.child.kill()
+        return
+      }
+      this.handleOpenRequest({ kind: value.kind, path: value.path })
+      return
+    }
     if (
       value.type !== 'ready' ||
       value.protocolVersion !== manifest.protocolVersion ||
@@ -281,6 +319,7 @@ class RemoteConnection implements Connection {
       value.arch !== 'x64' ||
       !Array.isArray(value.capabilities) ||
       !value.capabilities.includes('fileSystemProcess') ||
+      !value.capabilities.includes('remoteCli') ||
       !value.capabilities.includes('workspaceBackend') ||
       !value.backend ||
       !Number.isSafeInteger(value.backend.port) ||
@@ -291,6 +330,15 @@ class RemoteConnection implements Connection {
       return
     }
     void this.handleReady(value)
+  }
+
+  private handleOpenRequest(request: OpenRequest): void {
+    const waiter = this.openRequestWaiters.shift()
+    if (waiter) {
+      waiter.resolve(request)
+      return
+    }
+    this.openRequests.push(request)
   }
 
   private async handleReady(value: ReadyMessage): Promise<void> {
@@ -354,6 +402,17 @@ class RemoteConnection implements Connection {
       rpc.dispose()
       throw error
     }
+  }
+
+  async waitForOpenRequest(): Promise<OpenRequest> {
+    await this.ready
+    const request = this.openRequests.shift()
+    if (request) {
+      return request
+    }
+    return new Promise((resolve, reject) => {
+      this.openRequestWaiters.push({ reject, resolve })
+    })
   }
 }
 
@@ -428,6 +487,13 @@ export const connectWorkspaceBackend = async (
 ): Promise<WorkspaceBackend> => {
   const connection = await getConnection(location)
   return connection.getWorkspaceBackend()
+}
+
+export const waitForOpenRequest = async (
+  location: RemoteLocation,
+): Promise<OpenRequest> => {
+  const connection = await getConnection(location)
+  return connection.waitForOpenRequest()
 }
 
 export const _getSshArgs = getSshArgs
