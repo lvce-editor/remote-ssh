@@ -1,3 +1,4 @@
+import type { NotificationType } from '@lvce-editor/api'
 import { expect, jest, test } from '@jest/globals'
 import { connect, placeholder, restore } from '../src/parts/Connect/Connect.ts'
 
@@ -85,17 +86,33 @@ test('restores a directly opened remote workspace backend', async () => {
   expect(watchRemoteCli).toHaveBeenCalledWith('remote-ssh://user@example.com/')
 })
 
-test('does not switch workspaces when SSH connection fails', async () => {
+test('reports SSH connection failures without switching workspaces', async () => {
   const showInput = jest.fn(async () => 'missing.example.com')
   const setUri = jest.fn(async (_uri: string) => {})
   const connectRemote = jest.fn(async () => {
     throw new Error('connection failed')
   })
   const getHosts = jest.fn(async () => [] as readonly string[])
+  const showNotification = jest.fn(
+    async (_type: NotificationType, _message: string) => {},
+  )
 
   await expect(
-    connect(showInput, setUri, connectRemote, undefined, getHosts),
+    connect(
+      showInput,
+      setUri,
+      connectRemote,
+      undefined,
+      getHosts,
+      undefined,
+      undefined,
+      showNotification,
+    ),
   ).rejects.toThrow('connection failed')
+  expect(showNotification).toHaveBeenCalledWith(
+    'error',
+    'Failed to connect to SSH target: connection failed',
+  )
   expect(setUri).not.toHaveBeenCalled()
 })
 
