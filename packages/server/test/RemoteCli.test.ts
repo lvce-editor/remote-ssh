@@ -17,6 +17,8 @@ import {
   resolveOpenRequest,
 } from '../src/parts/RemoteCli/RemoteCli.ts'
 
+const isWindows = process.platform === 'win32'
+
 void test('resolves relative folders and files from the terminal cwd', async (context) => {
   const root = await mkdtemp(path.join(tmpdir(), 'lvce-remote-cli-path-'))
   context.after(() => rm(root, { force: true, recursive: true }))
@@ -40,44 +42,52 @@ void test('rejects unsupported options and multiple paths', async () => {
   await rejects(resolveOpenRequest(['/home', '/tmp']), /one path/)
 })
 
-void test('relays validated requests to the connected editor', async (context) => {
-  const root = await mkdtemp(path.join(tmpdir(), 'lvce-remote-cli-server-'))
-  const requests: unknown[] = []
-  const server = await listen(root, 'test', (request) => {
-    requests.push(request)
-    return true
-  })
-  context.after(async () => {
-    await close(server, root, 'test')
-    await rm(root, { force: true, recursive: true })
-  })
+void test(
+  'relays validated requests to the connected editor',
+  { skip: isWindows },
+  async (context) => {
+    const root = await mkdtemp(path.join(tmpdir(), 'lvce-remote-cli-server-'))
+    const requests: unknown[] = []
+    const server = await listen(root, 'test', (request) => {
+      requests.push(request)
+      return true
+    })
+    context.after(async () => {
+      await close(server, root, 'test')
+      await rm(root, { force: true, recursive: true })
+    })
 
-  await requestOpen(_getSocketPath(root, 'test'), {
-    kind: 'folder',
-    path: '/home',
-    type: 'open',
-  })
-
-  deepStrictEqual(requests, [{ kind: 'folder', path: '/home', type: 'open' }])
-})
-
-void test('reports when no local editor is connected', async (context) => {
-  const root = await mkdtemp(path.join(tmpdir(), 'lvce-remote-cli-empty-'))
-  const server = await listen(root, 'test', () => false)
-  context.after(async () => {
-    await close(server, root, 'test')
-    await rm(root, { force: true, recursive: true })
-  })
-
-  await rejects(
-    requestOpen(_getSocketPath(root, 'test'), {
+    await requestOpen(_getSocketPath(root, 'test'), {
       kind: 'folder',
       path: '/home',
       type: 'open',
-    }),
-    /No local LVCE Editor window/,
-  )
-})
+    })
+
+    deepStrictEqual(requests, [{ kind: 'folder', path: '/home', type: 'open' }])
+  },
+)
+
+void test(
+  'reports when no local editor is connected',
+  { skip: isWindows },
+  async (context) => {
+    const root = await mkdtemp(path.join(tmpdir(), 'lvce-remote-cli-empty-'))
+    const server = await listen(root, 'test', () => false)
+    context.after(async () => {
+      await close(server, root, 'test')
+      await rm(root, { force: true, recursive: true })
+    })
+
+    await rejects(
+      requestOpen(_getSocketPath(root, 'test'), {
+        kind: 'folder',
+        path: '/home',
+        type: 'open',
+      }),
+      /No local LVCE Editor window/,
+    )
+  },
+)
 
 void test('writes a private launcher for the bundled runtime', async (context) => {
   const root = await mkdtemp(path.join(tmpdir(), 'lvce-remote-cli-bin-'))
