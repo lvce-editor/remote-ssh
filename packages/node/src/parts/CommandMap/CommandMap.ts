@@ -9,5 +9,6 @@ export const commandMap = {
   'SshFileSystem.readFile': SshFileSystem.readFile,
   'SshFileSystem.remove': SshFileSystem.remove,
   'SshFileSystem.rename': SshFileSystem.rename,
+  'SshFileSystem.waitForOpenRequest': SshFileSystem.waitForOpenRequest,
   'SshFileSystem.writeFile': SshFileSystem.writeFile,
 }

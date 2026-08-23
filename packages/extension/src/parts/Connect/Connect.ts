@@ -1,4 +1,5 @@
 import { executeCommand, showQuickInput, showQuickPick } from '@lvce-editor/api'
+import * as RemoteCli from '../RemoteCli/RemoteCli.ts'
 import * as Rpc from '../Rpc/Rpc.ts'
 import * as SshTarget from '../SshTarget/SshTarget.ts'
 
@@ -14,6 +15,7 @@ export type SetWorkspaceUri = (
 export type ConnectToHost = (uri: string) => Promise<unknown>
 export type GetConfiguredHosts = () => Promise<readonly string[]>
 export type Schedule = (callback: () => void) => void
+export type WatchRemoteCli = (workspaceUri: string) => void
 
 interface WorkspaceBackend {
   readonly token: string
@@ -59,6 +61,17 @@ const getConfiguredHosts: GetConfiguredHosts = async () => {
   return hosts
 }
 
+export const restore = async (
+  workspaceUri: string,
+  setUri: SetWorkspaceUri = setRemoteWorkspaceUri,
+  connectRemote: ConnectToHost = connectToHost,
+  watchRemoteCli: WatchRemoteCli = RemoteCli.watch,
+): Promise<void> => {
+  const backend = getWorkspaceBackend(await connectRemote(workspaceUri))
+  await setUri(workspaceUri, backend)
+  watchRemoteCli(workspaceUri)
+}
+
 const getConnectionTarget = async (
   showInput: ShowQuickInput,
   showPick: ShowQuickPick,
@@ -92,6 +105,7 @@ export const connect = async (
   schedule: Schedule = scheduleAfterCommand,
   getHosts: GetConfiguredHosts = getConfiguredHosts,
   showPick: ShowQuickPick = showQuickPick,
+  watchRemoteCli: WatchRemoteCli = RemoteCli.watch,
 ): Promise<void> => {
   const value = await getConnectionTarget(showInput, showPick, getHosts)
   if (!value || !value.trim()) {
@@ -100,6 +114,6 @@ export const connect = async (
   const workspaceUri = SshTarget.toRemoteSshUri(value)
   const backend = getWorkspaceBackend(await connectRemote(workspaceUri))
   schedule(() => {
-    void setUri(workspaceUri, backend)
+    void setUri(workspaceUri, backend).then(() => watchRemoteCli(workspaceUri))
   })
 }

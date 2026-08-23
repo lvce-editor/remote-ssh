@@ -1,5 +1,5 @@
 import { expect, jest, test } from '@jest/globals'
-import { connect, placeholder } from '../src/parts/Connect/Connect.ts'
+import { connect, placeholder, restore } from '../src/parts/Connect/Connect.ts'
 
 const backend = {
   token: 'secret',
@@ -42,6 +42,7 @@ test('connects and switches to the remote backend', async () => {
   const setUri = jest.fn(async (_uri: string) => {})
   const connectRemote = jest.fn(async (_uri: string) => backend)
   const getHosts = jest.fn(async () => [] as readonly string[])
+  const watchRemoteCli = jest.fn((_uri: string) => {})
 
   await connect(
     showInput,
@@ -49,6 +50,8 @@ test('connects and switches to the remote backend', async () => {
     connectRemote,
     (callback) => callback(),
     getHosts,
+    undefined,
+    watchRemoteCli,
   )
 
   expect(connectRemote).toHaveBeenCalledWith('remote-ssh://user@example.com/')
@@ -56,6 +59,30 @@ test('connects and switches to the remote backend', async () => {
     'remote-ssh://user@example.com/',
     backend,
   ])
+  expect(watchRemoteCli).toHaveBeenCalledWith('remote-ssh://user@example.com/')
+})
+
+test('restores a directly opened remote workspace backend', async () => {
+  const rootBackend = { ...backend, workspacePath: '/' }
+  const setUri = jest.fn(
+    async (_uri: string, _workspaceBackend: typeof backend) => {},
+  )
+  const connectRemote = jest.fn(async (_uri: string) => rootBackend)
+  const watchRemoteCli = jest.fn((_uri: string) => {})
+
+  await restore(
+    'remote-ssh://user@example.com/',
+    setUri,
+    connectRemote,
+    watchRemoteCli,
+  )
+
+  expect(connectRemote).toHaveBeenCalledWith('remote-ssh://user@example.com/')
+  expect(setUri).toHaveBeenCalledWith(
+    'remote-ssh://user@example.com/',
+    rootBackend,
+  )
+  expect(watchRemoteCli).toHaveBeenCalledWith('remote-ssh://user@example.com/')
 })
 
 test('does not switch workspaces when SSH connection fails', async () => {

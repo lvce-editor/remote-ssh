@@ -1,9 +1,12 @@
+import path from 'node:path'
 import * as RemoteSshUri from '../RemoteSshUri/RemoteSshUri.ts'
 import {
   connectWorkspaceBackend,
   invokeWorkspaceBackend,
   type InvokeBackend,
+  type OpenRequest,
   type WorkspaceBackend,
+  waitForOpenRequest as waitForTransportOpenRequest,
 } from '../SshTransport/SshTransport.ts'
 
 const toFileUri = (filePath: string): string => {
@@ -52,6 +55,30 @@ export const connect = async (uri: string): Promise<WorkspaceBackend> => {
   return {
     ...(await connectWorkspaceBackend(location)),
     workspacePath: location.path,
+  }
+}
+
+export const waitForOpenRequest = async (
+  uri: string,
+  wait: (
+    location: RemoteSshUri.RemoteLocation,
+  ) => Promise<OpenRequest> = waitForTransportOpenRequest,
+): Promise<{
+  readonly kind: OpenRequest['kind']
+  readonly uri: string
+  readonly workspaceUri: string
+}> => {
+  const location = RemoteSshUri.parse(uri)
+  const request = await wait(location)
+  const url = new URL(uri)
+  url.pathname = request.path
+  const workspaceUrl = new URL(uri)
+  workspaceUrl.pathname =
+    request.kind === 'folder' ? request.path : path.posix.dirname(request.path)
+  return {
+    kind: request.kind,
+    uri: url.href,
+    workspaceUri: workspaceUrl.href,
   }
 }
 

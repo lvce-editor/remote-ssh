@@ -14,6 +14,7 @@ import {
 import { createServer, createConnection, type Socket } from 'node:net'
 import { homedir } from 'node:os'
 import path from 'node:path'
+import * as RemoteCli from './parts/RemoteCli/RemoteCli.ts'
 
 declare const __LVCE_REMOTE_SSH_SERVER_VERSION__: string
 
@@ -229,6 +230,7 @@ const getBuiltinExtensionsPath = async (): Promise<string | undefined> => {
 
 const startWorkspaceBackend = async (
   log: number,
+  cliBinDirectory: string,
 ): Promise<{
   readonly pid: number
   readonly port: number
@@ -250,6 +252,7 @@ const startWorkspaceBackend = async (
       detached: true,
       env: {
         ...process.env,
+        PATH: `${cliBinDirectory}${path.delimiter}${process.env.PATH || ''}`,
         ...(builtinExtensionsPath
           ? {
               BUILTIN_EXTENSIONS_PATH: builtinExtensionsPath,
@@ -350,8 +353,29 @@ const runDaemon = async (): Promise<void> => {
   await chmod(runDirectory, 0o700)
   await rm(socketPath, { force: true })
   const token = randomBytes(32).toString('hex')
+  const authenticatedClients: Socket[] = []
+  const cliBinDirectory = await RemoteCli.prepare(
+    root,
+    process.execPath,
+    process.argv[1],
+  )
+  const cliServer = await RemoteCli.listen(root, serverVersion, (request) => {
+    const socket = authenticatedClients.at(-1)
+    if (!socket || socket.destroyed) {
+      return false
+    }
+    writeJson(socket, request)
+    return true
+  })
   const log = openSync(logPath, 'a', 0o600)
-  const backend = await startWorkspaceBackend(log)
+  let backend: Awaited<ReturnType<typeof startWorkspaceBackend>>
+  try {
+    backend = await startWorkspaceBackend(log, cliBinDirectory)
+  } catch (error) {
+    closeSync(log)
+    await RemoteCli.close(cliServer, root, serverVersion)
+    throw error
+  }
   closeSync(log)
   let connectionCount = 0
   let idleTimer: NodeJS.Timeout | undefined
@@ -383,6 +407,7 @@ const runDaemon = async (): Promise<void> => {
             return
           }
           authenticated = true
+          authenticatedClients.push(socket)
           writeJson(socket, {
             arch: process.arch,
             backend: {
@@ -393,6 +418,7 @@ const runDaemon = async (): Promise<void> => {
               'extensionHostHelperProcess',
               'fileSystemProcess',
               'processExplorer',
+              'remoteCli',
               'searchProcess',
               'terminalProcess',
               'workspaceBackend',
@@ -412,6 +438,10 @@ const runDaemon = async (): Promise<void> => {
     })
     socket.once('close', () => {
       stopReading()
+      const authenticatedIndex = authenticatedClients.indexOf(socket)
+      if (authenticatedIndex !== -1) {
+        authenticatedClients.splice(authenticatedIndex, 1)
+      }
       connectionCount--
       if (connectionCount === 0) {
         idleTimer = setTimeout(() => server.close(), idleTimeout)
@@ -443,6 +473,7 @@ const runDaemon = async (): Promise<void> => {
       await rm(statePath, { force: true })
     }
     await rm(socketPath, { force: true })
+    await RemoteCli.close(cliServer, root, serverVersion)
     stopWorkspaceBackend(backend.pid)
   }
   process.once('SIGTERM', () => server.close())
@@ -456,6 +487,9 @@ const main = async (): Promise<void> => {
   switch (mode) {
     case 'connect-or-start':
       await connectOrStart()
+      return
+    case 'cli':
+      await RemoteCli.run(root, serverVersion)
       return
     case 'daemon':
       await runDaemon()
