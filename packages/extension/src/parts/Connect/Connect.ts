@@ -98,8 +98,8 @@ export const restore = async (
 ): Promise<void> => {
   const backend = getWorkspaceBackend(await connectRemote(workspaceUri))
   WorkspaceConnection.set(backend)
-  await setUri(workspaceUri, backend)
   watchRemoteCli(workspaceUri)
+  await setUri(workspaceUri, backend)
 }
 
 const getConnectionTarget = async (
@@ -155,6 +155,7 @@ export const connect = async (
   }
   schedule(() => {
     WorkspaceConnection.set(backend)
-    void setUri(workspaceUri, backend).then(() => watchRemoteCli(workspaceUri))
+    watchRemoteCli(workspaceUri)
+    void setUri(workspaceUri, backend)
   })
 }
