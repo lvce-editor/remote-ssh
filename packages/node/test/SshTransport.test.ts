@@ -16,10 +16,23 @@ void test('builds one non-interactive persistent SSH command', () => {
   strictEqual(args[0], '-M')
   strictEqual(args.includes('-S'), true)
   strictEqual(args.includes('-T'), true)
+  const portIndex = args.indexOf('-p')
+  strictEqual(args[portIndex + 1], '2222')
   strictEqual(args.includes('ControlPersist=3h'), true)
   strictEqual(args.at(-2), 'user@example.com')
   match(args.at(-1) || '', /connect-or-start/)
   match(args.at(-1) || '', /__LVCE_REMOTE_SSH_INSTALL_REQUIRED__/)
+})
+
+void test('lets OpenSSH select its configured port for bare targets', () => {
+  const args = _getSshArgs({
+    identity: '["","example.com",""]',
+    path: '/',
+    port: '',
+    target: 'example.com',
+  })
+
+  strictEqual(args.includes('-p'), false)
 })
 
 void test('uses versioned private runtime and server paths', () => {

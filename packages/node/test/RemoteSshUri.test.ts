@@ -11,20 +11,20 @@ void test('parses host, user, port, and path', () => {
   })
 })
 
-void test('uses port 3000 by default and decodes remote paths', () => {
+void test('uses the OpenSSH default port and decodes remote paths', () => {
   deepStrictEqual(parse('remote-ssh://example.com/work%20tree'), {
-    identity: '["","example.com","3000"]',
+    identity: '["","example.com",""]',
     path: '/work tree',
-    port: '3000',
+    port: '',
     target: 'example.com',
   })
 })
 
 void test('supports IPv6 hosts', () => {
   deepStrictEqual(parse('remote-ssh://user@[2001:db8::1]/'), {
-    identity: '["user","[2001:db8::1]","3000"]',
+    identity: '["user","[2001:db8::1]",""]',
     path: '/',
-    port: '3000',
+    port: '',
     target: 'user@[2001:db8::1]',
   })
 })

@@ -5,8 +5,6 @@ export interface RemoteLocation {
   readonly target: string
 }
 
-const defaultPort = '3000'
-
 export const parse = (uri: string): RemoteLocation => {
   let url: URL
   try {
@@ -36,11 +34,10 @@ export const parse = (uri: string): RemoteLocation => {
   if (!path.startsWith('/') || path.includes('\0')) {
     throw new Error(`Invalid remote path: ${path}`)
   }
-  const port = url.port || defaultPort
   return {
-    identity: JSON.stringify([username, hostname, port]),
+    identity: JSON.stringify([username, hostname, url.port]),
     path,
-    port,
+    port: url.port,
     target,
   }
 }
