@@ -5,6 +5,7 @@
     { "path": "./packages/e2e-helpers" },
     { "path": "./packages/e2e" },
     { "path": "./packages/extension" },
+    { "path": "./packages/iwa" },
     { "path": "./packages/build" },
     { "path": "./packages/node" },
     { "path": "./packages/server" }

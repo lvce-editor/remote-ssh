@@ -1,0 +1,19 @@
+{
+  "name": "builtin.remote-ssh-iwa-experiment",
+  "version": "0.0.0-dev",
+  "description": "Browser-only Remote SSH experiment using Chrome Direct Sockets",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "e2e": "node scripts/run-e2e.js",
+    "test": "node --test \"test/**/*.test.ts\""
+  },
+  "license": "MIT",
+  "dependencies": {
+    "sshclient-wasm": "0.1.5"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.62.1",
+    "e2e-helpers": "0.0.0-dev"
+  }
+}

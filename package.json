@@ -9,10 +9,13 @@
   "scripts": {
     "build": "node packages/build/src/build.js",
     "build:extension": "node packages/build/src/build-extension.js",
+    "build:iwa": "node packages/build/src/build-iwa.js",
     "build:static": "node packages/build/src/build-static.js",
     "dev": "node packages/build/src/dev.js",
+    "dev:iwa": "npm run build:iwa && node packages/iwa/scripts/serve.js",
     "e2e": "npm run e2e --workspace=packages/e2e",
     "e2e:headless": "npm run e2e:headless --workspace=packages/e2e",
+    "e2e:iwa": "npm run build:iwa && npm run e2e --workspace=packages/iwa",
     "format": "prettier --write .",
     "lint": "eslint . && prettier --check .",
     "test": "npm run build:extension && npm test --workspaces --if-present",
