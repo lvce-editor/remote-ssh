@@ -140,6 +140,49 @@ test('restores a directly opened remote workspace backend', async () => {
   expect(watchRemoteCli).toHaveBeenCalledWith('remote-ssh://user@example.com/')
 })
 
+test('starts watching remote CLI requests before restoring the workspace', async () => {
+  const rootBackend = { ...backend, workspacePath: '/' }
+  const watchRemoteCli = jest.fn((_uri: string) => {})
+  let watcherWasActive = false
+  const setUri = jest.fn(async () => {
+    watcherWasActive = watchRemoteCli.mock.calls.length > 0
+  })
+  const connectRemote = jest.fn(async () => rootBackend)
+
+  await restore(
+    'remote-ssh://user@example.com/',
+    setUri,
+    connectRemote,
+    watchRemoteCli,
+  )
+
+  expect(watcherWasActive).toBe(true)
+})
+
+test('starts watching remote CLI requests before switching workspaces', async () => {
+  const showInput = jest.fn(async () => 'user@example.com')
+  const watchRemoteCli = jest.fn((_uri: string) => {})
+  let watcherWasActive = false
+  const setUri = jest.fn(async () => {
+    watcherWasActive = watchRemoteCli.mock.calls.length > 0
+  })
+  const connectRemote = jest.fn(async () => backend)
+  const getHosts = jest.fn(async () => [] as readonly string[])
+
+  await connect(
+    showInput,
+    setUri,
+    connectRemote,
+    (callback) => callback(),
+    getHosts,
+    undefined,
+    watchRemoteCli,
+  )
+  await Promise.resolve()
+
+  expect(watcherWasActive).toBe(true)
+})
+
 test('reports SSH connection failures without switching workspaces', async () => {
   const showInput = jest.fn(async () => 'missing.example.com')
   const setUri = jest.fn(async (_uri: string) => {})
