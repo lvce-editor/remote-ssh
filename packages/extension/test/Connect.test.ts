@@ -213,6 +213,35 @@ test('reports SSH connection failures without switching workspaces', async () =>
   expect(setUri).not.toHaveBeenCalled()
 })
 
+test('reports invalid SSH targets without starting a connection', async () => {
+  const showInput = jest.fn(async () => 'ssh -i key example.com')
+  const setUri = jest.fn(async (_uri: string) => {})
+  const connectRemote = jest.fn(async (_uri: string) => backend)
+  const getHosts = jest.fn(async () => [] as readonly string[])
+  const showNotification = jest.fn(
+    async (_type: NotificationType, _message: string) => {},
+  )
+
+  await expect(
+    connect(
+      showInput,
+      setUri,
+      connectRemote,
+      undefined,
+      getHosts,
+      undefined,
+      undefined,
+      showNotification,
+    ),
+  ).rejects.toThrow('Unsupported SSH option or argument: -i')
+  expect(showNotification).toHaveBeenCalledWith(
+    'error',
+    'Failed to connect to SSH target: Unsupported SSH option or argument: -i',
+  )
+  expect(connectRemote).not.toHaveBeenCalled()
+  expect(setUri).not.toHaveBeenCalled()
+})
+
 test('shows SSH config hosts and accepts a selected host', async () => {
   const showInput = jest.fn(async () => undefined)
   const showPick = jest.fn(async (_options: unknown) => 'staging')
