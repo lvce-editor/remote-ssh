@@ -120,6 +120,9 @@ export const buildServer = async () => {
   await rm(serverBuildDirectory, { force: true, recursive: true })
   await mkdir(serverBuildDirectory, { recursive: true })
   await esbuild.build({
+    banner: {
+      js: "import { createRequire as __createRequire } from 'node:module'; const require = __createRequire(import.meta.url);",
+    },
     bundle: true,
     define: {
       __LVCE_REMOTE_SSH_SERVER_VERSION__: JSON.stringify(version),

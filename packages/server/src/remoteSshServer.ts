@@ -15,6 +15,7 @@ import { createServer, createConnection, type Socket } from 'node:net'
 import { homedir } from 'node:os'
 import path from 'node:path'
 import * as RemoteCli from './parts/RemoteCli/RemoteCli.ts'
+import { createRemoteWebGateway } from './RemoteWebGateway.ts'
 
 declare const __LVCE_REMOTE_SSH_SERVER_VERSION__: string
 
@@ -482,6 +483,54 @@ const runDaemon = async (): Promise<void> => {
   await cleanup()
 }
 
+const getOption = (name: string): string => {
+  const prefix = `${name}=`
+  const value = process.argv
+    .slice(3)
+    .findLast((argument) => argument.startsWith(prefix))
+    ?.slice(prefix.length)
+  if (!value) {
+    throw new TypeError(`Remote web server requires ${name}=...`)
+  }
+  return value
+}
+
+const runRemoteWebServer = async (): Promise<void> => {
+  const allowedOrigin = getOption('--allowed-origin')
+  const publicUrl = getOption('--public-url')
+  const workspacePath = getOption('--workspace')
+  if (!path.isAbsolute(workspacePath)) {
+    throw new TypeError('--workspace must be an absolute path')
+  }
+  const port = Number.parseInt(getOption('--port'), 10)
+  if (!Number.isSafeInteger(port) || port < 0 || port > 65_535) {
+    throw new RangeError('--port must be between 0 and 65535')
+  }
+  const state = await ensureServer()
+  const managementSocket = await authenticate(state)
+  const gateway = await createRemoteWebGateway({
+    allowedOrigin,
+    backendPort: state.backendPort,
+    backendToken: state.backendToken,
+    port,
+    publicUrl,
+    workspacePath,
+  })
+  process.stdout.write(
+    `${JSON.stringify({
+      localUrl: `http://127.0.0.1:${gateway.localPort}`,
+      pairingUrl: gateway.pairingUrl,
+      type: 'remote-web-ready',
+    })}\n`,
+  )
+  await new Promise<void>((resolve) => {
+    process.once('SIGINT', resolve)
+    process.once('SIGTERM', resolve)
+  })
+  managementSocket.end()
+  await gateway.close()
+}
+
 const main = async (): Promise<void> => {
   const mode = process.argv[2]
   switch (mode) {
@@ -493,6 +542,9 @@ const main = async (): Promise<void> => {
       return
     case 'daemon':
       await runDaemon()
+      return
+    case 'serve-web':
+      await runRemoteWebServer()
       return
     case 'version':
       process.stdout.write(

@@ -7,9 +7,13 @@ import { root } from './root.js'
 
 const extension = path.join(root, 'packages', 'extension')
 const outdir = path.join(extension, 'dist')
+const webExtension = path.join(root, 'packages', 'web-extension')
+const webOutdir = path.join(webExtension, 'dist')
 
 fs.rmSync(outdir, { force: true, recursive: true })
 fs.mkdirSync(outdir, { recursive: true })
+fs.rmSync(webOutdir, { force: true, recursive: true })
+fs.mkdirSync(webOutdir, { recursive: true })
 
 const server = await buildServer()
 
@@ -19,6 +23,17 @@ await esbuild.build({
   external: ['electron', 'node:*'],
   format: 'esm',
   outfile: path.join(outdir, 'remoteSshMain.js'),
+  platform: 'browser',
+  sourcemap: true,
+  target: 'esnext',
+})
+
+await esbuild.build({
+  bundle: true,
+  entryPoints: [path.join(webExtension, 'src', 'remoteServerMain.ts')],
+  external: ['electron', 'node:*'],
+  format: 'esm',
+  outfile: path.join(webOutdir, 'remoteServerMain.js'),
   platform: 'browser',
   sourcemap: true,
   target: 'esnext',
