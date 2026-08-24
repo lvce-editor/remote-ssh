@@ -49,3 +49,8 @@ jobs:
         run: npm run e2e:headless
         env:
           PLAYWRIGHT_BROWSERS_PATH: 0
+      - name: Run browser-only SSH test
+        if: matrix.os == 'ubuntu-24.04'
+        run: npm run e2e:iwa
+        env:
+          PLAYWRIGHT_BROWSERS_PATH: 0

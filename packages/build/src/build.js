@@ -2,6 +2,7 @@ import { packageExtension } from '@lvce-editor/package-extension'
 import * as esbuild from 'esbuild'
 import fs from 'node:fs'
 import path from 'node:path'
+import { buildIwa } from './build-iwa.js'
 import { buildServer } from './buildServer.js'
 import { root } from './root.js'
 
@@ -18,6 +19,8 @@ fs.copyFileSync(
 )
 
 const server = await buildServer()
+
+await buildIwa()
 
 await esbuild.build({
   bundle: true,
