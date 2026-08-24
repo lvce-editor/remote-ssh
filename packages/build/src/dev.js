@@ -5,6 +5,7 @@ import { readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { buildServer } from './buildServer.js'
+import { getRemoteSshProcessBuildOptions } from './getRemoteSshProcessBuildOptions.js'
 import { root } from './root.js'
 
 const extension = path.join(root, 'packages', 'extension')
@@ -98,19 +99,13 @@ const context = await esbuild.context({
   target: 'esnext',
 })
 
-const nodeContext = await esbuild.context({
-  bundle: true,
-  define: remoteSshServer.define,
-  entryPoints: [
-    path.join(root, 'packages', 'node', 'src', 'remoteSshClient.ts'),
-  ],
-  external: ['electron', 'node:*'],
-  format: 'esm',
-  outfile: path.join(extension, 'dist', 'remoteSshClient.js'),
-  platform: 'node',
-  sourcemap: true,
-  target: 'node22',
-})
+const nodeContext = await esbuild.context(
+  getRemoteSshProcessBuildOptions({
+    define: remoteSshServer.define,
+    outdir: path.join(extension, 'dist'),
+    sourcemap: true,
+  }),
+)
 
 await context.rebuild()
 await context.watch()

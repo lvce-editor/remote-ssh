@@ -2,6 +2,7 @@ import * as esbuild from 'esbuild'
 import fs from 'node:fs'
 import path from 'node:path'
 import { buildServer } from './buildServer.js'
+import { getRemoteSshProcessBuildOptions } from './getRemoteSshProcessBuildOptions.js'
 import { root } from './root.js'
 
 const extension = path.join(root, 'packages', 'extension')
@@ -37,19 +38,10 @@ await esbuild.build({
   target: 'node22',
 })
 
-await esbuild.build({
-  banner: {
-    js: "import { createRequire as __createRequire } from 'node:module'; const require = __createRequire(import.meta.url);",
-  },
-  bundle: true,
-  define: server.define,
-  entryPoints: [
-    path.join(root, 'packages', 'node', 'src', 'remoteSshProcess.ts'),
-  ],
-  external: ['electron', 'node:*'],
-  format: 'esm',
-  outfile: path.join(outdir, 'remoteSshProcess.js'),
-  platform: 'node',
-  sourcemap: true,
-  target: 'node22',
-})
+await esbuild.build(
+  getRemoteSshProcessBuildOptions({
+    define: server.define,
+    outdir,
+    sourcemap: true,
+  }),
+)
