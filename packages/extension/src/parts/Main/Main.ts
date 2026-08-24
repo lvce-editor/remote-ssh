@@ -7,6 +7,8 @@ import {
 import * as Connect from '../Connect/Connect.ts'
 import { fileSystem } from '../FileSystem/FileSystem.ts'
 import * as RemoteCli from '../RemoteCli/RemoteCli.ts'
+import * as RemoteServerConnect from '../RemoteServerConnect/RemoteServerConnect.ts'
+import { fileSystem as remoteServerFileSystem } from '../RemoteServerFileSystem/RemoteServerFileSystem.ts'
 import * as Rpc from '../Rpc/Rpc.ts'
 
 const state = {
@@ -21,9 +23,14 @@ export const activate = async (): Promise<void> => {
   try {
     await activateExtensionApi()
     registerFileSystemProvider(fileSystem)
+    registerFileSystemProvider(remoteServerFileSystem)
     registerCommand({
       execute: () => Connect.connect(),
       id: 'remote-ssh.connect',
+    })
+    registerCommand({
+      execute: () => RemoteServerConnect.connect(),
+      id: 'remote-server.connect',
     })
     const workspaceUri = await getWorkspaceUri()
     if (
