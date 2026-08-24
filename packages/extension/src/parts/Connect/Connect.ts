@@ -142,9 +142,10 @@ export const connect = async (
   if (!value || !value.trim()) {
     return
   }
-  const workspaceUri = SshTarget.toRemoteSshUri(value)
+  let workspaceUri: string
   let backend: WorkspaceBackend
   try {
+    workspaceUri = SshTarget.toRemoteSshUri(value)
     backend = getWorkspaceBackend(await connectRemote(workspaceUri))
   } catch (error) {
     await notify(
