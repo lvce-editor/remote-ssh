@@ -26,9 +26,32 @@ test('opens the paired remote workspace', async () => {
     'remote-server://remote.example.com/home/test/project%20with%20spaces',
     '/',
     {
-      authentication: 'websocket-ticket',
-      token: 'session-secret',
-      url: 'wss://remote.example.com/',
+      command: 'remote-server.getWebSocketUrl',
+      workspacePath: '/home/test/project with spaces',
+    },
+  )
+})
+
+test('opens a supplied pairing URL without prompting', async () => {
+  const setUri = jest.fn<RemoteServerConnect.SetWorkspaceUri>(async () => {})
+  const pairServer = jest.fn<(value: string) => Promise<typeof pairingResult>>(
+    async () => pairingResult,
+  )
+
+  await RemoteServerConnect.connectWithPairingUrl(
+    'https://remote.example.com/#token=pair',
+    setUri,
+    pairServer,
+  )
+
+  expect(pairServer).toHaveBeenCalledWith(
+    'https://remote.example.com/#token=pair',
+  )
+  expect(setUri).toHaveBeenCalledWith(
+    'remote-server://remote.example.com/home/test/project%20with%20spaces',
+    '/',
+    {
+      command: 'remote-server.getWebSocketUrl',
       workspacePath: '/home/test/project with spaces',
     },
   )

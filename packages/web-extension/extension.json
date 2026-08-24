@@ -10,18 +10,24 @@
     "connect-src https: wss: http://127.0.0.1:* http://localhost:* ws://127.0.0.1:* ws://localhost:*"
   ],
   "isolated": true,
+  "preserveRuntimeOnWorkspaceChange": true,
   "compatibility": {
     "web": true
   },
   "categories": ["Other"],
   "activation": [
     "onCommand:remote-server.connect",
+    "onCommand:remote-server.getWebSocketUrl",
     "onFileSystem:remote-server"
   ],
   "commands": [
     {
       "id": "remote-server.connect",
       "label": "Remote Server: Connect with Pairing URL"
+    },
+    {
+      "id": "remote-server.getWebSocketUrl",
+      "internal": true
     }
   ],
   "fileSystemProviders": [

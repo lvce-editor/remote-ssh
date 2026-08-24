@@ -18,11 +18,19 @@
     }
   ],
   "categories": ["Other"],
-  "activation": ["onCommand:remote-ssh.connect", "onFileSystem:remote-ssh"],
+  "activation": [
+    "onCommand:remote-ssh.connect",
+    "onCommand:remote-ssh.getWebSocketUrl",
+    "onFileSystem:remote-ssh"
+  ],
   "commands": [
     {
       "id": "remote-ssh.connect",
       "label": "SSH: Connect"
+    },
+    {
+      "id": "remote-ssh.getWebSocketUrl",
+      "internal": true
     }
   ],
   "fileSystemProviders": [

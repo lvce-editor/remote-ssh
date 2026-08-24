@@ -20,8 +20,15 @@ export const activate = async (): Promise<void> => {
     await activateExtensionApi()
     registerFileSystemProvider(fileSystem)
     registerCommand({
-      execute: () => RemoteServerConnect.connect(),
+      execute: (pairingUrl?: string) =>
+        pairingUrl
+          ? RemoteServerConnect.connectWithPairingUrl(pairingUrl)
+          : RemoteServerConnect.connect(),
       id: 'remote-server.connect',
+    })
+    registerCommand({
+      execute: (type: string) => RemoteServerConnection.getWebSocketUrl(type),
+      id: RemoteServerConnection.commandId,
     })
   } catch (error) {
     state.activated = false

@@ -3,6 +3,8 @@ interface ConnectionOptions {
   readonly websocketUrl: string
 }
 
+export const commandId = 'remote-server.getWebSocketUrl'
+
 interface RpcError {
   readonly code?: number | string
   readonly data?: { readonly code?: number | string }
@@ -58,9 +60,7 @@ const getTicket = async (options: ConnectionOptions): Promise<string> => {
     method: 'POST',
   })
   if (!response.ok) {
-    throw new Error(
-      `Failed to authorize remote file system (${response.status})`,
-    )
+    throw new Error(`Failed to authorize remote process (${response.status})`)
   }
   const result = (await response.json()) as { readonly ticket?: unknown }
   if (typeof result.ticket !== 'string') {
@@ -69,13 +69,25 @@ const getTicket = async (options: ConnectionOptions): Promise<string> => {
   return result.ticket
 }
 
+const createWebSocketUrl = async (
+  options: ConnectionOptions,
+  type: string,
+): Promise<string> => {
+  const url = new URL(
+    `/websocket/${encodeURIComponent(type)}`,
+    options.websocketUrl,
+  )
+  url.searchParams.set('ticket', await getTicket(options))
+  return url.href
+}
+
 const createRpc = async (
   options: ConnectionOptions,
   generation: number,
 ): Promise<Rpc> => {
-  const url = new URL('/websocket/file-system-process', options.websocketUrl)
-  url.searchParams.set('ticket', await getTicket(options))
-  const webSocket = new WebSocket(url)
+  const webSocket = new WebSocket(
+    await createWebSocketUrl(options, 'file-system-process'),
+  )
   const pending = new Map<number, PendingRequest>()
   let nextId = 1
   let closed = false
@@ -191,4 +203,11 @@ export const invoke = async (
   state.rpc ||= createRpc(state.options, state.generation)
   const rpc = await state.rpc
   return rpc.invoke(method, ...params)
+}
+
+export const getWebSocketUrl = async (type: string): Promise<string> => {
+  if (!state.options) {
+    throw new Error('Remote server is not paired')
+  }
+  return createWebSocketUrl(state.options, type)
 }

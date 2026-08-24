@@ -1,12 +1,66 @@
 import type { NotificationType } from '@lvce-editor/api'
 import { expect, jest, test } from '@jest/globals'
-import { connect, placeholder, restore } from '../src/parts/Connect/Connect.ts'
+import {
+  connect,
+  placeholder,
+  restore,
+  setRemoteWorkspaceUri,
+} from '../src/parts/Connect/Connect.ts'
 
 const backend = {
   token: 'secret',
   url: 'ws://127.0.0.1:45123',
   workspacePath: '/work',
 }
+
+test('uses an extension-owned connection command with a current LVCE host', async () => {
+  const execute = jest
+    .fn<(id: string, ...args: readonly unknown[]) => Promise<unknown>>()
+    .mockResolvedValueOnce(true)
+    .mockResolvedValueOnce(undefined)
+
+  await setRemoteWorkspaceUri(
+    'remote-ssh://user@example.com/work',
+    backend,
+    execute,
+  )
+
+  expect(execute).toHaveBeenNthCalledWith(
+    1,
+    'Workspace.supportsConnectionCommand',
+  )
+  expect(execute).toHaveBeenNthCalledWith(
+    2,
+    'Workspace.setUri',
+    'remote-ssh://user@example.com/work',
+    '/',
+    {
+      command: 'remote-ssh.getWebSocketUrl',
+      workspacePath: '/work',
+    },
+  )
+})
+
+test('uses the legacy backend object with an older LVCE host', async () => {
+  const execute = jest
+    .fn<(id: string, ...args: readonly unknown[]) => Promise<unknown>>()
+    .mockRejectedValueOnce(new Error('command not found'))
+    .mockResolvedValueOnce(undefined)
+
+  await setRemoteWorkspaceUri(
+    'remote-ssh://user@example.com/work',
+    backend,
+    execute,
+  )
+
+  expect(execute).toHaveBeenNthCalledWith(
+    2,
+    'Workspace.setUri',
+    'remote-ssh://user@example.com/work',
+    '/',
+    backend,
+  )
+})
 
 test('cancellation leaves the workspace unchanged', async () => {
   const showInput = jest.fn(
