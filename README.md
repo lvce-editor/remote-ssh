@@ -7,7 +7,10 @@ Remote SSH extension for Lvce Editor.
 The remote server can expose an LVCE workspace to the hosted web editor without
 requiring Electron, a local Node.js bridge, or browser raw-socket access. The
 workspace backend still runs on the remote machine, while the browser connects
-to it through an authenticated HTTPS/WebSocket gateway.
+to it through an authenticated HTTPS/WebSocket gateway. The browser connector
+is packaged separately as the web-compatible `builtin.remote-server` extension;
+the existing `builtin.remote-ssh` extension remains Node-hosted so its SSH
+transport keeps working unchanged in desktop and remote extension hosts.
 
 The gateway deliberately listens only on `127.0.0.1`. Put it behind a trusted
 HTTPS reverse proxy, private-network ingress, or outbound tunnel that provides

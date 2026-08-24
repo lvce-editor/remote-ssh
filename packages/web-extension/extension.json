@@ -1,0 +1,32 @@
+{
+  "id": "builtin.remote-server",
+  "name": "Remote Server",
+  "description": "Open an authenticated remote workspace from the web editor",
+  "repository": "https://github.com/lvce-editor/remote-ssh",
+  "browser": "dist/remoteServerMain.js",
+  "contentSecurityPolicy": [
+    "default-src 'none'",
+    "script-src 'self'",
+    "connect-src https: wss: http://127.0.0.1:* http://localhost:* ws://127.0.0.1:* ws://localhost:*"
+  ],
+  "isolated": true,
+  "compatibility": {
+    "web": true
+  },
+  "categories": ["Other"],
+  "activation": [
+    "onCommand:remote-server.connect",
+    "onFileSystem:remote-server"
+  ],
+  "commands": [
+    {
+      "id": "remote-server.connect",
+      "label": "Remote Server: Connect with Pairing URL"
+    }
+  ],
+  "fileSystemProviders": [
+    {
+      "id": "remote-server"
+    }
+  ]
+}

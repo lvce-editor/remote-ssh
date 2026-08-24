@@ -7,6 +7,7 @@
     { "path": "./packages/extension" },
     { "path": "./packages/build" },
     { "path": "./packages/node" },
-    { "path": "./packages/server" }
+    { "path": "./packages/server" },
+    { "path": "./packages/web-extension" }
   ]
 }

@@ -171,6 +171,16 @@ export const set = (options: ConnectionOptions): void => {
   state.rpc = undefined
 }
 
+export const dispose = async (): Promise<void> => {
+  const { rpc } = state
+  state.generation++
+  state.options = undefined
+  state.rpc = undefined
+  if (rpc) {
+    await closeRpc(rpc)
+  }
+}
+
 export const invoke = async (
   method: string,
   ...params: readonly unknown[]

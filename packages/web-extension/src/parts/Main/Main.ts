@@ -1,13 +1,11 @@
 import {
   activate as activateExtensionApi,
-  getWorkspaceUri,
   registerCommand,
   registerFileSystemProvider,
 } from '@lvce-editor/api'
-import * as Connect from '../Connect/Connect.ts'
-import { fileSystem } from '../FileSystem/FileSystem.ts'
-import * as RemoteCli from '../RemoteCli/RemoteCli.ts'
-import * as Rpc from '../Rpc/Rpc.ts'
+import * as RemoteServerConnect from '../RemoteServerConnect/RemoteServerConnect.ts'
+import * as RemoteServerConnection from '../RemoteServerConnection/RemoteServerConnection.ts'
+import { fileSystem } from '../RemoteServerFileSystem/RemoteServerFileSystem.ts'
 
 const state = {
   activated: false,
@@ -22,16 +20,9 @@ export const activate = async (): Promise<void> => {
     await activateExtensionApi()
     registerFileSystemProvider(fileSystem)
     registerCommand({
-      execute: () => Connect.connect(),
-      id: 'remote-ssh.connect',
+      execute: () => RemoteServerConnect.connect(),
+      id: 'remote-server.connect',
     })
-    const workspaceUri = await getWorkspaceUri()
-    if (
-      typeof workspaceUri === 'string' &&
-      workspaceUri.startsWith('remote-ssh://')
-    ) {
-      await Connect.restore(workspaceUri)
-    }
   } catch (error) {
     state.activated = false
     throw error
@@ -40,6 +31,5 @@ export const activate = async (): Promise<void> => {
 
 export const deactivate = async (): Promise<void> => {
   state.activated = false
-  RemoteCli.stop()
-  await Rpc.dispose()
+  await RemoteServerConnection.dispose()
 }

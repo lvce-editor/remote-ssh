@@ -4,14 +4,10 @@
   "description": "Open folders on SSH hosts",
   "repository": "https://github.com/lvce-editor/remote-ssh",
   "browser": "dist/remoteSshMain.js",
-  "contentSecurityPolicy": [
-    "default-src 'none'",
-    "script-src 'self'",
-    "connect-src https: wss: http://127.0.0.1:* http://localhost:* ws://127.0.0.1:* ws://localhost:*"
-  ],
+  "contentSecurityPolicy": ["default-src 'none'", "script-src 'self'"],
   "isolated": true,
   "compatibility": {
-    "web": true
+    "web": false
   },
   "rpc": [
     {
@@ -22,28 +18,16 @@
     }
   ],
   "categories": ["Other"],
-  "activation": [
-    "onCommand:remote-ssh.connect",
-    "onCommand:remote-server.connect",
-    "onFileSystem:remote-ssh",
-    "onFileSystem:remote-server"
-  ],
+  "activation": ["onCommand:remote-ssh.connect", "onFileSystem:remote-ssh"],
   "commands": [
     {
       "id": "remote-ssh.connect",
       "label": "SSH: Connect"
-    },
-    {
-      "id": "remote-server.connect",
-      "label": "Remote Server: Connect with Pairing URL"
     }
   ],
   "fileSystemProviders": [
     {
       "id": "remote-ssh"
-    },
-    {
-      "id": "remote-server"
     }
   ]
 }
