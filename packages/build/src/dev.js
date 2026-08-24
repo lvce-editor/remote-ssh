@@ -5,6 +5,7 @@ import { readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { buildServer } from './buildServer.js'
+import { getDevServerPort } from './getDevServerPort.js'
 import { getRemoteSshProcessBuildOptions } from './getRemoteSshProcessBuildOptions.js'
 import { root } from './root.js'
 
@@ -131,7 +132,7 @@ const server = spawn(
     env: {
       ...process.env,
       BUILTIN_EXTENSIONS_PATH: builtinExtensionsPath,
-      PORT: process.env.PORT || '3002',
+      PORT: getDevServerPort(),
     },
     stdio: 'inherit',
   },
