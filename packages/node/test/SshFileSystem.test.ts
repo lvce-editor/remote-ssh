@@ -31,9 +31,9 @@ void test('invokes the existing remote file-system process', async () => {
   deepStrictEqual(calls, [
     [
       {
-        identity: '["user","example.com","3000"]',
+        identity: '["user","example.com",""]',
         path: '/home/user/file.txt',
-        port: '3000',
+        port: '',
         target: 'user@example.com',
       },
       'file-system-process',
