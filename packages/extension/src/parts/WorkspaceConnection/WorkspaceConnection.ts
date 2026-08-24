@@ -3,10 +3,21 @@ interface WorkspaceBackend {
   readonly url: string
 }
 
+interface BackendWaiter {
+  readonly reject: (error: Error) => void
+  readonly resolve: (backend: WorkspaceBackend) => void
+}
+
 export const commandId = 'remote-ssh.getWebSocketUrl'
 
 const state: { backend: WorkspaceBackend | undefined } = {
   backend: undefined,
+}
+
+const backendWaiters = new Set<BackendWaiter>()
+
+const createUnavailableError = (): Error => {
+  return new Error('Remote SSH workspace connection is not available')
 }
 
 const isLoopbackWebSocket = (url: URL): boolean => {
@@ -24,20 +35,33 @@ export const set = (backend: WorkspaceBackend): void => {
     )
   }
   state.backend = backend
+  for (const waiter of backendWaiters) {
+    waiter.resolve(backend)
+  }
+  backendWaiters.clear()
 }
 
 export const reset = (): void => {
   state.backend = undefined
+  const error = createUnavailableError()
+  for (const waiter of backendWaiters) {
+    waiter.reject(error)
+  }
+  backendWaiters.clear()
 }
 
-export const getWebSocketUrl = (type: string): string => {
-  if (!state.backend) {
-    throw new Error('Remote SSH workspace connection is not available')
+const getBackend = async (): Promise<WorkspaceBackend> => {
+  if (state.backend) {
+    return state.backend
   }
-  const url = new URL(
-    `/websocket/${encodeURIComponent(type)}`,
-    state.backend.url,
-  )
-  url.searchParams.set('token', state.backend.token)
+  return new Promise<WorkspaceBackend>((resolve, reject) => {
+    backendWaiters.add({ reject, resolve })
+  })
+}
+
+export const getWebSocketUrl = async (type: string): Promise<string> => {
+  const backend = await getBackend()
+  const url = new URL(`/websocket/${encodeURIComponent(type)}`, backend.url)
+  url.searchParams.set('token', backend.token)
   return url.href
 }

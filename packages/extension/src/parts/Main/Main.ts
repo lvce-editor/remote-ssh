@@ -39,6 +39,7 @@ export const activate = async (): Promise<void> => {
     }
   } catch (error) {
     state.activated = false
+    WorkspaceConnection.reset()
     throw error
   }
 }
