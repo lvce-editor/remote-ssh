@@ -3,7 +3,7 @@
   "version": "0.0.0-dev",
   "description": "End-to-end test helpers for the Remote SSH extension",
   "type": "module",
-  "exports": "./src/SshServer.js",
+  "exports": "./src/SshServer.ts",
   "private": true,
   "author": "Lvce Editor",
   "license": "MIT"
