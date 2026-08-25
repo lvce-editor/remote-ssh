@@ -8,6 +8,7 @@ import * as Connect from '../Connect/Connect.ts'
 import { fileSystem } from '../FileSystem/FileSystem.ts'
 import * as RemoteCli from '../RemoteCli/RemoteCli.ts'
 import * as Rpc from '../Rpc/Rpc.ts'
+import * as WorkspaceConnection from '../WorkspaceConnection/WorkspaceConnection.ts'
 
 const state = {
   activated: false,
@@ -25,6 +26,10 @@ export const activate = async (): Promise<void> => {
       execute: () => Connect.connect(),
       id: 'remote-ssh.connect',
     })
+    registerCommand({
+      execute: (type: string) => WorkspaceConnection.getWebSocketUrl(type),
+      id: WorkspaceConnection.commandId,
+    })
     const workspaceUri = await getWorkspaceUri()
     if (
       typeof workspaceUri === 'string' &&
@@ -34,6 +39,7 @@ export const activate = async (): Promise<void> => {
     }
   } catch (error) {
     state.activated = false
+    WorkspaceConnection.reset()
     throw error
   }
 }
@@ -41,5 +47,6 @@ export const activate = async (): Promise<void> => {
 export const deactivate = async (): Promise<void> => {
   state.activated = false
   RemoteCli.stop()
+  WorkspaceConnection.reset()
   await Rpc.dispose()
 }

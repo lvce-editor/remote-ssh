@@ -1,14 +1,19 @@
 import * as esbuild from 'esbuild'
 import fs from 'node:fs'
 import path from 'node:path'
-import { buildServer } from './buildServer.js'
-import { root } from './root.js'
+import { buildServer } from './buildServer.ts'
+import { getRemoteSshProcessBuildOptions } from './getRemoteSshProcessBuildOptions.ts'
+import { root } from './root.ts'
 
 const extension = path.join(root, 'packages', 'extension')
 const outdir = path.join(extension, 'dist')
+const webExtension = path.join(root, 'packages', 'web-extension')
+const webOutdir = path.join(webExtension, 'dist')
 
 fs.rmSync(outdir, { force: true, recursive: true })
 fs.mkdirSync(outdir, { recursive: true })
+fs.rmSync(webOutdir, { force: true, recursive: true })
+fs.mkdirSync(webOutdir, { recursive: true })
 
 const server = await buildServer()
 
@@ -18,6 +23,17 @@ await esbuild.build({
   external: ['electron', 'node:*'],
   format: 'esm',
   outfile: path.join(outdir, 'remoteSshMain.js'),
+  platform: 'browser',
+  sourcemap: true,
+  target: 'esnext',
+})
+
+await esbuild.build({
+  bundle: true,
+  entryPoints: [path.join(webExtension, 'src', 'remoteServerMain.ts')],
+  external: ['electron', 'node:*'],
+  format: 'esm',
+  outfile: path.join(webOutdir, 'remoteServerMain.js'),
   platform: 'browser',
   sourcemap: true,
   target: 'esnext',
@@ -37,19 +53,10 @@ await esbuild.build({
   target: 'node22',
 })
 
-await esbuild.build({
-  banner: {
-    js: "import { createRequire as __createRequire } from 'node:module'; const require = __createRequire(import.meta.url);",
-  },
-  bundle: true,
-  define: server.define,
-  entryPoints: [
-    path.join(root, 'packages', 'node', 'src', 'remoteSshProcess.ts'),
-  ],
-  external: ['electron', 'node:*'],
-  format: 'esm',
-  outfile: path.join(outdir, 'remoteSshProcess.js'),
-  platform: 'node',
-  sourcemap: true,
-  target: 'node22',
-})
+await esbuild.build(
+  getRemoteSshProcessBuildOptions({
+    define: server.define,
+    outdir,
+    sourcemap: true,
+  }),
+)

@@ -1,12 +1,66 @@
 import type { NotificationType } from '@lvce-editor/api'
 import { expect, jest, test } from '@jest/globals'
-import { connect, placeholder, restore } from '../src/parts/Connect/Connect.ts'
+import {
+  connect,
+  placeholder,
+  restore,
+  setRemoteWorkspaceUri,
+} from '../src/parts/Connect/Connect.ts'
 
 const backend = {
   token: 'secret',
   url: 'ws://127.0.0.1:45123',
   workspacePath: '/work',
 }
+
+test('uses an extension-owned connection command with a current LVCE host', async () => {
+  const execute = jest
+    .fn<(id: string, ...args: readonly unknown[]) => Promise<unknown>>()
+    .mockResolvedValueOnce(true)
+    .mockResolvedValueOnce(undefined)
+
+  await setRemoteWorkspaceUri(
+    'remote-ssh://user@example.com/work',
+    backend,
+    execute,
+  )
+
+  expect(execute).toHaveBeenNthCalledWith(
+    1,
+    'Workspace.supportsConnectionCommand',
+  )
+  expect(execute).toHaveBeenNthCalledWith(
+    2,
+    'Workspace.setUri',
+    'remote-ssh://user@example.com/work',
+    '/',
+    {
+      command: 'remote-ssh.getWebSocketUrl',
+      workspacePath: '/work',
+    },
+  )
+})
+
+test('uses the legacy backend object with an older LVCE host', async () => {
+  const execute = jest
+    .fn<(id: string, ...args: readonly unknown[]) => Promise<unknown>>()
+    .mockRejectedValueOnce(new Error('command not found'))
+    .mockResolvedValueOnce(undefined)
+
+  await setRemoteWorkspaceUri(
+    'remote-ssh://user@example.com/work',
+    backend,
+    execute,
+  )
+
+  expect(execute).toHaveBeenNthCalledWith(
+    2,
+    'Workspace.setUri',
+    'remote-ssh://user@example.com/work',
+    '/',
+    backend,
+  )
+})
 
 test('cancellation leaves the workspace unchanged', async () => {
   const showInput = jest.fn(
@@ -86,6 +140,49 @@ test('restores a directly opened remote workspace backend', async () => {
   expect(watchRemoteCli).toHaveBeenCalledWith('remote-ssh://user@example.com/')
 })
 
+test('starts watching remote CLI requests before restoring the workspace', async () => {
+  const rootBackend = { ...backend, workspacePath: '/' }
+  const watchRemoteCli = jest.fn((_uri: string) => {})
+  let watcherWasActive = false
+  const setUri = jest.fn(async () => {
+    watcherWasActive = watchRemoteCli.mock.calls.length > 0
+  })
+  const connectRemote = jest.fn(async () => rootBackend)
+
+  await restore(
+    'remote-ssh://user@example.com/',
+    setUri,
+    connectRemote,
+    watchRemoteCli,
+  )
+
+  expect(watcherWasActive).toBe(true)
+})
+
+test('starts watching remote CLI requests before switching workspaces', async () => {
+  const showInput = jest.fn(async () => 'user@example.com')
+  const watchRemoteCli = jest.fn((_uri: string) => {})
+  let watcherWasActive = false
+  const setUri = jest.fn(async () => {
+    watcherWasActive = watchRemoteCli.mock.calls.length > 0
+  })
+  const connectRemote = jest.fn(async () => backend)
+  const getHosts = jest.fn(async () => [] as readonly string[])
+
+  await connect(
+    showInput,
+    setUri,
+    connectRemote,
+    (callback) => callback(),
+    getHosts,
+    undefined,
+    watchRemoteCli,
+  )
+  await Promise.resolve()
+
+  expect(watcherWasActive).toBe(true)
+})
+
 test('reports SSH connection failures without switching workspaces', async () => {
   const showInput = jest.fn(async () => 'missing.example.com')
   const setUri = jest.fn(async (_uri: string) => {})
@@ -113,6 +210,35 @@ test('reports SSH connection failures without switching workspaces', async () =>
     'error',
     'Failed to connect to SSH target: connection failed',
   )
+  expect(setUri).not.toHaveBeenCalled()
+})
+
+test('reports invalid SSH targets without starting a connection', async () => {
+  const showInput = jest.fn(async () => 'ssh -i key example.com')
+  const setUri = jest.fn(async (_uri: string) => {})
+  const connectRemote = jest.fn(async (_uri: string) => backend)
+  const getHosts = jest.fn(async () => [] as readonly string[])
+  const showNotification = jest.fn(
+    async (_type: NotificationType, _message: string) => {},
+  )
+
+  await expect(
+    connect(
+      showInput,
+      setUri,
+      connectRemote,
+      undefined,
+      getHosts,
+      undefined,
+      undefined,
+      showNotification,
+    ),
+  ).rejects.toThrow('Unsupported SSH option or argument: -i')
+  expect(showNotification).toHaveBeenCalledWith(
+    'error',
+    'Failed to connect to SSH target: Unsupported SSH option or argument: -i',
+  )
+  expect(connectRemote).not.toHaveBeenCalled()
   expect(setUri).not.toHaveBeenCalled()
 })
 

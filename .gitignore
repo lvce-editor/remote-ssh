@@ -3,7 +3,10 @@
 coverage
 dist
 dist2
+dist-web
+dist-web2
 extension.tar.br
+remote-server-extension.tar.br
 lvce-remote-ssh-server-*.tar.gz
 lvce-remote-ssh-server-manifest-*.json
 *.log

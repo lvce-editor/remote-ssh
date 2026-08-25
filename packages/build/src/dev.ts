@@ -4,8 +4,15 @@ import { rmSync, writeFileSync } from 'node:fs'
 import { readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
-import { buildServer } from './buildServer.js'
-import { root } from './root.js'
+import { buildServer } from './buildServer.ts'
+import { getDevServerPort } from './getDevServerPort.ts'
+import { getRemoteSshProcessBuildOptions } from './getRemoteSshProcessBuildOptions.ts'
+import { root } from './root.ts'
+
+interface StaticConfig {
+  readonly files: Record<string, number>
+  readonly headers: Array<Record<string, string>>
+}
 
 const extension = path.join(root, 'packages', 'extension')
 const sharedProcessEntryPath = fileURLToPath(
@@ -34,7 +41,7 @@ const staticConfigPath = path.join(
   'config.json',
 )
 const staticConfigContent = await readFile(staticConfigPath, 'utf8')
-const staticConfig = JSON.parse(staticConfigContent)
+const staticConfig = JSON.parse(staticConfigContent) as StaticConfig
 const headerIndex = staticConfig.headers.length
 const commitHash = path.basename(path.dirname(builtinExtensionsPath))
 const browserEntry = `/${commitHash}/extensions/builtin.remote-ssh/dist/remoteSshMain.js`
@@ -67,7 +74,7 @@ try {
 
 let filesCleaned = false
 
-const cleanupFiles = async () => {
+const cleanupFiles = async (): Promise<void> => {
   if (filesCleaned) {
     return
   }
@@ -76,7 +83,7 @@ const cleanupFiles = async () => {
   filesCleaned = true
 }
 
-const cleanupFilesSync = () => {
+const cleanupFilesSync = (): void => {
   if (filesCleaned) {
     return
   }
@@ -98,19 +105,13 @@ const context = await esbuild.context({
   target: 'esnext',
 })
 
-const nodeContext = await esbuild.context({
-  bundle: true,
-  define: remoteSshServer.define,
-  entryPoints: [
-    path.join(root, 'packages', 'node', 'src', 'remoteSshClient.ts'),
-  ],
-  external: ['electron', 'node:*'],
-  format: 'esm',
-  outfile: path.join(extension, 'dist', 'remoteSshClient.js'),
-  platform: 'node',
-  sourcemap: true,
-  target: 'node22',
-})
+const nodeContext = await esbuild.context(
+  getRemoteSshProcessBuildOptions({
+    define: remoteSshServer.define,
+    outdir: path.join(extension, 'dist'),
+    sourcemap: true,
+  }),
+)
 
 await context.rebuild()
 await context.watch()
@@ -136,26 +137,26 @@ const server = spawn(
     env: {
       ...process.env,
       BUILTIN_EXTENSIONS_PATH: builtinExtensionsPath,
-      PORT: process.env.PORT || '3002',
+      PORT: getDevServerPort(),
     },
     stdio: 'inherit',
   },
 )
 
-let disposePromise
+let disposePromise: Promise<void> | undefined
 
-const dispose = () => {
+const dispose = (): Promise<void> => {
   if (!disposePromise) {
     disposePromise = Promise.all([
       context.dispose(),
       nodeContext.dispose(),
       cleanupFiles(),
-    ])
+    ]).then(() => undefined)
   }
   return disposePromise
 }
 
-const stop = async () => {
+const stop = async (): Promise<void> => {
   server.kill()
   await dispose()
 }

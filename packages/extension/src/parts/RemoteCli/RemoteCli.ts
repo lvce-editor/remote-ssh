@@ -1,4 +1,4 @@
-import { executeCommand } from '@lvce-editor/api'
+import { executeCommand, openUri } from '@lvce-editor/api'
 import * as Rpc from '../Rpc/Rpc.ts'
 
 interface OpenRequest {
@@ -9,8 +9,10 @@ interface OpenRequest {
 
 export type WaitForOpenRequest = (workspaceUri: string) => Promise<unknown>
 export type OpenWindow = (url: string) => Promise<unknown>
+export type OpenFile = (uri: string) => Promise<unknown>
+export type RetryDelay = () => Promise<void>
 
-const watchedWorkspaces = new Set<string>()
+const watcherTokens = new Map<string, symbol>()
 
 const waitForOpenRequest: WaitForOpenRequest = (workspaceUri) => {
   return Rpc.invoke('SshFileSystem.waitForOpenRequest', workspaceUri)
@@ -18,6 +20,14 @@ const waitForOpenRequest: WaitForOpenRequest = (workspaceUri) => {
 
 const openWindow: OpenWindow = (url) => {
   return executeCommand('ElectronWindow.openNew', url)
+}
+
+const openFile: OpenFile = (uri) => {
+  return openUri(uri)
+}
+
+const retryDelay: RetryDelay = () => {
+  return new Promise((resolve) => setTimeout(resolve, 1000))
 }
 
 const parseOpenRequest = (value: unknown): OpenRequest => {
@@ -46,16 +56,35 @@ export const getWindowUrl = (request: OpenRequest): string => {
 
 const run = async (
   workspaceUri: string,
+  token: symbol,
   wait: WaitForOpenRequest,
   open: OpenWindow,
+  openCurrentFile: OpenFile,
+  waitBeforeRetry: RetryDelay,
 ): Promise<void> => {
   try {
-    while (watchedWorkspaces.has(workspaceUri)) {
-      const request = parseOpenRequest(await wait(workspaceUri))
-      await open(getWindowUrl(request))
+    while (watcherTokens.get(workspaceUri) === token) {
+      try {
+        const request = parseOpenRequest(await wait(workspaceUri))
+        if (watcherTokens.get(workspaceUri) !== token) {
+          return
+        }
+        if (request.kind === 'file' && request.workspaceUri === workspaceUri) {
+          await openCurrentFile(request.uri)
+        } else {
+          await open(getWindowUrl(request))
+        }
+      } catch {
+        if (watcherTokens.get(workspaceUri) !== token) {
+          return
+        }
+        await waitBeforeRetry()
+      }
     }
   } finally {
-    watchedWorkspaces.delete(workspaceUri)
+    if (watcherTokens.get(workspaceUri) === token) {
+      watcherTokens.delete(workspaceUri)
+    }
   }
 }
 
@@ -63,16 +92,26 @@ export const watch = (
   workspaceUri: string,
   wait: WaitForOpenRequest = waitForOpenRequest,
   open: OpenWindow = openWindow,
+  openCurrentFile: OpenFile = openFile,
+  waitBeforeRetry: RetryDelay = retryDelay,
 ): void => {
-  if (watchedWorkspaces.has(workspaceUri)) {
+  if (watcherTokens.has(workspaceUri)) {
     return
   }
-  watchedWorkspaces.add(workspaceUri)
-  void run(workspaceUri, wait, open).catch(() => {})
+  const token = Symbol(workspaceUri)
+  watcherTokens.set(workspaceUri, token)
+  void run(
+    workspaceUri,
+    token,
+    wait,
+    open,
+    openCurrentFile,
+    waitBeforeRetry,
+  ).catch(() => {})
 }
 
 export const stop = (): void => {
-  watchedWorkspaces.clear()
+  watcherTokens.clear()
 }
 
 export const _reset = stop

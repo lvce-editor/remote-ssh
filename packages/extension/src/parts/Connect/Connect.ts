@@ -7,6 +7,7 @@ import {
 import * as RemoteCli from '../RemoteCli/RemoteCli.ts'
 import * as Rpc from '../Rpc/Rpc.ts'
 import * as SshTarget from '../SshTarget/SshTarget.ts'
+import * as WorkspaceConnection from '../WorkspaceConnection/WorkspaceConnection.ts'
 
 export const placeholder =
   'Enter SSH host (for example user@example.com or ssh -p 2222 user@example.com)'
@@ -18,6 +19,7 @@ export type SetWorkspaceUri = (
   uri: string,
   backend: WorkspaceBackend,
 ) => Promise<void>
+export type ExecuteCommand = typeof executeCommand
 export type ConnectToHost = (uri: string) => Promise<unknown>
 export type GetConfiguredHosts = () => Promise<readonly string[]>
 export type Schedule = (callback: () => void) => void
@@ -59,11 +61,25 @@ const getErrorMessage = (error: unknown): string => {
   return String(error)
 }
 
-const setRemoteWorkspaceUri: SetWorkspaceUri = async (
-  workspaceUri,
-  backend,
-) => {
-  await executeCommand('Workspace.setUri', workspaceUri, '/', backend)
+export const setRemoteWorkspaceUri = async (
+  workspaceUri: string,
+  backend: WorkspaceBackend,
+  execute: ExecuteCommand = executeCommand,
+): Promise<void> => {
+  let supportsConnectionCommand = false
+  try {
+    supportsConnectionCommand =
+      (await execute('Workspace.supportsConnectionCommand')) === true
+  } catch {
+    // Older LVCE hosts require the legacy backend object.
+  }
+  const connection = supportsConnectionCommand
+    ? {
+        command: WorkspaceConnection.commandId,
+        workspacePath: backend.workspacePath,
+      }
+    : backend
+  await execute('Workspace.setUri', workspaceUri, '/', connection)
 }
 
 const getConfiguredHosts: GetConfiguredHosts = async () => {
@@ -81,8 +97,9 @@ export const restore = async (
   watchRemoteCli: WatchRemoteCli = RemoteCli.watch,
 ): Promise<void> => {
   const backend = getWorkspaceBackend(await connectRemote(workspaceUri))
-  await setUri(workspaceUri, backend)
+  WorkspaceConnection.set(backend)
   watchRemoteCli(workspaceUri)
+  await setUri(workspaceUri, backend)
 }
 
 const getConnectionTarget = async (
@@ -125,9 +142,10 @@ export const connect = async (
   if (!value || !value.trim()) {
     return
   }
-  const workspaceUri = SshTarget.toRemoteSshUri(value)
+  let workspaceUri: string
   let backend: WorkspaceBackend
   try {
+    workspaceUri = SshTarget.toRemoteSshUri(value)
     backend = getWorkspaceBackend(await connectRemote(workspaceUri))
   } catch (error) {
     await notify(
@@ -137,6 +155,8 @@ export const connect = async (
     throw error
   }
   schedule(() => {
-    void setUri(workspaceUri, backend).then(() => watchRemoteCli(workspaceUri))
+    WorkspaceConnection.set(backend)
+    watchRemoteCli(workspaceUri)
+    void setUri(workspaceUri, backend)
   })
 }

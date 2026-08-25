@@ -8,5 +8,11 @@
     "test": "node --test \"test/**/*.test.ts\""
   },
   "author": "Lvce Editor",
-  "license": "MIT"
+  "license": "MIT",
+  "dependencies": {
+    "ws": "^8.21.1"
+  },
+  "devDependencies": {
+    "@types/ws": "^8.18.1"
+  }
 }

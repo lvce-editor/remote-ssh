@@ -33,7 +33,9 @@ const testRunnerPath = join(
 )
 
 const sleep = async (milliseconds) => {
-  await new Promise((resolve) => setTimeout(resolve, milliseconds))
+  const { promise, resolve } = Promise.withResolvers()
+  setTimeout(resolve, milliseconds)
+  await promise
 }
 
 const getSha256 = async (filePath) => {
@@ -107,10 +109,10 @@ const createRemoteServerArtifacts = async (runtimeRoot) => {
     requestCount++
     response.end(await readFile(archivePath))
   })
-  await new Promise((resolve, reject) => {
-    artifactServer.once('error', reject)
-    artifactServer.listen(0, '127.0.0.1', resolve)
-  })
+  const { promise, reject, resolve } = Promise.withResolvers()
+  artifactServer.once('error', reject)
+  artifactServer.listen(0, '127.0.0.1', resolve)
+  await promise
   const address = artifactServer.address()
   if (!address || typeof address === 'string') {
     throw new Error('Failed to determine the archive server port')
@@ -140,9 +142,9 @@ const closeServer = (server) => {
   if (!server) {
     return Promise.resolve()
   }
-  return new Promise((resolve, reject) => {
-    server.close((error) => (error ? reject(error) : resolve()))
-  })
+  const { promise, reject, resolve } = Promise.withResolvers()
+  server.close((error) => (error ? reject(error) : resolve()))
+  return promise
 }
 
 const stopRemoteServer = async (remoteRoot) => {
@@ -189,10 +191,9 @@ const stopProcess = async (child) => {
   } catch {
     child.kill('SIGTERM')
   }
-  await Promise.race([
-    new Promise((resolve) => child.once('exit', resolve)),
-    sleep(5_000),
-  ])
+  const { promise, resolve } = Promise.withResolvers()
+  child.once('exit', resolve)
+  await Promise.race([promise, sleep(5_000)])
   if (child.exitCode === null && child.signalCode === null) {
     try {
       process.kill(-child.pid, 'SIGKILL')

@@ -2,10 +2,12 @@
   "files": [],
   "include": [],
   "references": [
+    { "path": "./packages/e2e-helpers" },
     { "path": "./packages/e2e" },
     { "path": "./packages/extension" },
     { "path": "./packages/build" },
     { "path": "./packages/node" },
-    { "path": "./packages/server" }
+    { "path": "./packages/server" },
+    { "path": "./packages/web-extension" }
   ]
 }

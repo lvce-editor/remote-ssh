@@ -1,4 +1,9 @@
-import { spawn } from 'node:child_process'
+import type { Readable } from 'node:stream'
+import {
+  spawn,
+  type ChildProcess,
+  type ChildProcessByStdio,
+} from 'node:child_process'
 import { constants } from 'node:fs'
 import {
   access,
@@ -11,7 +16,7 @@ import {
 } from 'node:fs/promises'
 import { createConnection, createServer } from 'node:net'
 import { tmpdir, userInfo } from 'node:os'
-import { delimiter, dirname, join } from 'node:path'
+import { delimiter, join } from 'node:path'
 
 const host = '127.0.0.1'
 const timeout = 120_000
@@ -19,11 +24,44 @@ const initialContent = 'before'
 const remoteTerminalMarker = 'remote-ssh-pty-host'
 const updatedContent = 'before after'
 
-const sleep = async (milliseconds) => {
-  await new Promise((resolve) => setTimeout(resolve, milliseconds))
+interface ProcessResult {
+  readonly exitCode: number | null
+  readonly stderr: string
+  readonly stdout: string
 }
 
-const findExecutable = async (name) => {
+interface SshdConfig {
+  readonly authorizedKeysPath: string
+  readonly hostKeyPath: string
+  readonly pidPath: string
+  readonly port: number
+  readonly user: string
+}
+
+interface SshFixture {
+  readonly initialContent: string
+  readonly remoteTerminalMarker: string
+  readonly target: string
+  readonly updatedContent: string
+  readonly workspacePath: string
+}
+
+interface SshServer {
+  readonly dispose: () => Promise<void>
+  readonly env: NodeJS.ProcessEnv
+  readonly filePath: string
+  readonly fixture: SshFixture
+  readonly getConnectionCount: () => number
+  readonly getOutput: () => string
+}
+
+type SshProcess = ChildProcessByStdio<null, Readable, Readable>
+
+const sleep = async (milliseconds: number): Promise<void> => {
+  await new Promise<void>((resolve) => setTimeout(resolve, milliseconds))
+}
+
+const findExecutable = async (name: string): Promise<string> => {
   const candidates = (process.env.PATH || '')
     .split(delimiter)
     .filter(Boolean)
@@ -42,16 +80,24 @@ const findExecutable = async (name) => {
   throw new Error(`Required OpenSSH executable was not found: ${name}`)
 }
 
-const runProcess = async (command, args, env = process.env) => {
+const runProcess = async (
+  command: string,
+  args: readonly string[],
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<ProcessResult> => {
   const child = spawn(command, args, {
     env,
     stdio: ['ignore', 'pipe', 'pipe'],
   })
-  const stdout = []
-  const stderr = []
-  child.stdout.on('data', (chunk) => stdout.push(String(chunk)))
-  child.stderr.on('data', (chunk) => stderr.push(String(chunk)))
-  const { promise, reject, resolve } = Promise.withResolvers()
+  const stdout: string[] = []
+  const stderr: string[] = []
+  child.stdout.on('data', (chunk: Buffer) => {
+    stdout.push(String(chunk))
+  })
+  child.stderr.on('data', (chunk: Buffer) => {
+    stderr.push(String(chunk))
+  })
+  const { promise, reject, resolve } = Promise.withResolvers<ProcessResult>()
   child.once('error', reject)
   child.once('close', (exitCode) => {
     resolve({
@@ -63,7 +109,11 @@ const runProcess = async (command, args, env = process.env) => {
   return promise
 }
 
-const runProcessChecked = async (command, args, env = process.env) => {
+const runProcessChecked = async (
+  command: string,
+  args: readonly string[],
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<ProcessResult> => {
   const result = await runProcess(command, args, env)
   if (result.exitCode !== 0) {
     throw new Error(
@@ -73,9 +123,9 @@ const runProcessChecked = async (command, args, env = process.env) => {
   return result
 }
 
-const getAvailablePort = async () => {
+const getAvailablePort = async (): Promise<number> => {
   const server = createServer()
-  const { promise, reject, resolve } = Promise.withResolvers()
+  const { promise, reject, resolve } = Promise.withResolvers<number>()
   server.once('error', reject)
   server.listen(0, host, () => {
     const address = server.address()
@@ -94,10 +144,10 @@ const getAvailablePort = async () => {
   return promise
 }
 
-const isPortOpen = async (port) => {
-  const { promise, resolve } = Promise.withResolvers()
+const isPortOpen = async (port: number): Promise<boolean> => {
+  const { promise, resolve } = Promise.withResolvers<boolean>()
   const socket = createConnection({ host, port })
-  const finish = (value) => {
+  const finish = (value: boolean): void => {
     socket.removeAllListeners()
     socket.destroy()
     resolve(value)
@@ -108,7 +158,11 @@ const isPortOpen = async (port) => {
   return promise
 }
 
-const waitForPort = async (child, port, output) => {
+const waitForPort = async (
+  child: ChildProcess,
+  port: number,
+  output: readonly string[],
+): Promise<void> => {
   const start = Date.now()
   while (Date.now() - start < timeout) {
     if (await isPortOpen(port)) {
@@ -126,7 +180,11 @@ const waitForPort = async (child, port, output) => {
   )
 }
 
-const waitForPath = async (path, child, output) => {
+const waitForPath = async (
+  path: string,
+  child: ChildProcess,
+  output: readonly string[],
+): Promise<void> => {
   const start = Date.now()
   while (Date.now() - start < 10_000) {
     try {
@@ -144,29 +202,40 @@ const waitForPath = async (path, child, output) => {
   throw new Error(`Timed out waiting for SSH agent socket: ${path}`)
 }
 
-const stopProcess = async (child) => {
+const stopProcess = async (child: ChildProcess | undefined): Promise<void> => {
   if (!child || child.exitCode !== null || child.signalCode !== null) {
     return
   }
   try {
-    process.kill(-child.pid, 'SIGTERM')
+    if (child.pid === undefined) {
+      child.kill('SIGTERM')
+    } else {
+      process.kill(-child.pid, 'SIGTERM')
+    }
   } catch {
     child.kill('SIGTERM')
   }
   await Promise.race([
-    new Promise((resolve) => child.once('exit', resolve)),
-    sleep(5_000),
+    new Promise<void>((resolve) => child.once('exit', () => resolve())),
+    sleep(5000),
   ])
   if (child.exitCode === null && child.signalCode === null) {
     try {
-      process.kill(-child.pid, 'SIGKILL')
+      if (child.pid === undefined) {
+        child.kill('SIGKILL')
+      } else {
+        process.kill(-child.pid, 'SIGKILL')
+      }
     } catch {
       child.kill('SIGKILL')
     }
   }
 }
 
-const generateKey = async (sshKeygenPath, path) => {
+const generateKey = async (
+  sshKeygenPath: string,
+  path: string,
+): Promise<void> => {
   await runProcessChecked(sshKeygenPath, [
     '-q',
     '-t',
@@ -184,7 +253,7 @@ const buildSshdConfig = ({
   pidPath,
   port,
   user,
-}) => {
+}: SshdConfig): string => {
   return [
     `Port ${port}`,
     `ListenAddress ${host}`,
@@ -206,14 +275,14 @@ const buildSshdConfig = ({
   ].join('\n')
 }
 
-const appendOutput = (output, chunk) => {
+const appendOutput = (output: string[], chunk: Buffer): void => {
   output.push(String(chunk))
   if (output.length > 200) {
     output.splice(0, output.length - 200)
   }
 }
 
-export const createSshServer = async () => {
+export const createSshServer = async (): Promise<SshServer | undefined> => {
   if (process.platform !== 'linux') {
     return undefined
   }
@@ -239,10 +308,10 @@ export const createSshServer = async () => {
   const configPath = join(root, 'sshd_config')
   const agentSocketPath = join(root, 'agent.sock')
   const knownHostsPath = join(userInfo().homedir, '.ssh', 'known_hosts')
-  const output = []
-  let agent
-  let server
-  let port
+  const output: string[] = []
+  let agent: SshProcess | undefined
+  let server: SshProcess | undefined
+  let port: number | undefined
 
   try {
     await mkdir(workspacePath)
@@ -307,8 +376,8 @@ export const createSshServer = async () => {
       detached: true,
       stdio: ['ignore', 'pipe', 'pipe'],
     })
-    agent.stdout.on('data', (chunk) => appendOutput(output, chunk))
-    agent.stderr.on('data', (chunk) => appendOutput(output, chunk))
+    agent.stdout.on('data', (chunk: Buffer) => appendOutput(output, chunk))
+    agent.stderr.on('data', (chunk: Buffer) => appendOutput(output, chunk))
     await waitForPath(agentSocketPath, agent, output)
     const env = { ...process.env, SSH_AUTH_SOCK: agentSocketPath }
     await runProcessChecked(sshAddPath, [clientKeyPath], env)
@@ -317,8 +386,8 @@ export const createSshServer = async () => {
       detached: true,
       stdio: ['ignore', 'pipe', 'pipe'],
     })
-    server.stdout.on('data', (chunk) => appendOutput(output, chunk))
-    server.stderr.on('data', (chunk) => appendOutput(output, chunk))
+    server.stdout.on('data', (chunk: Buffer) => appendOutput(output, chunk))
+    server.stderr.on('data', (chunk: Buffer) => appendOutput(output, chunk))
     await waitForPort(server, port, output)
     await runProcessChecked(
       sshPath,
@@ -339,22 +408,7 @@ export const createSshServer = async () => {
     )
 
     return {
-      env,
-      filePath,
-      getConnectionCount() {
-        return output.join('').match(/Accepted publickey/g)?.length || 0
-      },
-      getOutput() {
-        return output.join('')
-      },
-      fixture: {
-        initialContent,
-        remoteTerminalMarker,
-        target: `ssh -p ${port} ${user}@${host}:${workspacePath}`,
-        updatedContent,
-        workspacePath,
-      },
-      async dispose() {
+      async dispose(): Promise<void> {
         await stopProcess(server)
         await stopProcess(agent)
         if (port) {
@@ -371,6 +425,21 @@ export const createSshServer = async () => {
           }
         }
         await rm(root, { force: true, recursive: true })
+      },
+      env,
+      filePath,
+      fixture: {
+        initialContent,
+        remoteTerminalMarker,
+        target: `ssh -p ${port} ${user}@${host}:${workspacePath}`,
+        updatedContent,
+        workspacePath,
+      },
+      getConnectionCount(): number {
+        return output.join('').match(/Accepted publickey/g)?.length || 0
+      },
+      getOutput(): string {
+        return output.join('')
       },
     }
   } catch (error) {

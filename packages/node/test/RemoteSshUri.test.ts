@@ -11,7 +11,7 @@ void test('parses host, user, port, and path', () => {
   })
 })
 
-void test('decodes remote paths', () => {
+void test('uses the OpenSSH default port and decodes remote paths', () => {
   deepStrictEqual(parse('remote-ssh://example.com/work%20tree'), {
     identity: '["","example.com",""]',
     path: '/work tree',
