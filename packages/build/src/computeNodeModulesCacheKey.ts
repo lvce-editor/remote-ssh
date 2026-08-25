@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { root } from './root.js'
+import { root } from './root.ts'
 
 const locations: string[] = [
   'package.json',

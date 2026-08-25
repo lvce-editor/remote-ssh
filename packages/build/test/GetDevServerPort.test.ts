@@ -1,6 +1,6 @@
 import { strictEqual } from 'node:assert/strict'
 import { test } from 'node:test'
-import { getDevServerPort } from '../src/getDevServerPort.js'
+import { getDevServerPort } from '../src/getDevServerPort.ts'
 
 void test('uses port 3000 by default', () => {
   strictEqual(getDevServerPort({}), '3000')

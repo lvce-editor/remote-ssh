@@ -13,7 +13,7 @@ import {
 } from 'node:fs/promises'
 import path from 'node:path'
 import { promisify } from 'node:util'
-import { root } from './root.js'
+import { root } from './root.ts'
 
 const execFileAsync = promisify(execFile)
 
@@ -30,18 +30,21 @@ export const gitExtensionArchiveUrl = `https://github.com/lvce-editor/git/releas
 
 const rootPackage = JSON.parse(
   await readFile(path.join(root, 'package.json'), 'utf8'),
-)
+) as { devDependencies: Record<string, string> }
 export const lvceServerVersion =
   process.env.LVCE_REMOTE_SSH_LVCE_SERVER_VERSION ||
   rootPackage.devDependencies['@lvce-editor/server']
 
-const getSha256 = async (filePath) => {
+const getSha256 = async (filePath: string): Promise<string> => {
   const content = await readFile(filePath)
   return createHash('sha256').update(content).digest('hex')
 }
 
-const downloadVerified = async (url, expectedSha256) => {
-  let lastError
+const downloadVerified = async (
+  url: string,
+  expectedSha256: string,
+): Promise<Buffer> => {
+  let lastError: unknown
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
       const response = await fetch(url)
@@ -68,7 +71,9 @@ const downloadVerified = async (url, expectedSha256) => {
   throw lastError
 }
 
-const getStaticExtensionsPath = async (lvceServerDirectory) => {
+const getStaticExtensionsPath = async (
+  lvceServerDirectory: string,
+): Promise<string> => {
   const staticRoot = path.join(
     lvceServerDirectory,
     'node_modules',
@@ -90,9 +95,9 @@ const getStaticExtensionsPath = async (lvceServerDirectory) => {
 }
 
 const installBuiltinExtensions = async (
-  serverBuildDirectory,
-  lvceServerDirectory,
-) => {
+  serverBuildDirectory: string,
+  lvceServerDirectory: string,
+): Promise<void> => {
   const extensionsPath = path.join(lvceServerDirectory, 'extensions')
   await cp(await getStaticExtensionsPath(lvceServerDirectory), extensionsPath, {
     recursive: true,
