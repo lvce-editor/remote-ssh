@@ -61,6 +61,63 @@ test('opens requests and continues waiting', async () => {
   expect(wait).toHaveBeenCalledWith('remote-ssh://host/')
 })
 
+test('opens a file from the current workspace in the current window', async () => {
+  const workspaceUri = 'remote-ssh://host/home'
+  const uri = `${workspaceUri}/package.json`
+  const requests = [
+    {
+      kind: 'file' as const,
+      uri,
+      workspaceUri,
+    },
+  ]
+  const wait = jest.fn(async () => {
+    const request = requests.shift()
+    if (!request) {
+      return new Promise(() => {})
+    }
+    return request
+  })
+  const openWindow = jest.fn(async (_url: string) => {})
+  const openFile = jest.fn(async (_uri: string) => {})
+
+  watch(workspaceUri, wait, openWindow, openFile)
+  await Promise.resolve()
+  await Promise.resolve()
+  await Promise.resolve()
+
+  expect(openFile).toHaveBeenCalledWith(uri)
+  expect(openWindow).not.toHaveBeenCalled()
+})
+
+test('retries after a transient watcher failure', async () => {
+  const workspaceUri = 'remote-ssh://host/home'
+  const uri = `${workspaceUri}/package.json`
+  let attempt = 0
+  const wait = jest.fn(async () => {
+    attempt++
+    if (attempt === 1) {
+      throw new Error('RPC replaced during workspace transition')
+    }
+    if (attempt === 2) {
+      return { kind: 'file' as const, uri, workspaceUri }
+    }
+    return new Promise(() => {})
+  })
+  const openWindow = jest.fn(async (_url: string) => {})
+  const openFile = jest.fn(async (_uri: string) => {})
+  const retryDelay = jest.fn(async () => {})
+
+  watch(workspaceUri, wait, openWindow, openFile, retryDelay)
+  for (let i = 0; i < 8; i++) {
+    await Promise.resolve()
+  }
+
+  expect(retryDelay).toHaveBeenCalledTimes(1)
+  expect(openFile).toHaveBeenCalledWith(uri)
+  expect(wait).toHaveBeenCalledTimes(3)
+})
+
 test('ignores duplicate watchers for one workspace', async () => {
   const wait = jest.fn(async () => new Promise(() => {}))
   const open = jest.fn(async (_url: string) => {})
