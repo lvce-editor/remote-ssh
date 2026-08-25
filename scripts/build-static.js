@@ -1,1 +1,1 @@
-import '../packages/build/src/build-static.js'
+import '../packages/build/src/build-static.ts'

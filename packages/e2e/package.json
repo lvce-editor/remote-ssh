@@ -3,7 +3,7 @@
   "version": "0.0.0-dev",
   "description": "End-to-end tests for the Remote SSH extension",
   "scripts": {
-    "build:extension": "node ../build/src/build-extension.js",
+    "build:extension": "node ../build/src/build-extension.ts",
     "e2e": "npm run build:extension && node scripts/run-e2e.js",
     "e2e:headless": "npm run build:extension && node scripts/run-e2e.js --headless",
     "test": "node --test"

@@ -1,9 +1,9 @@
 import * as esbuild from 'esbuild'
 import fs from 'node:fs'
 import path from 'node:path'
-import { buildServer } from './buildServer.js'
-import { getRemoteSshProcessBuildOptions } from './getRemoteSshProcessBuildOptions.js'
-import { root } from './root.js'
+import { buildServer } from './buildServer.ts'
+import { getRemoteSshProcessBuildOptions } from './getRemoteSshProcessBuildOptions.ts'
+import { root } from './root.ts'
 
 const extension = path.join(root, 'packages', 'extension')
 const outdir = path.join(extension, 'dist')

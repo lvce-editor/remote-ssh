@@ -1,1 +1,1 @@
-import '../packages/build/src/build.js'
+import '../packages/build/src/build.ts'
