@@ -6,7 +6,6 @@ export const test: Test = async ({ expect, Locator, QuickPick }) => {
   await QuickPick.open()
   await QuickPick.setValue('>SSH: Connect')
   await QuickPick.selectItem('SSH: Connect', { waitUntil: 'quickPick' })
-  await new Promise((resolve) => setTimeout(resolve, 50))
 
   const quickPick = Locator('.QuickPick')
   const quickInput = quickPick.locator('input')
