@@ -702,7 +702,7 @@ const runRealSshTest = async () => {
       timeout: 30_000,
     })
     await expect(processExplorer).toContainText(
-      'extension-host-helper-process',
+      'gitProcess.js --ipc-type=node-forked-process',
       { timeout: 30_000 },
     )
   } finally {
