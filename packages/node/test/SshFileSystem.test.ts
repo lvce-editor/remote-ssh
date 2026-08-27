@@ -79,7 +79,6 @@ void test('maps remote CLI folder requests onto the current SSH authority', asyn
   deepStrictEqual(result, {
     kind: 'folder',
     uri: 'remote-ssh://user@example.com:2222/home/project%20with%20spaces',
-    workspacePath: '/home/project with spaces',
     workspaceUri:
       'remote-ssh://user@example.com:2222/home/project%20with%20spaces',
   })
@@ -94,7 +93,6 @@ void test('maps remote CLI files and their workspace folder', async () => {
   deepStrictEqual(result, {
     kind: 'file',
     uri: 'remote-ssh://example.com/home/user/readme.md',
-    workspacePath: '/home/user',
     workspaceUri: 'remote-ssh://example.com/home/user',
   })
 })

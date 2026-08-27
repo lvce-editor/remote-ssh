@@ -478,7 +478,7 @@ const runRealSshTest = async () => {
     (_, index) => `warm-${index + 1}`,
   )
   const cliWorkspacePath = join(
-    dirname(sshServer.fixture.workspacePath),
+    sshServer.fixture.workspacePath,
     'cli-workspace',
   )
   await Promise.all([
@@ -724,8 +724,14 @@ const runRealSshTest = async () => {
     const pageCount = page.context().pages().length
     await page.locator('.PanelTab[name="Terminals"]').click()
     await terminal.click()
-    await page.keyboard.type(`lvce ${cliWorkspacePath}`)
+    await page.keyboard.type(
+      `lvce ${cliWorkspacePath}; printf 'REMOTE_CLI_OPEN_SENTINEL:%s\\n' "$?"`,
+    )
     await page.keyboard.press('Enter')
+    await expect(terminal).toContainText('REMOTE_CLI_OPEN_SENTINEL:', {
+      timeout: 30_000,
+    })
+    await expect(terminal).toContainText('REMOTE_CLI_OPEN_SENTINEL:0')
     await page.keyboard.press('Control+Shift+E')
     await expect(
       page.locator('.TreeItem[aria-label="opened-by-remote-cli.txt"]'),
