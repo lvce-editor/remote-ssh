@@ -120,7 +120,13 @@ export const run = async (
   root: string,
   version: string,
   args = process.argv.slice(3),
+  writeOutput: (value: string) => unknown = (value) =>
+    process.stdout.write(value),
 ): Promise<void> => {
+  if (args.length === 1 && (args[0] === '-v' || args[0] === '--version')) {
+    writeOutput(`${version}\n`)
+    return
+  }
   const request = await resolveOpenRequest(args)
   await requestOpen(getSocketPath(root, version), request)
 }

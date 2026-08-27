@@ -1,45 +1,18 @@
 import { beforeEach, expect, jest, test } from '@jest/globals'
-import {
-  _reset,
-  getWindowUrl,
-  watch,
-} from '../src/parts/RemoteCli/RemoteCli.ts'
+import { _reset, watch } from '../src/parts/RemoteCli/RemoteCli.ts'
 
 beforeEach(() => {
   _reset()
 })
 
-test('builds a remote folder workspace URL', () => {
-  const workspaceUri = 'remote-ssh://host/home'
-  expect(
-    getWindowUrl({
-      kind: 'folder',
-      uri: workspaceUri,
-      workspaceUri,
-    }),
-  ).toBe(`/?workspace=${encodeURIComponent(workspaceUri)}`)
-})
-
-test('builds a remote file and parent workspace URL', () => {
-  const uri = 'remote-ssh://host/home/readme.md'
-  const workspaceUri = 'remote-ssh://host/home'
-  expect(
-    getWindowUrl({
-      kind: 'file',
-      uri,
-      workspaceUri,
-    }),
-  ).toBe(
-    `/?workspace=${encodeURIComponent(workspaceUri)}&openUri=${encodeURIComponent(uri)}`,
-  )
-})
-
-test('opens requests and continues waiting', async () => {
+test('switches folders in the current window and continues waiting', async () => {
+  const workspaceUri = 'remote-ssh://host/home/project'
   const requests = [
     {
       kind: 'folder' as const,
-      uri: 'remote-ssh://host/home',
-      workspaceUri: 'remote-ssh://host/home',
+      uri: workspaceUri,
+      workspacePath: '/home/project',
+      workspaceUri,
     },
   ]
   const wait = jest.fn(async (_workspaceUri: string) => {
@@ -49,15 +22,18 @@ test('opens requests and continues waiting', async () => {
     }
     return request
   })
-  const open = jest.fn(async (_url: string) => {})
+  const setWorkspace = jest.fn(async (_request: unknown) => {})
 
-  watch('remote-ssh://host/', wait, open)
+  watch('remote-ssh://host/', wait, setWorkspace)
   await Promise.resolve()
   await Promise.resolve()
   await Promise.resolve()
-  expect(open).toHaveBeenCalledWith(
-    `/?workspace=${encodeURIComponent('remote-ssh://host/home')}`,
-  )
+  expect(setWorkspace).toHaveBeenCalledWith({
+    kind: 'folder',
+    uri: workspaceUri,
+    workspacePath: '/home/project',
+    workspaceUri,
+  })
   expect(wait).toHaveBeenCalledWith('remote-ssh://host/')
 })
 
@@ -68,6 +44,7 @@ test('opens a file from the current workspace in the current window', async () =
     {
       kind: 'file' as const,
       uri,
+      workspacePath: '/home',
       workspaceUri,
     },
   ]
@@ -78,16 +55,46 @@ test('opens a file from the current workspace in the current window', async () =
     }
     return request
   })
-  const openWindow = jest.fn(async (_url: string) => {})
+  const setWorkspace = jest.fn(async (_request: unknown) => {})
   const openFile = jest.fn(async (_uri: string) => {})
 
-  watch(workspaceUri, wait, openWindow, openFile)
+  watch(workspaceUri, wait, setWorkspace, openFile)
   await Promise.resolve()
   await Promise.resolve()
   await Promise.resolve()
 
   expect(openFile).toHaveBeenCalledWith(uri)
-  expect(openWindow).not.toHaveBeenCalled()
+  expect(setWorkspace).not.toHaveBeenCalled()
+})
+
+test('opens a file after switching its parent workspace', async () => {
+  const request = {
+    kind: 'file' as const,
+    uri: 'remote-ssh://host/other/readme.md',
+    workspacePath: '/other',
+    workspaceUri: 'remote-ssh://host/other',
+  }
+  const requests = [request]
+  const wait = jest.fn(async () => {
+    const next = requests.shift()
+    if (!next) {
+      return new Promise(() => {})
+    }
+    return next
+  })
+  const setWorkspace = jest.fn(async (_request: unknown) => {})
+  const openFile = jest.fn(async (_uri: string) => {})
+
+  watch('remote-ssh://host/home', wait, setWorkspace, openFile)
+  for (let i = 0; i < 5; i++) {
+    await Promise.resolve()
+  }
+
+  expect(setWorkspace).toHaveBeenCalledWith(request)
+  expect(openFile).toHaveBeenCalledWith(request.uri)
+  expect(setWorkspace.mock.invocationCallOrder[0]).toBeLessThan(
+    openFile.mock.invocationCallOrder[0],
+  )
 })
 
 test('retries after a transient watcher failure', async () => {
@@ -100,15 +107,20 @@ test('retries after a transient watcher failure', async () => {
       throw new Error('RPC replaced during workspace transition')
     }
     if (attempt === 2) {
-      return { kind: 'file' as const, uri, workspaceUri }
+      return {
+        kind: 'file' as const,
+        uri,
+        workspacePath: '/home',
+        workspaceUri,
+      }
     }
     return new Promise(() => {})
   })
-  const openWindow = jest.fn(async (_url: string) => {})
+  const setWorkspace = jest.fn(async (_request: unknown) => {})
   const openFile = jest.fn(async (_uri: string) => {})
   const retryDelay = jest.fn(async () => {})
 
-  watch(workspaceUri, wait, openWindow, openFile, retryDelay)
+  watch(workspaceUri, wait, setWorkspace, openFile, retryDelay)
   for (let i = 0; i < 8; i++) {
     await Promise.resolve()
   }
@@ -120,10 +132,10 @@ test('retries after a transient watcher failure', async () => {
 
 test('ignores duplicate watchers for one workspace', async () => {
   const wait = jest.fn(async () => new Promise(() => {}))
-  const open = jest.fn(async (_url: string) => {})
+  const setWorkspace = jest.fn(async (_request: unknown) => {})
 
-  watch('remote-ssh://host/', wait, open)
-  watch('remote-ssh://host/', wait, open)
+  watch('remote-ssh://host/', wait, setWorkspace)
+  watch('remote-ssh://host/', wait, setWorkspace)
   await Promise.resolve()
 
   expect(wait).toHaveBeenCalledTimes(1)

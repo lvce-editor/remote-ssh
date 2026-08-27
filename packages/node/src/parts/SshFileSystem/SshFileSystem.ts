@@ -66,6 +66,7 @@ export const waitForOpenRequest = async (
 ): Promise<{
   readonly kind: OpenRequest['kind']
   readonly uri: string
+  readonly workspacePath: string
   readonly workspaceUri: string
 }> => {
   const location = RemoteSshUri.parse(uri)
@@ -78,6 +79,10 @@ export const waitForOpenRequest = async (
   return {
     kind: request.kind,
     uri: url.href,
+    workspacePath:
+      request.kind === 'folder'
+        ? request.path
+        : path.posix.dirname(request.path),
     workspaceUri: workspaceUrl.href,
   }
 }

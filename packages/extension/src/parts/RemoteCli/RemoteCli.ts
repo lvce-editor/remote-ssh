@@ -1,14 +1,16 @@
 import { executeCommand, openUri } from '@lvce-editor/api'
 import * as Rpc from '../Rpc/Rpc.ts'
+import * as WorkspaceConnection from '../WorkspaceConnection/WorkspaceConnection.ts'
 
 interface OpenRequest {
   readonly kind: 'file' | 'folder'
   readonly uri: string
+  readonly workspacePath: string
   readonly workspaceUri: string
 }
 
 export type WaitForOpenRequest = (workspaceUri: string) => Promise<unknown>
-export type OpenWindow = (url: string) => Promise<unknown>
+export type SetWorkspace = (request: OpenRequest) => Promise<unknown>
 export type OpenFile = (uri: string) => Promise<unknown>
 export type RetryDelay = () => Promise<void>
 
@@ -18,8 +20,11 @@ const waitForOpenRequest: WaitForOpenRequest = (workspaceUri) => {
   return Rpc.invoke('SshFileSystem.waitForOpenRequest', workspaceUri)
 }
 
-const openWindow: OpenWindow = (url) => {
-  return executeCommand('ElectronWindow.openNew', url)
+const setWorkspace: SetWorkspace = (request) => {
+  return executeCommand('Workspace.setUri', request.workspaceUri, '/', {
+    command: WorkspaceConnection.commandId,
+    workspacePath: request.workspacePath,
+  })
 }
 
 const openFile: OpenFile = (uri) => {
@@ -37,6 +42,8 @@ const parseOpenRequest = (value: unknown): OpenRequest => {
     (request.kind !== 'file' && request.kind !== 'folder') ||
     typeof request.uri !== 'string' ||
     !request.uri.startsWith('remote-ssh://') ||
+    typeof request.workspacePath !== 'string' ||
+    !request.workspacePath.startsWith('/') ||
     typeof request.workspaceUri !== 'string' ||
     !request.workspaceUri.startsWith('remote-ssh://')
   ) {
@@ -45,23 +52,15 @@ const parseOpenRequest = (value: unknown): OpenRequest => {
   return request as OpenRequest
 }
 
-export const getWindowUrl = (request: OpenRequest): string => {
-  const searchParams = new URLSearchParams()
-  searchParams.set('workspace', request.workspaceUri)
-  if (request.kind === 'file') {
-    searchParams.set('openUri', request.uri)
-  }
-  return `/?${searchParams}`
-}
-
 const run = async (
   workspaceUri: string,
   token: symbol,
   wait: WaitForOpenRequest,
-  open: OpenWindow,
+  setCurrentWorkspace: SetWorkspace,
   openCurrentFile: OpenFile,
   waitBeforeRetry: RetryDelay,
 ): Promise<void> => {
+  let currentWorkspaceUri = workspaceUri
   try {
     while (watcherTokens.get(workspaceUri) === token) {
       try {
@@ -69,10 +68,12 @@ const run = async (
         if (watcherTokens.get(workspaceUri) !== token) {
           return
         }
-        if (request.kind === 'file' && request.workspaceUri === workspaceUri) {
+        if (request.workspaceUri !== currentWorkspaceUri) {
+          await setCurrentWorkspace(request)
+          currentWorkspaceUri = request.workspaceUri
+        }
+        if (request.kind === 'file') {
           await openCurrentFile(request.uri)
-        } else {
-          await open(getWindowUrl(request))
         }
       } catch {
         if (watcherTokens.get(workspaceUri) !== token) {
@@ -91,7 +92,7 @@ const run = async (
 export const watch = (
   workspaceUri: string,
   wait: WaitForOpenRequest = waitForOpenRequest,
-  open: OpenWindow = openWindow,
+  setCurrentWorkspace: SetWorkspace = setWorkspace,
   openCurrentFile: OpenFile = openFile,
   waitBeforeRetry: RetryDelay = retryDelay,
 ): void => {
@@ -104,7 +105,7 @@ export const watch = (
     workspaceUri,
     token,
     wait,
-    open,
+    setCurrentWorkspace,
     openCurrentFile,
     waitBeforeRetry,
   ).catch(() => {})
