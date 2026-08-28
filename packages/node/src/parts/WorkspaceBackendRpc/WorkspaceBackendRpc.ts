@@ -31,6 +31,47 @@ type WebSocketLike = Pick<
 
 const requestTimeout = 120_000
 
+const createError = (message: string, code: string): NodeJS.ErrnoException => {
+  const error = new Error(message) as NodeJS.ErrnoException
+  error.code = code
+  return error
+}
+
+const getWebSocketErrorDetail = (event: unknown): string => {
+  if (!event || typeof event !== 'object') {
+    return ''
+  }
+  if ('error' in event && event.error instanceof Error && event.error.message) {
+    return event.error.message
+  }
+  if ('message' in event && typeof event.message === 'string') {
+    return event.message
+  }
+  return ''
+}
+
+const getWebSocketCloseDetail = (event: unknown): string => {
+  if (!event || typeof event !== 'object') {
+    return ''
+  }
+  const code =
+    'code' in event && typeof event.code === 'number' ? event.code : undefined
+  const reason =
+    'reason' in event && typeof event.reason === 'string'
+      ? event.reason.trim()
+      : ''
+  if (code !== undefined && reason) {
+    return ` (close code ${code}: ${reason})`
+  }
+  if (code === 1006) {
+    return ' (close code 1006: the network connection was lost without a close frame)'
+  }
+  if (code !== undefined) {
+    return ` (close code ${code})`
+  }
+  return reason ? ` (${reason})` : ''
+}
+
 const toError = (value: RpcError | undefined): Error => {
   const error = new Error(
     value?.message || 'Remote workspace backend request failed',
@@ -131,11 +172,23 @@ export const create = (
   webSocket.onmessage = (event): void => {
     void handleMessage(event.data)
   }
-  webSocket.onerror = (): void => {
-    close(new Error('Remote workspace backend WebSocket failed'))
+  webSocket.onerror = (event): void => {
+    const detail = getWebSocketErrorDetail(event)
+    const suffix = detail ? `: ${detail}` : ''
+    close(
+      createError(
+        `Remote workspace backend WebSocket failed${suffix}`,
+        'E_REMOTE_BACKEND_WEBSOCKET_ERROR',
+      ),
+    )
   }
-  webSocket.onclose = (): void => {
-    close(new Error('Remote workspace backend WebSocket closed'))
+  webSocket.onclose = (event): void => {
+    close(
+      createError(
+        `Remote workspace backend WebSocket closed${getWebSocketCloseDetail(event)}`,
+        'E_REMOTE_BACKEND_WEBSOCKET_CLOSED',
+      ),
+    )
   }
 
   return {
@@ -156,8 +209,9 @@ export const create = (
         const timeout = setTimeout(() => {
           pending.delete(id)
           reject(
-            new Error(
+            createError(
               'Remote workspace backend operation timed out after 120 seconds',
+              'E_REMOTE_BACKEND_REQUEST_TIMEOUT',
             ),
           )
         }, requestTimeout)
