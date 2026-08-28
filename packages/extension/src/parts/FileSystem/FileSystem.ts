@@ -22,7 +22,7 @@ const decodeBase64 = (value: string): ArrayBuffer => {
     atob(value),
     (character) => character.codePointAt(0) || 0,
   )
-  return bytes.buffer as ArrayBuffer
+  return bytes.buffer
 }
 
 export const createRemoteFileSystem = (
