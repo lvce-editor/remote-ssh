@@ -7,7 +7,7 @@ test('forwards all file system operations to the SSH node client', async () => {
       return [{ name: 'home', type: 3 }]
     }
     if (method === 'SshFileSystem.readFile') {
-      return 'hello'
+      return 'aGVsbG8='
     }
     return undefined
   })
@@ -19,7 +19,8 @@ test('forwards all file system operations to the SSH node client', async () => {
   await expect(fileSystem.readDirWithFileTypes(root)).resolves.toEqual([
     { name: 'home', type: 3 },
   ])
-  await expect(fileSystem.readFile(file)).resolves.toBe('hello')
+  const blob = await fileSystem.readFile(file)
+  await expect(blob.text()).resolves.toBe('hello')
   await fileSystem.writeFile(file, 'updated')
   await fileSystem.mkdir('remote-ssh://example.com/folder')
   await fileSystem.rename(file, renamed)
@@ -35,6 +36,16 @@ test('forwards all file system operations to the SSH node client', async () => {
   ])
   expect(fileSystem.pathSeparator).toBe('/')
   expect(fileSystem.isReadonly?.()).toBe(false)
+})
+
+test('preserves binary file content', async () => {
+  const fileSystem = createRemoteFileSystem(async () => 'AP8BgA==')
+
+  const blob = await fileSystem.readFile('remote-ssh://example.com/image.png')
+
+  expect(new Uint8Array(await blob.arrayBuffer())).toEqual(
+    new Uint8Array([0, 255, 1, 128]),
+  )
 })
 
 test('preserves SSH client errors', async () => {

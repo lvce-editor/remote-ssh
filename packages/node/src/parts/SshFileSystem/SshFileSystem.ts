@@ -92,7 +92,7 @@ export const readFile = async (uri: string): Promise<string> => {
   if (typeof result !== 'string') {
     throw new TypeError('Remote SSH read returned invalid content')
   }
-  return Buffer.from(result, 'base64').toString('utf8')
+  return result
 }
 
 export const writeFile = (uri: string, content: string): Promise<unknown> => {
