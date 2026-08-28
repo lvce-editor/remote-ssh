@@ -38,6 +38,8 @@ test('uses an extension-owned connection command with a current LVCE host', asyn
       command: 'remote-ssh.getWebSocketUrl',
       remoteCliUrl:
         'ws://127.0.0.1:45123/websocket/shared-process?token=secret',
+      webSocketUrl:
+        'ws://127.0.0.1:45123/websocket/file-system-process?token=secret',
       workspacePath: '/work',
     },
   )

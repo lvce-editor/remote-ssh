@@ -60,11 +60,8 @@ const getBackend = async (): Promise<WorkspaceBackend> => {
 }
 
 export const getWebSocketUrl = async (type: string): Promise<string> => {
-  console.error(`[DEBUG-remote-cli] getWebSocketUrl start ${type}`)
   const backend = await getBackend()
-  const url = getWebSocketUrlForBackend(backend, type)
-  console.error(`[DEBUG-remote-cli] getWebSocketUrl complete ${type}`)
-  return url
+  return getWebSocketUrlForBackend(backend, type)
 }
 
 export const getWebSocketUrlForBackend = (
