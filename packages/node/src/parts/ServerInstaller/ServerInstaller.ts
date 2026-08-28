@@ -11,6 +11,7 @@ import {
   manifest as defaultManifest,
   type ServerManifest,
 } from '../ServerManifest/ServerManifest.ts'
+import * as SshProcessRegistry from '../SshProcessRegistry/SshProcessRegistry.ts'
 
 export const downloadRequiredMarker = '__LVCE_REMOTE_SSH_DOWNLOAD_REQUIRED__'
 export const installedMarker = '__LVCE_REMOTE_SSH_INSTALLED__'
@@ -51,9 +52,11 @@ const runSsh = (
   readonly stdout: string
 }> => {
   return new Promise((resolve, reject) => {
-    const child = spawn(sshExecutable, getSshArgs(location, command), {
-      stdio: ['pipe', 'pipe', 'pipe'],
-    })
+    const child = SshProcessRegistry.register(
+      spawn(sshExecutable, getSshArgs(location, command), {
+        stdio: ['pipe', 'pipe', 'pipe'],
+      }),
+    )
     const stdout: Buffer[] = []
     const stderr: Buffer[] = []
     child.stdout.on('data', (chunk: Buffer) => {

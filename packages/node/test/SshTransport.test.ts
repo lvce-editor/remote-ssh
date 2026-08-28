@@ -5,7 +5,7 @@ import {
   _getSshArgs,
 } from '../src/parts/SshTransport/SshTransport.ts'
 
-void test('builds one non-interactive persistent SSH command', () => {
+void test('builds a multiplexed SSH command without background persistence', () => {
   const args = _getSshArgs({
     identity: '["user","example.com","2222"]',
     path: '/',
@@ -18,7 +18,7 @@ void test('builds one non-interactive persistent SSH command', () => {
   strictEqual(args.includes('-T'), true)
   const portIndex = args.indexOf('-p')
   strictEqual(args[portIndex + 1], '2222')
-  strictEqual(args.includes('ControlPersist=3h'), true)
+  strictEqual(args.includes('ControlPersist=no'), true)
   strictEqual(args.at(-2), 'user@example.com')
   match(args.at(-1) || '', /connect-or-start/)
   match(args.at(-1) || '', /__LVCE_REMOTE_SSH_INSTALL_REQUIRED__/)

@@ -7,6 +7,7 @@ import path from 'node:path'
 import type { RemoteLocation } from '../RemoteSshUri/RemoteSshUri.ts'
 import { installServer } from '../ServerInstaller/ServerInstaller.ts'
 import { manifest } from '../ServerManifest/ServerManifest.ts'
+import * as SshProcessRegistry from '../SshProcessRegistry/SshProcessRegistry.ts'
 import * as WorkspaceBackendRpc from '../WorkspaceBackendRpc/WorkspaceBackendRpc.ts'
 
 interface ReadyMessage {
@@ -107,7 +108,7 @@ const getSshArgs = (
     '-o',
     'BatchMode=yes',
     '-o',
-    'ControlPersist=3h',
+    'ControlPersist=no',
     '-o',
     'ConnectTimeout=10',
     '-o',
@@ -143,21 +144,23 @@ const addForward = async (
   localPort: number,
   remotePort: number,
 ): Promise<void> => {
-  const child = spawn(
-    sshExecutable,
-    [
-      '-S',
-      controlPath,
-      '-O',
-      'forward',
-      '-o',
-      'ExitOnForwardFailure=yes',
-      '-L',
-      `127.0.0.1:${localPort}:127.0.0.1:${remotePort}`,
-      '--',
-      location.target,
-    ],
-    { stdio: ['ignore', 'pipe', 'pipe'] },
+  const child = SshProcessRegistry.register(
+    spawn(
+      sshExecutable,
+      [
+        '-S',
+        controlPath,
+        '-O',
+        'forward',
+        '-o',
+        'ExitOnForwardFailure=yes',
+        '-L',
+        `127.0.0.1:${localPort}:127.0.0.1:${remotePort}`,
+        '--',
+        location.target,
+      ],
+      { stdio: ['ignore', 'pipe', 'pipe'] },
+    ),
   )
   const stderr: Buffer[] = []
   child.stderr.on('data', (chunk: Buffer) => {
@@ -423,9 +426,11 @@ const spawnConnection = async (
   const controlPath = getControlPath(location)
   await rm(controlPath, { force: true })
   const localPort = await getAvailablePort()
-  const child = spawn(sshExecutable, getSshArgs(location, controlPath), {
-    stdio: ['pipe', 'pipe', 'pipe'],
-  })
+  const child = SshProcessRegistry.register(
+    spawn(sshExecutable, getSshArgs(location, controlPath), {
+      stdio: ['pipe', 'pipe', 'pipe'],
+    }),
+  )
   const connection = new RemoteConnection(
     child,
     location,
