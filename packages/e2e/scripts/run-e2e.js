@@ -477,13 +477,23 @@ const runRealSshTest = async () => {
     { length: 5 },
     (_, index) => `warm-${index + 1}`,
   )
-  await Promise.all(
-    warmFolders.map(async (folder, index) => {
+  const cliWorkspacePath = join(
+    sshServer.fixture.workspacePath,
+    'cli-workspace',
+  )
+  await Promise.all([
+    ...warmFolders.map(async (folder, index) => {
       const folderPath = join(sshServer.fixture.workspacePath, folder)
       await mkdir(folderPath)
       await writeFile(join(folderPath, `child-${index + 1}.txt`), folder)
     }),
-  )
+    mkdir(cliWorkspacePath).then(() =>
+      writeFile(
+        join(cliWorkspacePath, 'opened-by-remote-cli.txt'),
+        'remote cli workspace',
+      ),
+    ),
+  ])
 
   const runtimeParent =
     process.env.LVCE_REMOTE_SSH_TEST_RUNTIME_PARENT || tmpdir()
@@ -660,6 +670,11 @@ const runRealSshTest = async () => {
     await page.keyboard.type('command -v lvce')
     await page.keyboard.press('Enter')
     await expect(terminal).toContainText('/bin/lvce', { timeout: 30_000 })
+    await page.keyboard.type(`printf 'REMOTE_CLI_VERSION:'; lvce -v`)
+    await page.keyboard.press('Enter')
+    await expect(terminal).toContainText('REMOTE_CLI_VERSION:dev', {
+      timeout: 30_000,
+    })
 
     await page.keyboard.press('Control+Shift+F')
     const search = page.locator('.Search')
@@ -705,6 +720,23 @@ const runRealSshTest = async () => {
       'gitProcess.js --ipc-type=node-forked-process',
       { timeout: 30_000 },
     )
+
+    const pageCount = page.context().pages().length
+    await page.locator('.PanelTab[name="Terminals"]').click()
+    await terminal.click()
+    await page.keyboard.type(
+      `lvce ${cliWorkspacePath}; printf 'REMOTE_CLI_OPEN_SENTINEL:%s\\n' "$?"`,
+    )
+    await page.keyboard.press('Enter')
+    await expect(terminal).toContainText('REMOTE_CLI_OPEN_SENTINEL:', {
+      timeout: 30_000,
+    })
+    await expect(terminal).toContainText('REMOTE_CLI_OPEN_SENTINEL:0')
+    await page.keyboard.press('Control+Shift+E')
+    await expect(
+      page.locator('.TreeItem[aria-label="opened-by-remote-cli.txt"]'),
+    ).toBeVisible({ timeout: 30_000 })
+    expect(page.context().pages()).toHaveLength(pageCount)
   } finally {
     await cleanup([
       async () => browser?.close(),

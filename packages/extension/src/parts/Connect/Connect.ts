@@ -76,6 +76,14 @@ export const setRemoteWorkspaceUri = async (
   const connection = supportsConnectionCommand
     ? {
         command: WorkspaceConnection.commandId,
+        remoteCliUrl: WorkspaceConnection.getWebSocketUrlForBackend(
+          backend,
+          'shared-process',
+        ),
+        webSocketUrl: WorkspaceConnection.getWebSocketUrlForBackend(
+          backend,
+          'file-system-process',
+        ),
         workspacePath: backend.workspacePath,
       }
     : backend

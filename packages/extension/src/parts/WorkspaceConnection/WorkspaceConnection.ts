@@ -1,4 +1,4 @@
-interface WorkspaceBackend {
+export interface WorkspaceBackend {
   readonly token: string
   readonly url: string
 }
@@ -61,6 +61,13 @@ const getBackend = async (): Promise<WorkspaceBackend> => {
 
 export const getWebSocketUrl = async (type: string): Promise<string> => {
   const backend = await getBackend()
+  return getWebSocketUrlForBackend(backend, type)
+}
+
+export const getWebSocketUrlForBackend = (
+  backend: WorkspaceBackend,
+  type: string,
+): string => {
   const url = new URL(`/websocket/${encodeURIComponent(type)}`, backend.url)
   url.searchParams.set('token', backend.token)
   return url.href

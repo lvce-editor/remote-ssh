@@ -120,7 +120,13 @@ export const run = async (
   root: string,
   version: string,
   args = process.argv.slice(3),
+  writeOutput: (value: string) => unknown = (value) =>
+    process.stdout.write(value),
 ): Promise<void> => {
+  if (args.length === 1 && (args[0] === '-v' || args[0] === '--version')) {
+    writeOutput(`${version}\n`)
+    return
+  }
   const request = await resolveOpenRequest(args)
   await requestOpen(getSocketPath(root, version), request)
 }
@@ -156,16 +162,16 @@ const parseRequest = (line: string): OpenRequest => {
 export const listen = async (
   root: string,
   version: string,
-  handleRequest: (request: OpenRequest) => boolean,
+  handleRequest: (request: OpenRequest) => boolean | Promise<boolean>,
 ): Promise<Server> => {
   const socketPath = getSocketPath(root, version)
   await mkdir(path.dirname(socketPath), { mode: 0o700, recursive: true })
   await rm(socketPath, { force: true })
   const server = createServer((socket) => {
     void readLine(socket)
-      .then((line) => {
+      .then(async (line) => {
         const request = parseRequest(line)
-        if (!handleRequest(request)) {
+        if (!(await handleRequest(request))) {
           writeJson(socket, {
             error: 'No local LVCE Editor window is connected to this SSH host',
           })

@@ -14,6 +14,7 @@ import {
 import { createServer, createConnection, type Socket } from 'node:net'
 import { homedir } from 'node:os'
 import path from 'node:path'
+import * as BackendRemoteCli from './parts/BackendRemoteCli/BackendRemoteCli.ts'
 import * as RemoteCli from './parts/RemoteCli/RemoteCli.ts'
 import { createRemoteWebGateway } from './RemoteWebGateway.ts'
 
@@ -354,30 +355,29 @@ const runDaemon = async (): Promise<void> => {
   await chmod(runDirectory, 0o700)
   await rm(socketPath, { force: true })
   const token = randomBytes(32).toString('hex')
-  const authenticatedClients: Socket[] = []
   const cliBinDirectory = await RemoteCli.prepare(
     root,
     process.execPath,
     process.argv[1],
   )
-  const cliServer = await RemoteCli.listen(root, serverVersion, (request) => {
-    const socket = authenticatedClients.at(-1)
-    if (!socket || socket.destroyed) {
-      return false
-    }
-    writeJson(socket, request)
-    return true
-  })
   const log = openSync(logPath, 'a', 0o600)
   let backend: Awaited<ReturnType<typeof startWorkspaceBackend>>
   try {
     backend = await startWorkspaceBackend(log, cliBinDirectory)
   } catch (error) {
     closeSync(log)
-    await RemoteCli.close(cliServer, root, serverVersion)
     throw error
   }
   closeSync(log)
+  let cliServer: Awaited<ReturnType<typeof RemoteCli.listen>>
+  try {
+    cliServer = await RemoteCli.listen(root, serverVersion, (request) =>
+      BackendRemoteCli.open(backend, request),
+    )
+  } catch (error) {
+    stopWorkspaceBackend(backend.pid)
+    throw error
+  }
   let connectionCount = 0
   let idleTimer: NodeJS.Timeout | undefined
   const server = createServer((socket) => {
@@ -408,7 +408,6 @@ const runDaemon = async (): Promise<void> => {
             return
           }
           authenticated = true
-          authenticatedClients.push(socket)
           writeJson(socket, {
             arch: process.arch,
             backend: {
@@ -439,10 +438,6 @@ const runDaemon = async (): Promise<void> => {
     })
     socket.once('close', () => {
       stopReading()
-      const authenticatedIndex = authenticatedClients.indexOf(socket)
-      if (authenticatedIndex !== -1) {
-        authenticatedClients.splice(authenticatedIndex, 1)
-      }
       connectionCount--
       if (connectionCount === 0) {
         idleTimer = setTimeout(() => server.close(), idleTimeout)

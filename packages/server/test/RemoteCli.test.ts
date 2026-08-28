@@ -15,6 +15,7 @@ import {
   prepare,
   requestOpen,
   resolveOpenRequest,
+  run,
 } from '../src/parts/RemoteCli/RemoteCli.ts'
 
 const isWindows = process.platform === 'win32'
@@ -40,6 +41,14 @@ void test('resolves relative folders and files from the terminal cwd', async (co
 void test('rejects unsupported options and multiple paths', async () => {
   await rejects(resolveOpenRequest(['--reuse-window']), /Unsupported/)
   await rejects(resolveOpenRequest(['/home', '/tmp']), /one path/)
+})
+
+void test('prints the remote SSH server version', async () => {
+  const output: string[] = []
+
+  await run('/unused', 'v1.2.3', ['-v'], (value) => output.push(value))
+
+  deepStrictEqual(output, ['v1.2.3\n'])
 })
 
 void test(

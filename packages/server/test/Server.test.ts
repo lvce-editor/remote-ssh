@@ -55,6 +55,10 @@ const connect = async (
       LVCE_REMOTE_SSH_IDLE_TIMEOUT: '2000',
       LVCE_REMOTE_SSH_BACKEND_SCRIPT: backendEntry,
       LVCE_REMOTE_SSH_ROOT: root,
+      LVCE_REMOTE_SSH_TEST_OPEN_REQUEST_PATH: path.join(
+        root,
+        'open-request.json',
+      ),
     },
     stdio: ['pipe', 'pipe', 'pipe'],
   })
@@ -137,7 +141,7 @@ void test(
 )
 
 void test(
-  'relays the installed remote lvce command to the connector',
+  'relays the installed remote lvce command to the workspace backend',
   { skip: process.platform === 'win32' },
   async (context) => {
     const root = await mkdtemp(path.join(tmpdir(), 'lvce-server-cli-'))
@@ -155,14 +159,16 @@ void test(
     })
 
     const connector = await connect(root)
-    const openRequestPromise = readLine(connector)
     await run(path.join(root, 'bin', 'lvce'), ['/home'], root)
 
-    deepStrictEqual(JSON.parse(await openRequestPromise), {
-      kind: 'folder',
-      path: '/home',
-      type: 'open',
-    })
+    deepStrictEqual(
+      JSON.parse(await readFile(path.join(root, 'open-request.json'), 'utf8')),
+      {
+        kind: 'folder',
+        path: '/home',
+        type: 'open',
+      },
+    )
     await stopConnector(connector)
   },
 )
