@@ -1,7 +1,9 @@
 import * as SshConfigHosts from '../SshConfigHosts/SshConfigHosts.ts'
 import * as SshFileSystem from '../SshFileSystem/SshFileSystem.ts'
+import * as SshProcessRegistry from '../SshProcessRegistry/SshProcessRegistry.ts'
 
 export const commandMap = {
+  'RemoteSsh.dispose': SshProcessRegistry.dispose,
   'SshConfigHosts.get': SshConfigHosts.getSshConfigHosts,
   'SshFileSystem.connect': SshFileSystem.connect,
   'SshFileSystem.mkdir': SshFileSystem.mkdir,
