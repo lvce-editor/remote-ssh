@@ -66,6 +66,7 @@ export const setRemoteWorkspaceUri = async (
   backend: WorkspaceBackend,
   execute: ExecuteCommand = executeCommand,
 ): Promise<void> => {
+  console.error('[DEBUG-remote-cli] setRemoteWorkspaceUri start')
   let supportsConnectionCommand = false
   try {
     supportsConnectionCommand =
@@ -83,7 +84,11 @@ export const setRemoteWorkspaceUri = async (
         workspacePath: backend.workspacePath,
       }
     : backend
+  console.error(
+    `[DEBUG-remote-cli] setRemoteWorkspaceUri connection ${JSON.stringify(connection)}`,
+  )
   await execute('Workspace.setUri', workspaceUri, '/', connection)
+  console.error('[DEBUG-remote-cli] setRemoteWorkspaceUri complete')
 }
 
 const getConfiguredHosts: GetConfiguredHosts = async () => {
@@ -159,8 +164,11 @@ export const connect = async (
     throw error
   }
   schedule(() => {
+    console.error('[DEBUG-remote-cli] scheduled connect start')
     WorkspaceConnection.set(backend)
+    console.error('[DEBUG-remote-cli] workspace connection set')
     watchRemoteCli(workspaceUri)
+    console.error('[DEBUG-remote-cli] legacy cli watcher started')
     void setUri(workspaceUri, backend)
   })
 }

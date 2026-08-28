@@ -28,10 +28,20 @@ export const createRemoteFileSystem = (
     },
     pathSeparator: '/',
     readDirWithFileTypes: async (uri): Promise<readonly FileSystemDirent[]> => {
-      return (await invoke(
-        'SshFileSystem.readDirWithFileTypes',
-        uri,
-      )) as readonly FileSystemDirent[]
+      console.error(`[DEBUG-remote-cli] readDir start ${uri}`)
+      try {
+        const result = (await invoke(
+          'SshFileSystem.readDirWithFileTypes',
+          uri,
+        )) as readonly FileSystemDirent[]
+        console.error(
+          `[DEBUG-remote-cli] readDir complete ${uri} ${result.length}`,
+        )
+        return result
+      } catch (error) {
+        console.error(`[DEBUG-remote-cli] readDir error ${error}`)
+        throw error
+      }
     },
     readFile: async (uri): Promise<string> => {
       return (await invoke('SshFileSystem.readFile', uri)) as string
