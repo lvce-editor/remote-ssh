@@ -41,6 +41,43 @@ void test('publishes an open request to the remote shared process', async () => 
   strictEqual(url, 'ws://127.0.0.1:45123/websocket/shared-process?token=secret')
 })
 
+void test('retries while a connected window replaces its long poll', async () => {
+  const socket = new MockWebSocket()
+  const result = open(
+    { port: 45123, token: 'secret' },
+    { kind: 'folder', path: '/home/project', type: 'open' },
+    () => socket,
+    async () => {},
+  )
+
+  socket.onopen?.()
+  socket.onmessage?.({ data: JSON.stringify({ id: 1, result: false }) })
+  await new Promise((resolve) => setImmediate(resolve))
+
+  strictEqual(socket.sent.length, 2)
+  socket.onmessage?.({ data: JSON.stringify({ id: 1, result: true }) })
+  strictEqual(await result, true)
+})
+
+void test('stops retrying when no local window is connected', async () => {
+  const socket = new MockWebSocket()
+  const result = open(
+    { port: 45123, token: 'secret' },
+    { kind: 'folder', path: '/home/project', type: 'open' },
+    () => socket,
+    async () => {},
+  )
+
+  socket.onopen?.()
+  for (let attempt = 0; attempt < 10; attempt++) {
+    socket.onmessage?.({ data: JSON.stringify({ id: 1, result: false }) })
+    await new Promise((resolve) => setImmediate(resolve))
+  }
+
+  strictEqual(socket.sent.length, 10)
+  strictEqual(await result, false)
+})
+
 void test('reports backend command errors', async () => {
   const socket = new MockWebSocket()
   const result = open(
