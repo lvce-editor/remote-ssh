@@ -41,6 +41,67 @@ const state: {
   rpc: undefined,
 }
 
+const createError = (message: string, code: string, cause?: unknown): Error => {
+  const error = new Error(message, { cause }) as Error & { code?: string }
+  error.code = code
+  return error
+}
+
+const getWebSocketErrorDetail = (event: unknown): string => {
+  if (!event || typeof event !== 'object') {
+    return ''
+  }
+  if ('error' in event && event.error instanceof Error && event.error.message) {
+    return event.error.message
+  }
+  if ('message' in event && typeof event.message === 'string') {
+    return event.message
+  }
+  return ''
+}
+
+const getWebSocketCloseDetail = (event: unknown): string => {
+  if (!event || typeof event !== 'object') {
+    return ''
+  }
+  const code =
+    'code' in event && typeof event.code === 'number' ? event.code : undefined
+  const reason =
+    'reason' in event && typeof event.reason === 'string'
+      ? event.reason.trim()
+      : ''
+  if (code !== undefined && reason) {
+    return ` (close code ${code}: ${reason})`
+  }
+  if (code === 1006) {
+    return ' (close code 1006: the network connection was lost without a close frame)'
+  }
+  if (code !== undefined) {
+    return ` (close code ${code})`
+  }
+  return reason ? ` (${reason})` : ''
+}
+
+const getErrorDetail = (error: unknown): string => {
+  if (!(error instanceof Error)) {
+    return String(error)
+  }
+  if (error.cause instanceof Error) {
+    return error.cause.message
+  }
+  return error.message
+}
+
+const getHttpErrorHint = (status: number): string => {
+  if (status === 404) {
+    return ' The remote server does not provide the WebSocket ticket endpoint.'
+  }
+  if (status >= 500) {
+    return ' The remote server is temporarily unavailable.'
+  }
+  return ''
+}
+
 const toError = (value: RpcError | undefined): Error => {
   const error = new Error(
     value?.message || 'Remote server request failed',
@@ -55,16 +116,34 @@ const toError = (value: RpcError | undefined): Error => {
 const getTicket = async (options: ConnectionOptions): Promise<string> => {
   const endpoint = new URL('/auth/websocket-ticket', options.websocketUrl)
   endpoint.protocol = endpoint.protocol === 'wss:' ? 'https:' : 'http:'
-  const response = await fetch(endpoint, {
-    headers: { authorization: `Bearer ${options.sessionToken}` },
-    method: 'POST',
-  })
+  let response: Response
+  try {
+    response = await fetch(endpoint, {
+      headers: { authorization: `Bearer ${options.sessionToken}` },
+      method: 'POST',
+    })
+  } catch (error) {
+    const detail = getErrorDetail(error)
+    throw createError(
+      `Failed to authorize the remote WebSocket: ${detail}.`,
+      'E_REMOTE_SERVER_WEBSOCKET_AUTH_NETWORK_ERROR',
+      error,
+    )
+  }
   if (!response.ok) {
-    throw new Error(`Failed to authorize remote process (${response.status})`)
+    const statusText = response.statusText ? ` ${response.statusText}` : ''
+    const hint = getHttpErrorHint(response.status)
+    throw createError(
+      `Failed to authorize the remote WebSocket: HTTP ${response.status}${statusText}.${hint}`,
+      'E_REMOTE_SERVER_WEBSOCKET_AUTH_HTTP_ERROR',
+    )
   }
   const result = (await response.json()) as { readonly ticket?: unknown }
   if (typeof result.ticket !== 'string') {
-    throw new TypeError('Remote server returned an invalid WebSocket ticket')
+    throw createError(
+      'Remote server returned an invalid WebSocket ticket',
+      'E_REMOTE_SERVER_WEBSOCKET_AUTH_INVALID_RESPONSE',
+    )
   }
   return result.ticket
 }
@@ -112,9 +191,23 @@ const createRpc = async (
   }
 
   webSocket.onopen = (): void => resolve()
-  webSocket.onerror = (): void =>
-    close(new Error('Remote server WebSocket failed'))
-  webSocket.onclose = (): void => close()
+  webSocket.onerror = (event): void => {
+    const detail = getWebSocketErrorDetail(event)
+    const suffix = detail ? `: ${detail}` : ''
+    close(
+      createError(
+        `Remote server WebSocket failed${suffix}`,
+        'E_REMOTE_SERVER_WEBSOCKET_ERROR',
+      ),
+    )
+  }
+  webSocket.onclose = (event): void =>
+    close(
+      createError(
+        `Remote server WebSocket closed${getWebSocketCloseDetail(event)}`,
+        'E_REMOTE_SERVER_WEBSOCKET_CLOSED',
+      ),
+    )
   webSocket.onmessage = (event): void => {
     try {
       const response = JSON.parse(String(event.data)) as RpcResponse
