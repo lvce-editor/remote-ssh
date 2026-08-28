@@ -27,7 +27,7 @@
     }
   },
   "devDependencies": {
-    "@lvce-editor/api": "^9.25.0",
+    "@lvce-editor/api": "^9.28.0",
     "jest": "^30.4.2",
     "ts-jest": "^29.4.12"
   }

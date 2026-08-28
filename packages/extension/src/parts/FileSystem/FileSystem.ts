@@ -11,10 +11,18 @@ export interface RemoteFileSystem extends FileSystemProvider {
   readonly readDirWithFileTypes: (
     uri: string,
   ) => Promise<readonly FileSystemDirent[]>
-  readonly readFile: (uri: string) => Promise<string>
+  readonly readFile: (uri: string) => Promise<Blob>
   readonly remove: (uri: string) => Promise<void>
   readonly rename: (oldUri: string, newUri: string) => Promise<void>
   readonly writeFile: (uri: string, content: string) => Promise<void>
+}
+
+const decodeBase64 = (value: string): ArrayBuffer => {
+  const bytes = Uint8Array.from(
+    atob(value),
+    (character) => character.codePointAt(0) || 0,
+  )
+  return bytes.buffer
 }
 
 export const createRemoteFileSystem = (
@@ -33,8 +41,12 @@ export const createRemoteFileSystem = (
         uri,
       )) as readonly FileSystemDirent[]
     },
-    readFile: async (uri): Promise<string> => {
-      return (await invoke('SshFileSystem.readFile', uri)) as string
+    readFile: async (uri): Promise<Blob> => {
+      const value = await invoke('SshFileSystem.readFile', uri)
+      if (typeof value !== 'string') {
+        throw new TypeError('Remote SSH read returned invalid content')
+      }
+      return new Blob([decodeBase64(value)])
     },
     remove: async (uri): Promise<void> => {
       await invoke('SshFileSystem.remove', uri)
