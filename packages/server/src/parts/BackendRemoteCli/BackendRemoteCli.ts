@@ -21,6 +21,17 @@ interface WebSocketLike {
   readonly send: (value: string) => void
 }
 
+type RetryDelay = () => Promise<void>
+
+const maxOpenAttempts = 10
+
+const retryDelay: RetryDelay = () => {
+  return new Promise((resolve) => {
+    const timeout = setTimeout(resolve, 100)
+    timeout.unref()
+  })
+}
+
 const getMessageText = async (data: unknown): Promise<string> => {
   if (typeof data === 'string') {
     return data
@@ -44,6 +55,7 @@ export const open = (
   request: OpenRequest,
   createWebSocket: (url: string) => WebSocketLike = (url) =>
     new WebSocket(url) as unknown as WebSocketLike,
+  waitBeforeRetry: RetryDelay = retryDelay,
 ): Promise<boolean> => {
   const url = new URL(
     `/websocket/shared-process`,
@@ -52,6 +64,7 @@ export const open = (
   url.searchParams.set('token', backend.token)
   const webSocket = createWebSocket(url.href)
   return new Promise((resolve, reject) => {
+    let attempts = 0
     let settled = false
     const timeout = setTimeout(() => {
       finish(new Error('Remote CLI workspace request timed out'))
@@ -70,7 +83,8 @@ export const open = (
         resolve(result === true)
       }
     }
-    webSocket.onopen = (): void => {
+    const send = (): void => {
+      attempts++
       webSocket.send(
         JSON.stringify({
           id: 1,
@@ -80,9 +94,12 @@ export const open = (
         }),
       )
     }
+    webSocket.onopen = (): void => {
+      send()
+    }
     webSocket.onmessage = (event): void => {
       void getMessageText(event.data)
-        .then((text) => {
+        .then(async (text) => {
           const response = JSON.parse(text) as RpcResponse
           if (response.id !== 1) {
             throw new TypeError(
@@ -94,7 +111,14 @@ export const open = (
               response.error.message || 'Remote CLI workspace request failed',
             )
           }
-          finish(undefined, response.result === true)
+          if (response.result === true || attempts >= maxOpenAttempts) {
+            finish(undefined, response.result === true)
+            return
+          }
+          await waitBeforeRetry()
+          if (!settled) {
+            send()
+          }
         })
         .catch((error) =>
           finish(error instanceof Error ? error : new Error(String(error))),
