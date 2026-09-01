@@ -34,7 +34,6 @@ export const createRemoteFileSystem = (
     mkdir: async (uri): Promise<void> => {
       await invoke('SshFileSystem.mkdir', uri)
     },
-    pathSeparator: '/',
     readDirWithFileTypes: async (uri): Promise<readonly FileSystemDirent[]> => {
       return (await invoke(
         'SshFileSystem.readDirWithFileTypes',

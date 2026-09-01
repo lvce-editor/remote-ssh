@@ -78,7 +78,6 @@ export const createRemoteServerFileSystem = (
       requireMutable(uri)
       await invokeFileSystem(invoke, 'FileSystem.mkdir', uri)
     },
-    pathSeparator: '/',
     readDirWithFileTypes: async (uri): Promise<readonly FileSystemDirent[]> => {
       const value = await invokeFileSystem(
         invoke,
