@@ -11,7 +11,6 @@ export interface PairingResult {
 export type ShowQuickInput = typeof showQuickInput
 export type SetWorkspaceUri = (
   uri: string,
-  pathSeparator: string,
   connection: {
     readonly command: string
     readonly workspacePath: string
@@ -24,10 +23,9 @@ const isLoopback = (url: URL): boolean => {
 
 const setWorkspaceUri: SetWorkspaceUri = async (
   uri,
-  pathSeparator,
   connection,
 ) => {
-  await executeCommand('Workspace.setUri', uri, pathSeparator, connection)
+  await executeCommand('Workspace.setUri', uri, connection)
 }
 
 const getPairingRequest = (
@@ -108,7 +106,7 @@ export const connectWithPairingUrl = async (
     sessionToken: result.sessionToken,
     websocketUrl: result.websocketUrl,
   })
-  await setUri(toWorkspaceUri(result.websocketUrl, result.workspacePath), '/', {
+  await setUri(toWorkspaceUri(result.websocketUrl, result.workspacePath), {
     command: RemoteServerConnection.commandId,
     workspacePath: result.workspacePath,
   })

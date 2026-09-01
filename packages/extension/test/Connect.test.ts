@@ -33,7 +33,6 @@ test('uses an extension-owned connection command with a current LVCE host', asyn
     2,
     'Workspace.setUri',
     'remote-ssh://user@example.com/work',
-    '/',
     {
       command: 'remote-ssh.getWebSocketUrl',
       remoteCliUrl:

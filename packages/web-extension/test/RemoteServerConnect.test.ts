@@ -24,7 +24,6 @@ test('opens the paired remote workspace', async () => {
   )
   expect(setUri).toHaveBeenCalledWith(
     'remote-server://remote.example.com/home/test/project%20with%20spaces',
-    '/',
     {
       command: 'remote-server.getWebSocketUrl',
       workspacePath: '/home/test/project with spaces',
@@ -49,7 +48,6 @@ test('opens a supplied pairing URL without prompting', async () => {
   )
   expect(setUri).toHaveBeenCalledWith(
     'remote-server://remote.example.com/home/test/project%20with%20spaces',
-    '/',
     {
       command: 'remote-server.getWebSocketUrl',
       workspacePath: '/home/test/project with spaces',

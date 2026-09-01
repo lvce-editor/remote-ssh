@@ -34,7 +34,6 @@ test('forwards all file system operations to the SSH node client', async () => {
     ['SshFileSystem.rename', file, renamed],
     ['SshFileSystem.remove', renamed],
   ])
-  expect(fileSystem.pathSeparator).toBe('/')
   expect(fileSystem.isReadonly?.()).toBe(false)
 })
 
