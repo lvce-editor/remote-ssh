@@ -21,10 +21,7 @@ const isLoopback = (url: URL): boolean => {
   return ['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname)
 }
 
-const setWorkspaceUri: SetWorkspaceUri = async (
-  uri,
-  connection,
-) => {
+const setWorkspaceUri: SetWorkspaceUri = async (uri, connection) => {
   await executeCommand('Workspace.setUri', uri, connection)
 }
 
