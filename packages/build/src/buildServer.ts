@@ -99,7 +99,9 @@ const installBuiltinExtensions = async (
   lvceServerDirectory: string,
 ): Promise<void> => {
   const extensionsPath = path.join(lvceServerDirectory, 'extensions')
-  await cp(await getStaticExtensionsPath(lvceServerDirectory), extensionsPath, {
+  const staticExtensionsPath =
+    await getStaticExtensionsPath(lvceServerDirectory)
+  await cp(staticExtensionsPath, extensionsPath, {
     recursive: true,
   })
   const archive = await downloadVerified(
@@ -112,6 +114,9 @@ const installBuiltinExtensions = async (
   await writeFile(tarPath, brotliDecompressSync(archive))
   await execFileAsync('tar', ['-xf', tarPath, '-C', gitPath])
   await rm(tarPath, { force: true })
+  await cp(gitPath, path.join(staticExtensionsPath, 'builtin.git'), {
+    recursive: true,
+  })
 }
 
 export const buildServer = async () => {
