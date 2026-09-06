@@ -168,7 +168,7 @@ void test('codes disposal and requests after disposal', async () => {
   })
 })
 
-void test('assigns a fallback code to uncoded backend errors', async () => {
+void test('assigns a fallback code to backend errors without a code', async () => {
   const socket = new MockWebSocket()
   const rpc = create('ws://127.0.0.1', () => socket)
   socket.onopen?.({})
