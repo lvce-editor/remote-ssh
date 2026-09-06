@@ -179,6 +179,7 @@ test('reports a coded WebSocket connection error with transport details', async 
     code: 'E_REMOTE_SERVER_WEBSOCKET_ERROR',
     message:
       'Remote server WebSocket failed: Received unexpected server response: 502',
+    name: 'RemoteServerError',
   })
 })
 
@@ -206,5 +207,20 @@ test('reports a coded WebSocket close with the server reason', async () => {
     code: 'E_REMOTE_SERVER_WEBSOCKET_CLOSED',
     message:
       'Remote server WebSocket closed (close code 1011: remote process crashed)',
+  })
+})
+
+test('reports a coded unpaired server error', async () => {
+  await RemoteServerConnection.dispose()
+  await expect(
+    RemoteServerConnection.invoke('FileSystem.stat', '/'),
+  ).rejects.toMatchObject({
+    code: 'E_REMOTE_SERVER_NOT_PAIRED',
+    name: 'RemoteServerError',
+  })
+  await expect(
+    RemoteServerConnection.getWebSocketUrl('terminal-process'),
+  ).rejects.toMatchObject({
+    code: 'E_REMOTE_SERVER_NOT_PAIRED',
   })
 })
