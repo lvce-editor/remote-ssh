@@ -1,5 +1,6 @@
 import { deepStrictEqual, rejects, strictEqual } from 'node:assert/strict'
 import { test } from 'node:test'
+import { RemoteSshError } from '../src/parts/RemoteSshError/RemoteSshError.ts'
 import { create } from '../src/parts/WorkspaceBackendRpc/WorkspaceBackendRpc.ts'
 
 class MockWebSocket {
@@ -97,6 +98,7 @@ void test('reports a coded WebSocket connection error with transport details', a
       error.message,
       'Remote workspace backend WebSocket failed: Received unexpected server response: 503',
     )
+    strictEqual(error instanceof RemoteSshError, true)
     strictEqual(error.code, 'E_REMOTE_BACKEND_WEBSOCKET_ERROR')
     return true
   })
@@ -137,4 +139,43 @@ void test('reports a coded request timeout', async (context) => {
     strictEqual(error.code, 'E_REMOTE_BACKEND_REQUEST_TIMEOUT')
     return true
   })
+})
+
+void test('codes invalid backend responses and retains the cause', async () => {
+  const socket = new MockWebSocket()
+  const rpc = create('ws://127.0.0.1', () => socket)
+  socket.onopen?.({})
+  const request = rpc.invoke('FileSystem.stat', '/tmp')
+  await Promise.resolve()
+  socket.onmessage?.({ data: 'invalid json' })
+  await rejects(request, (error: RemoteSshError) => {
+    strictEqual(error.code, 'E_REMOTE_BACKEND_INVALID_RESPONSE')
+    strictEqual(error.cause instanceof SyntaxError, true)
+    return true
+  })
+})
+
+void test('codes disposal and requests after disposal', async () => {
+  const socket = new MockWebSocket()
+  const rpc = create('ws://127.0.0.1', () => socket)
+  socket.onopen?.({})
+  const request = rpc.invoke('FileSystem.stat', '/tmp')
+  await Promise.resolve()
+  rpc.dispose()
+  await rejects(request, { code: 'E_REMOTE_BACKEND_CONNECTION_DISPOSED' })
+  await rejects(rpc.invoke('FileSystem.stat', '/tmp'), {
+    code: 'E_REMOTE_BACKEND_CONNECTION_CLOSED',
+  })
+})
+
+void test('assigns a fallback code to uncoded backend errors', async () => {
+  const socket = new MockWebSocket()
+  const rpc = create('ws://127.0.0.1', () => socket)
+  socket.onopen?.({})
+  const request = rpc.invoke('FileSystem.stat', '/tmp')
+  await Promise.resolve()
+  socket.onmessage?.({
+    data: JSON.stringify({ error: { message: 'failed' }, id: 1 }),
+  })
+  await rejects(request, { code: 'E_REMOTE_BACKEND_REQUEST_FAILED' })
 })

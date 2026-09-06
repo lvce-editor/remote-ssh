@@ -1,3 +1,5 @@
+import { RemoteSshError } from '../RemoteSshError/RemoteSshError.ts'
+
 interface RpcError {
   readonly code?: number | string
   readonly data?: unknown
@@ -30,12 +32,6 @@ type WebSocketLike = Pick<
 >
 
 const requestTimeout = 120_000
-
-const createError = (message: string, code: string): NodeJS.ErrnoException => {
-  const error = new Error(message) as NodeJS.ErrnoException
-  error.code = code
-  return error
-}
 
 const getWebSocketErrorDetail = (event: unknown): string => {
   if (!event || typeof event !== 'object') {
@@ -73,18 +69,17 @@ const getWebSocketCloseDetail = (event: unknown): string => {
 }
 
 const toError = (value: RpcError | undefined): Error => {
-  const error = new Error(
-    value?.message || 'Remote workspace backend request failed',
-  ) as NodeJS.ErrnoException
   const dataCode =
     value?.data && typeof value.data === 'object' && 'code' in value.data
       ? value.data.code
       : undefined
   const code = dataCode ?? value?.code
-  if (typeof code === 'string' || typeof code === 'number') {
-    error.code = String(code)
-  }
-  return error
+  return new RemoteSshError(
+    value?.message || 'Remote workspace backend request failed',
+    typeof code === 'string' || typeof code === 'number'
+      ? String(code)
+      : 'E_REMOTE_BACKEND_REQUEST_FAILED',
+  )
 }
 
 const getMessageText = async (data: unknown): Promise<string> => {
@@ -161,7 +156,13 @@ export const create = (
         request.resolve(response.result)
       }
     } catch (error) {
-      close(error instanceof Error ? error : new Error(String(error)))
+      close(
+        new RemoteSshError(
+          error instanceof Error ? error.message : String(error),
+          'E_REMOTE_BACKEND_INVALID_RESPONSE',
+          error,
+        ),
+      )
       webSocket.close()
     }
   }
@@ -176,7 +177,7 @@ export const create = (
     const detail = getWebSocketErrorDetail(event)
     const suffix = detail ? `: ${detail}` : ''
     close(
-      createError(
+      new RemoteSshError(
         `Remote workspace backend WebSocket failed${suffix}`,
         'E_REMOTE_BACKEND_WEBSOCKET_ERROR',
       ),
@@ -184,7 +185,7 @@ export const create = (
   }
   webSocket.onclose = (event): void => {
     close(
-      createError(
+      new RemoteSshError(
         `Remote workspace backend WebSocket closed${getWebSocketCloseDetail(event)}`,
         'E_REMOTE_BACKEND_WEBSOCKET_CLOSED',
       ),
@@ -193,7 +194,12 @@ export const create = (
 
   return {
     dispose(): void {
-      close(new Error('Remote workspace backend connection disposed'))
+      close(
+        new RemoteSshError(
+          'Remote workspace backend connection disposed',
+          'E_REMOTE_BACKEND_CONNECTION_DISPOSED',
+        ),
+      )
       webSocket.close()
     },
     async invoke(
@@ -202,14 +208,17 @@ export const create = (
     ): Promise<unknown> {
       await ready
       if (closed) {
-        throw new Error('Remote workspace backend connection is closed')
+        throw new RemoteSshError(
+          'Remote workspace backend connection is closed',
+          'E_REMOTE_BACKEND_CONNECTION_CLOSED',
+        )
       }
       const id = nextId++
       return new Promise((resolve, reject) => {
         const timeout = setTimeout(() => {
           pending.delete(id)
           reject(
-            createError(
+            new RemoteSshError(
               'Remote workspace backend operation timed out after 120 seconds',
               'E_REMOTE_BACKEND_REQUEST_TIMEOUT',
             ),
