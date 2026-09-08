@@ -117,7 +117,12 @@ const getSshArgs = (
     '-o',
     'BatchMode=yes',
     '-o',
-    'ControlPersist=3h',
+    // Keep the master in the registered child instead of forking an orphan.
+    'ControlPersist=no',
+    '-o',
+    'ForkAfterAuthentication=no',
+    '-o',
+    'StdinNull=no',
     '-o',
     'ConnectTimeout=10',
     '-o',
