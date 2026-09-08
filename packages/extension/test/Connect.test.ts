@@ -329,3 +329,52 @@ test('falls back to free-form input when configured hosts cannot be read', async
   expect(showPick).not.toHaveBeenCalled()
   expect(connectRemote).toHaveBeenCalledWith('remote-ssh://user@example.com/')
 })
+
+test('reports a failed restore with its diagnostic code', async () => {
+  const error = Object.assign(
+    new Error('SSH connected, but the server failed to start'),
+    { code: 'E_SSH_SERVER_START_FAILED' },
+  )
+  const notify = jest.fn(
+    async (_type: NotificationType, _message: string) => {},
+  )
+  await expect(
+    restore(
+      'remote-ssh://host/',
+      async () => {},
+      async () => {
+        throw error
+      },
+      () => {},
+      notify,
+    ),
+  ).rejects.toBe(error)
+  expect(notify).toHaveBeenCalledWith(
+    'error',
+    'Failed to connect to SSH target: SSH connected, but the server failed to start (E_SSH_SERVER_START_FAILED)',
+  )
+})
+
+test('reports failure while switching to an already connected workspace', async () => {
+  const notify = jest.fn(
+    async (_type: NotificationType, _message: string) => {},
+  )
+  const error = new Error('Remote backend disconnected')
+  await connect(
+    async () => 'host',
+    async () => {
+      throw error
+    },
+    async () => backend,
+    (callback) => callback(),
+    async () => [],
+    undefined,
+    () => {},
+    notify,
+  )
+  await Promise.resolve()
+  expect(notify).toHaveBeenCalledWith(
+    'error',
+    'Failed to connect to SSH target: Remote backend disconnected',
+  )
+})

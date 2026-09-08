@@ -4,7 +4,9 @@ import { rm } from 'node:fs/promises'
 import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
+import * as ConnectionError from '../ConnectionError/ConnectionError.ts'
 import type { RemoteLocation } from '../RemoteSshUri/RemoteSshUri.ts'
+import { RemoteSshError } from '../RemoteSshError/RemoteSshError.ts'
 import { installServer } from '../ServerInstaller/ServerInstaller.ts'
 import { manifest } from '../ServerManifest/ServerManifest.ts'
 import * as SshProcessRegistry from '../SshProcessRegistry/SshProcessRegistry.ts'
@@ -58,6 +60,9 @@ export type InvokeBackend = (
   ...params: readonly unknown[]
 ) => Promise<unknown>
 
+const connectedMarker = '__LVCE_REMOTE_SSH_CONNECTED__'
+const remoteLogPath = `${process.env.LVCE_REMOTE_SSH_REMOTE_ROOT || '$HOME/.lvce-server'}/run/server-${manifest.serverVersion}.log`
+
 const installRequiredMarker = '__LVCE_REMOTE_SSH_INSTALL_REQUIRED__'
 const sshExecutable =
   process.platform === 'win32'
@@ -85,7 +90,7 @@ const getRemoteCommand = (): string => {
   const backendEnvironment = configuredBackend
     ? ` LVCE_REMOTE_SSH_BACKEND_SCRIPT=${escapeShell(configuredBackend)}`
     : ''
-  return `root=${root}; runtime="$root/runtimes/${manifest.nodeVersion}/bin/node"; server="$root/servers/${manifest.serverVersion}/lvce-remote-ssh-server.mjs"; if [ -x "$runtime" ] && [ -f "$server" ]; then LVCE_REMOTE_SSH_ROOT="$root" LVCE_REMOTE_SSH_CLIENT_VERSION=${escapeShell(manifest.serverVersion)}${backendEnvironment} exec "$runtime" "$server" connect-or-start; else printf '${installRequiredMarker}\\n'; exit 86; fi`
+  return `printf '${connectedMarker}\\n'; root=${root}; runtime="$root/runtimes/${manifest.nodeVersion}/bin/node"; server="$root/servers/${manifest.serverVersion}/lvce-remote-ssh-server.mjs"; if [ -x "$runtime" ] && [ -f "$server" ]; then LVCE_REMOTE_SSH_ROOT="$root" LVCE_REMOTE_SSH_CLIENT_VERSION=${escapeShell(manifest.serverVersion)}${backendEnvironment} exec "$runtime" "$server" connect-or-start; else printf '${installRequiredMarker}\\n'; exit 86; fi`
 }
 
 const getControlPath = (location: RemoteLocation): string => {
@@ -107,8 +112,9 @@ const getSshArgs = (
     '-T',
     '-o',
     'BatchMode=yes',
+    // Keep the master attached so failed/disposed connections leave no background SSH process.
     '-o',
-    'ControlPersist=3h',
+    'ControlPersist=no',
     '-o',
     'ConnectTimeout=10',
     '-o',
@@ -182,6 +188,8 @@ class RemoteConnection implements Connection {
   private buffer = ''
   private closed = false
   private isReady = false
+  private stage: ConnectionError.Stage = 'connect'
+  private closeError: Error | undefined
   private readonly backendRpcs = new Map<
     string,
     WorkspaceBackendRpc.WorkspaceBackendRpc
@@ -245,6 +253,18 @@ class RemoteConnection implements Connection {
       return
     }
     this.closed = true
+    if (
+      !(error instanceof InstallRequiredError) &&
+      !(error instanceof RemoteSshError)
+    ) {
+      error = ConnectionError.create(
+        this.location.target,
+        this.stage,
+        error,
+        remoteLogPath,
+      )
+    }
+    this.closeError = error
     clearTimeout(this.readyTimeout)
     this.readyReject(error)
     for (const rpc of this.backendRpcs.values()) {
@@ -277,6 +297,13 @@ class RemoteConnection implements Connection {
   }
 
   private handleLine(line: string): void {
+    if (this.closed) {
+      return
+    }
+    if (line === connectedMarker) {
+      this.stage = 'start'
+      return
+    }
     if (line === installRequiredMarker) {
       this.close(new InstallRequiredError(installRequiredMarker))
       return
@@ -346,16 +373,21 @@ class RemoteConnection implements Connection {
 
   private async handleReady(value: ReadyMessage): Promise<void> {
     try {
+      this.stage = 'forward'
       await addForward(
         this.location,
         this.controlPath,
         this.localPort,
         value.backend.port,
       )
+      if (this.closed) {
+        return
+      }
       this.workspaceBackend = {
         token: value.backend.token,
         url: `ws://127.0.0.1:${this.localPort}`,
       }
+      this.stage = 'session'
       this.isReady = true
       clearTimeout(this.readyTimeout)
       this.readyResolve()
@@ -371,6 +403,9 @@ class RemoteConnection implements Connection {
 
   async getWorkspaceBackend(): Promise<WorkspaceBackend> {
     await this.ready
+    if (this.closeError) {
+      throw this.closeError
+    }
     if (!this.workspaceBackend) {
       throw new Error('Remote workspace backend is unavailable')
     }
@@ -403,6 +438,22 @@ class RemoteConnection implements Connection {
         this.backendRpcs.delete(type)
       }
       rpc.dispose()
+      if (
+        error instanceof RemoteSshError &&
+        /^E_REMOTE_BACKEND_(WEBSOCKET|CONNECTION|REQUEST_TIMEOUT)/.test(
+          error.code,
+        )
+      ) {
+        const connectionError = ConnectionError.create(
+          this.location.target,
+          'backend',
+          error,
+          remoteLogPath,
+        )
+        this.close(connectionError)
+        this.child.kill()
+        throw connectionError
+      }
       throw error
     }
   }
@@ -452,7 +503,16 @@ const createConnection = async (
     if (!(error instanceof InstallRequiredError)) {
       throw error
     }
-    await installServer(location)
+    try {
+      await installServer(location)
+    } catch (error) {
+      throw ConnectionError.create(
+        location.target,
+        'install',
+        error,
+        remoteLogPath,
+      )
+    }
     return spawnConnection(location, onClose)
   }
 }

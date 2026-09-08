@@ -56,9 +56,23 @@ const getWorkspaceBackend = (value: unknown): WorkspaceBackend => {
 
 const getErrorMessage = (error: unknown): string => {
   if (error instanceof Error) {
-    return error.message
+    const code =
+      'code' in error && typeof error.code === 'string'
+        ? ` (${error.code})`
+        : ''
+    return `${error.message}${code}`
   }
   return String(error)
+}
+
+const reportError = (
+  error: unknown,
+  notify: ShowNotification,
+): Promise<void> => {
+  return notify(
+    'error',
+    `Failed to connect to SSH target: ${getErrorMessage(error)}`,
+  )
 }
 
 export const setRemoteWorkspaceUri = async (
@@ -103,11 +117,17 @@ export const restore = async (
   setUri: SetWorkspaceUri = setRemoteWorkspaceUri,
   connectRemote: ConnectToHost = connectToHost,
   watchRemoteCli: WatchRemoteCli = RemoteCli.watch,
+  notify: ShowNotification = showNotification,
 ): Promise<void> => {
-  const backend = getWorkspaceBackend(await connectRemote(workspaceUri))
-  WorkspaceConnection.set(backend)
-  watchRemoteCli(workspaceUri)
-  await setUri(workspaceUri, backend)
+  try {
+    const backend = getWorkspaceBackend(await connectRemote(workspaceUri))
+    WorkspaceConnection.set(backend)
+    watchRemoteCli(workspaceUri)
+    await setUri(workspaceUri, backend)
+  } catch (error) {
+    await reportError(error, notify)
+    throw error
+  }
 }
 
 const getConnectionTarget = async (
@@ -156,15 +176,14 @@ export const connect = async (
     workspaceUri = SshTarget.toRemoteSshUri(value)
     backend = getWorkspaceBackend(await connectRemote(workspaceUri))
   } catch (error) {
-    await notify(
-      'error',
-      `Failed to connect to SSH target: ${getErrorMessage(error)}`,
-    )
+    await reportError(error, notify)
     throw error
   }
   schedule(() => {
     WorkspaceConnection.set(backend)
     watchRemoteCli(workspaceUri)
-    void setUri(workspaceUri, backend)
+    void setUri(workspaceUri, backend).catch((error) =>
+      reportError(error, notify),
+    )
   })
 }

@@ -179,3 +179,16 @@ void test('assigns a fallback code to backend errors without a code', async () =
   })
   await rejects(request, { code: 'E_REMOTE_BACKEND_REQUEST_FAILED' })
 })
+
+void test(
+  'bounds a WebSocket handshake that never opens',
+  { timeout: 1000 },
+  async (context) => {
+    context.mock.timers.enable({ apis: ['setTimeout'] })
+    const socket = new MockWebSocket()
+    const rpc = create('ws://127.0.0.1', () => socket)
+    const request = rpc.invoke('FileSystem.stat', '/tmp')
+    context.mock.timers.tick(10_000)
+    await rejects(request, { code: 'E_REMOTE_BACKEND_CONNECTION_TIMEOUT' })
+  },
+)
