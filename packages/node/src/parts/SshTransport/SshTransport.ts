@@ -117,7 +117,7 @@ const getSshArgs = (
     '-o',
     'BatchMode=yes',
     '-o',
-    'ControlPersist=3h',
+    'ControlPersist=no',
     '-o',
     'ConnectTimeout=10',
     '-o',
