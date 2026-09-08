@@ -70,6 +70,7 @@ const sshExecutable =
     : '/usr/bin/ssh'
 
 const connections = new Map<string, Promise<Connection>>()
+let nextConnectionId = 1
 
 class InstallRequiredError extends Error {}
 
@@ -98,7 +99,10 @@ const getControlPath = (location: RemoteLocation): string => {
     .update(location.identity)
     .digest('hex')
     .slice(0, 16)
-  return path.join(tmpdir(), `lvce-remote-ssh-${process.pid}-${hash}.sock`)
+  return path.join(
+    tmpdir(),
+    `lvce-remote-ssh-${process.pid}-${hash}-${nextConnectionId++}.sock`,
+  )
 }
 
 const getSshArgs = (
@@ -112,9 +116,8 @@ const getSshArgs = (
     '-T',
     '-o',
     'BatchMode=yes',
-    // Keep the master attached so failed/disposed connections leave no background SSH process.
     '-o',
-    'ControlPersist=no',
+    'ControlPersist=3h',
     '-o',
     'ConnectTimeout=10',
     '-o',
@@ -184,6 +187,27 @@ const addForward = async (
   }
 }
 
+const stopMaster = async (
+  controlPath: string,
+  target: string,
+): Promise<void> => {
+  // Failed attempts must not leave the persistent master (and its forwarding ports) alive.
+  const child = spawn(
+    sshExecutable,
+    ['-S', controlPath, '-O', 'exit', '--', target],
+    {
+      stdio: 'ignore',
+      timeout: 3000,
+      killSignal: 'SIGKILL',
+    },
+  )
+  await new Promise<void>((resolve) => {
+    child.once('error', () => resolve())
+    child.once('close', () => resolve())
+  })
+  await rm(controlPath, { force: true })
+}
+
 class RemoteConnection implements Connection {
   private buffer = ''
   private closed = false
@@ -248,7 +272,7 @@ class RemoteConnection implements Connection {
     })
   }
 
-  private close(error: Error): void {
+  private close(error: Error, failed = false): void {
     if (this.closed) {
       return
     }
@@ -278,7 +302,9 @@ class RemoteConnection implements Connection {
     if (this.isReady) {
       this.onClose()
     }
-    void rm(this.controlPath, { force: true })
+    if (failed || !this.isReady) {
+      void stopMaster(this.controlPath, this.location.target).catch(() => {})
+    }
   }
 
   private handleData(chunk: Buffer): void {
@@ -457,7 +483,7 @@ class RemoteConnection implements Connection {
           detail,
           remoteLogPath,
         )
-        this.close(connectionError)
+        this.close(connectionError, true)
         this.child.kill()
         throw connectionError
       }
