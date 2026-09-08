@@ -1,6 +1,6 @@
 # builtin.remote-ssh
 
-Remote SSH extension for Lvce Editor.
+Remote SSH extension for Lvce Editor. Requires Lvce Editor 0.114.3 or newer.
 
 ## Authenticated remote web experiment
 
