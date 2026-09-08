@@ -19,7 +19,14 @@ const waitForOpenRequest: WaitForOpenRequest = (workspaceUri) => {
 }
 
 const openWindow: OpenWindow = (url) => {
-  return executeCommand('ElectronWindow.openNew', url)
+  const params = new URL(url, 'http://localhost').searchParams
+  return executeCommand(
+    'Workspace.setUri',
+    params.get('workspace'),
+    undefined,
+    undefined,
+    params.get('openUri') || '',
+  )
 }
 
 const openFile: OpenFile = (uri) => {

@@ -22,10 +22,10 @@ export const nodeArchiveName = `node-${nodeVersion}-linux-x64.tar.gz`
 export const nodeArchiveSha256 =
   '44836872d9aec49f1e6b52a9a922872db9a2b02d235a616a5681b6a85fec8d89'
 export const nodeArchiveUrl = `https://nodejs.org/dist/${nodeVersion}/${nodeArchiveName}`
-export const gitExtensionVersion = 'v5.25.1'
+export const gitExtensionVersion = 'v5.31.0'
 export const gitExtensionArchiveName = `git-${gitExtensionVersion}.tar.br`
 export const gitExtensionArchiveSha256 =
-  '8173b1d928d0a21e7d22ce5508b3862e1e6ad06647861f4c6686c188f5cf9264'
+  '888a4ad3d7e040e273e0fbe7132379d9cf7feefcb9707f55725682416cea1db8'
 export const gitExtensionArchiveUrl = `https://github.com/lvce-editor/git/releases/download/${gitExtensionVersion}/${gitExtensionArchiveName}`
 
 const rootPackage = JSON.parse(

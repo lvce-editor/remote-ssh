@@ -14,7 +14,6 @@ import {
 import { createServer, createConnection, type Socket } from 'node:net'
 import { homedir } from 'node:os'
 import path from 'node:path'
-import * as BackendRemoteCli from './parts/BackendRemoteCli/BackendRemoteCli.ts'
 import * as RemoteCli from './parts/RemoteCli/RemoteCli.ts'
 import { createRemoteWebGateway } from './RemoteWebGateway.ts'
 
@@ -370,11 +369,19 @@ const runDaemon = async (): Promise<void> => {
     throw error
   }
   closeSync(log)
+  const cliClients = new Set<Socket>()
   let cliServer: Awaited<ReturnType<typeof RemoteCli.listen>>
   try {
-    cliServer = await RemoteCli.listen(root, serverVersion, (request) =>
-      BackendRemoteCli.open(backend, request),
-    )
+    cliServer = await RemoteCli.listen(root, serverVersion, (request) => {
+      const client = [...cliClients].findLast(
+        (socket) => socket.writable && !socket.destroyed,
+      )
+      if (!client) {
+        return false
+      }
+      writeJson(client, request)
+      return true
+    })
   } catch (error) {
     stopWorkspaceBackend(backend.pid)
     throw error
@@ -411,6 +418,7 @@ const runDaemon = async (): Promise<void> => {
             return
           }
           authenticated = true
+          cliClients.add(socket)
           writeJson(socket, {
             arch: process.arch,
             backend: {
@@ -441,6 +449,7 @@ const runDaemon = async (): Promise<void> => {
     })
     socket.once('close', () => {
       sockets.delete(socket)
+      cliClients.delete(socket)
       stopReading()
       connectionCount--
       if (connectionCount === 0) {
