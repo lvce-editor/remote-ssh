@@ -4,8 +4,8 @@
   "description": "End-to-end tests for the Remote SSH extension",
   "scripts": {
     "build:extension": "node ../build/src/build-extension.ts",
-    "e2e:errors": "node scripts/run-connection-errors.js",
     "e2e": "npm run build:extension && node scripts/run-e2e.js",
+    "e2e:errors": "node scripts/run-connection-errors.js",
     "e2e:headless": "npm run build:extension && node scripts/run-e2e.js --headless",
     "test": "node --test"
   },

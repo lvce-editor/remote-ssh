@@ -4,8 +4,8 @@ import { rm } from 'node:fs/promises'
 import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import * as ConnectionError from '../ConnectionError/ConnectionError.ts'
 import type { RemoteLocation } from '../RemoteSshUri/RemoteSshUri.ts'
+import * as ConnectionError from '../ConnectionError/ConnectionError.ts'
 import { RemoteSshError } from '../RemoteSshError/RemoteSshError.ts'
 import { installServer } from '../ServerInstaller/ServerInstaller.ts'
 import { manifest } from '../ServerManifest/ServerManifest.ts'
@@ -438,16 +438,23 @@ class RemoteConnection implements Connection {
         this.backendRpcs.delete(type)
       }
       rpc.dispose()
+      if (this.closeError) {
+        throw this.closeError
+      }
       if (
         error instanceof RemoteSshError &&
         /^E_REMOTE_BACKEND_(WEBSOCKET|CONNECTION|REQUEST_TIMEOUT)/.test(
           error.code,
         )
       ) {
+        const stderr = Buffer.concat(this.stderr).toString('utf8').trim()
+        const detail = stderr
+          ? new Error(`${error.message}. SSH: ${stderr}`, { cause: error })
+          : error
         const connectionError = ConnectionError.create(
           this.location.target,
           'backend',
-          error,
+          detail,
           remoteLogPath,
         )
         this.close(connectionError)

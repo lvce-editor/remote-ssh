@@ -78,6 +78,19 @@ export const runConnectionErrorScenarios = async (
       'E_SSH_BACKEND_FAILED',
       'remote workspace backend connection failed',
     )
+    await rm(remoteRoot, { recursive: true })
+    ready.backend.port = await unusedPort()
+    await installFixture(
+      `import { createServer } from 'node:net';
+      const server = createServer(() => {});
+      server.listen(${ready.backend.port}, '127.0.0.1', () => console.log(${JSON.stringify(JSON.stringify(ready))}));
+      process.stdin.resume(); process.stdin.on('end', () => process.exit(0))`,
+    )
+    await checkError(
+      target,
+      'E_SSH_BACKEND_FAILED',
+      'handshake timed out after 10 seconds',
+    )
   } finally {
     await rm(remoteRoot, { force: true, recursive: true })
   }

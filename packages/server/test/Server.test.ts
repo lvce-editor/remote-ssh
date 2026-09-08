@@ -209,3 +209,57 @@ void test(
     await stopConnector(connector)
   },
 )
+
+void test(
+  'disconnects clients and replaces a daemon whose backend crashed',
+  { skip: process.platform === 'win32', timeout: 10_000 },
+  async (context) => {
+    const root = await mkdtemp(path.join(tmpdir(), 'lvce-server-crash-'))
+    const statePath = path.join(root, 'run', 'server-dev.json')
+    const states: ServerState[] = []
+    const connectors: ChildProcessWithoutNullStreams[] = []
+    context.after(async () => {
+      for (const connector of connectors) {
+        connector.kill()
+      }
+      for (const state of states) {
+        stopState(state)
+      }
+      await rm(root, { force: true, recursive: true })
+    })
+    const first = await connect(root)
+    connectors.push(first)
+    const firstState = JSON.parse(
+      await readFile(statePath, 'utf8'),
+    ) as ServerState
+    states.push(firstState)
+    const disconnected = new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(
+        () => reject(new Error('The daemon kept the dead backend connected')),
+        1500,
+      )
+      first.once('close', () => {
+        clearTimeout(timer)
+        resolve()
+      })
+    })
+    process.kill(firstState.backendPid, 'SIGKILL')
+    await disconnected
+    // Shutdown removes the stale state after closing the management connection.
+    for (let attempt = 0; attempt < 100; attempt++) {
+      if (!(await readFile(statePath).catch(() => undefined))) {
+        break
+      }
+      await new Promise((resolve) => setTimeout(resolve, 10))
+    }
+    const second = await connect(root)
+    connectors.push(second)
+    const secondState = JSON.parse(
+      await readFile(statePath, 'utf8'),
+    ) as ServerState
+    states.push(secondState)
+    strictEqual(secondState.pid === firstState.pid, false)
+    strictEqual(secondState.backendPid === firstState.backendPid, false)
+    await stopConnector(second)
+  },
+)
