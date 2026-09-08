@@ -692,6 +692,7 @@ const runRealSshTest = async () => {
     await page.locator('.PanelTab[name="Terminals"]').click()
     const terminal = page.locator('.XtermTerminal')
     await expect(terminal).toBeVisible({ timeout: 30_000 })
+    await expect(terminal).toContainText(/[$#]\s*$/, { timeout: 30_000 })
     const terminalInput = terminal.locator('.xterm-helper-textarea')
     await expect(async () => {
       await terminal.click()
