@@ -70,7 +70,7 @@ const sshExecutable =
     : '/usr/bin/ssh'
 
 const connections = new Map<string, Promise<Connection>>()
-let nextConnectionId = 1
+const state = { nextConnectionId: 1 }
 
 class InstallRequiredError extends Error {}
 
@@ -101,7 +101,7 @@ const getControlPath = (location: RemoteLocation): string => {
     .slice(0, 16)
   return path.join(
     tmpdir(),
-    `lvce-remote-ssh-${process.pid}-${hash}-${nextConnectionId++}.sock`,
+    `lvce-remote-ssh-${process.pid}-${hash}-${state.nextConnectionId++}.sock`,
   )
 }
 
@@ -196,9 +196,9 @@ const stopMaster = async (
     sshExecutable,
     ['-S', controlPath, '-O', 'exit', '--', target],
     {
+      killSignal: 'SIGKILL',
       stdio: 'ignore',
       timeout: 3000,
-      killSignal: 'SIGKILL',
     },
   )
   await new Promise<void>((resolve) => {
