@@ -1,12 +1,28 @@
 import type { NotificationType } from '@lvce-editor/api'
 import { beforeEach, expect, jest, test } from '@jest/globals'
 
+import {
+  connect as connectWithLogging,
+  placeholder,
+  restore as restoreWithLogging,
+  setRemoteWorkspaceUri,
+} from '../src/parts/Connect/Connect.ts'
+
 const log = jest.fn(async (_message: string) => {})
-jest.unstable_mockModule('../src/parts/OutputChannel/OutputChannel.ts', () => ({
-  log,
-}))
-const { connect, placeholder, restore, setRemoteWorkspaceUri } =
-  await import('../src/parts/Connect/Connect.ts')
+
+const connect = (
+  ...args: Parameters<typeof connectWithLogging>
+): Promise<void> => {
+  args[8] = log
+  return connectWithLogging(...args)
+}
+
+const restore = (
+  ...args: Parameters<typeof restoreWithLogging>
+): Promise<void> => {
+  args[5] = log
+  return restoreWithLogging(...args)
+}
 
 beforeEach(() => {
   log.mockClear()
