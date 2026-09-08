@@ -627,6 +627,9 @@ const runRealSshTest = async () => {
           page.locator('.TreeItem[aria-label="file.txt"]'),
         ).toHaveCount(0)
         const output = await openSshOutput(page)
+        await page
+          .getByRole('button', { name: 'Maximize', exact: true })
+          .click()
         await expect(output).toContainText(
           'Connecting to SSH host remote-ssh://',
         )
@@ -636,6 +639,9 @@ const runRealSshTest = async () => {
         await expect(output).toContainText(detail)
         await expect(output).toContainText(code)
         await expect(output).not.toContainText('Connected to SSH workspace')
+        await page
+          .getByRole('button', { name: 'Unmaximize', exact: true })
+          .click()
         console.log(`PASS error notification and output channel: ${code}`)
       },
     )
