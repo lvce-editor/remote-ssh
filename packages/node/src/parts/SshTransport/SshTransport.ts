@@ -465,10 +465,6 @@ class RemoteConnection implements Connection {
     try {
       return await rpc.invoke(method, ...params)
     } catch (error) {
-      if (this.backendRpcs.get(type) === rpc) {
-        this.backendRpcs.delete(type)
-      }
-      rpc.dispose()
       if (this.closeError) {
         throw this.closeError
       }
