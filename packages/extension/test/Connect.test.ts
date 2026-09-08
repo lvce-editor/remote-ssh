@@ -1,6 +1,5 @@
 import type { NotificationType } from '@lvce-editor/api'
 import { beforeEach, expect, jest, test } from '@jest/globals'
-
 import {
   connect as connectWithLogging,
   placeholder,
