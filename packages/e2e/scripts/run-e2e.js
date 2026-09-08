@@ -17,6 +17,7 @@ import { basename, dirname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { chromium, expect } from '@playwright/test'
 import { createSshServer } from 'e2e-helpers'
+import { runConnectionErrorScenarios } from './connection-error-scenarios.js'
 
 const currentDir = dirname(fileURLToPath(import.meta.url))
 const e2eRoot = join(currentDir, '..')
@@ -593,6 +594,27 @@ const runRealSshTest = async () => {
     await openPromptScenario(page, port)
     await expectTextInputFallback(page)
 
+    await runConnectionErrorScenarios(
+      sshServer,
+      remoteRoot,
+      async (target, code, detail) => {
+        const input = await openPromptScenario(page, port)
+        await input.fill(target)
+        await page.keyboard.press('Enter')
+        const notification = page
+          .locator('.NotificationMessage')
+          .filter({ hasText: 'Failed to connect to SSH target:' })
+          .first()
+        await expect(notification).toBeVisible({ timeout: 45_000 })
+        await expect(notification).toContainText(detail)
+        await expect(notification).toContainText(code)
+        await expect(
+          page.locator('.TreeItem[aria-label="file.txt"]'),
+        ).toHaveCount(0)
+        console.log(`PASS error notification: ${code}`)
+      },
+    )
+
     await writeFile(sshConfigPath, 'Host work staging\n')
     const quickInput = await openPromptScenario(page, port)
     await expectConfiguredHosts(page, ['work', 'staging'])
@@ -737,6 +759,16 @@ const runRealSshTest = async () => {
       page.locator('.TreeItem[aria-label="opened-by-remote-cli.txt"]'),
     ).toBeVisible({ timeout: 30_000 })
     expect(page.context().pages()).toHaveLength(pageCount)
+  } catch (error) {
+    if (remoteRoot) {
+      const serverLog = await readFile(
+        join(remoteRoot, 'run', 'server-dev.log'),
+        'utf8',
+      ).catch(() => '')
+      console.error(`Remote server log:\n${serverLog}`)
+    }
+    console.error(`SSH server log:\n${sshServer.getOutput()}`)
+    throw error
   } finally {
     await cleanup([
       async () => browser?.close(),

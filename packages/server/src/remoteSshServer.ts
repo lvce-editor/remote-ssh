@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process'
+import { spawn, type ChildProcess } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
 import { closeSync, openSync } from 'node:fs'
 import {
@@ -234,6 +234,7 @@ const startWorkspaceBackend = async (
   log: number,
   cliBinDirectory: string,
 ): Promise<{
+  readonly child: ChildProcess
   readonly pid: number
   readonly port: number
   readonly token: string
@@ -269,7 +270,7 @@ const startWorkspaceBackend = async (
   const deadline = Date.now() + 30_000
   while (Date.now() < deadline) {
     if (await canConnect(port)) {
-      return { pid: child.pid!, port, token }
+      return { child, pid: child.pid!, port, token }
     }
     if (child.exitCode !== null) {
       break
@@ -378,9 +379,11 @@ const runDaemon = async (): Promise<void> => {
     stopWorkspaceBackend(backend.pid)
     throw error
   }
+  const sockets = new Set<Socket>()
   let connectionCount = 0
   let idleTimer: NodeJS.Timeout | undefined
   const server = createServer((socket) => {
+    sockets.add(socket)
     let authenticated = false
     let stopReading = () => {}
     connectionCount++
@@ -437,6 +440,7 @@ const runDaemon = async (): Promise<void> => {
       socket.destroy(new Error('Unexpected management protocol message'))
     })
     socket.once('close', () => {
+      sockets.delete(socket)
       stopReading()
       connectionCount--
       if (connectionCount === 0) {
@@ -472,9 +476,30 @@ const runDaemon = async (): Promise<void> => {
     await RemoteCli.close(cliServer, root, serverVersion)
     stopWorkspaceBackend(backend.pid)
   }
-  process.once('SIGTERM', () => server.close())
-  process.once('SIGINT', () => server.close())
-  await new Promise<void>((resolve) => server.once('close', () => resolve()))
+  const shutdown = (): void => {
+    if (idleTimer) {
+      clearTimeout(idleTimer)
+    }
+    server.close()
+    for (const socket of sockets) {
+      socket.destroy()
+    }
+  }
+  const closed = new Promise<void>((resolve) =>
+    server.once('close', () => resolve()),
+  )
+  backend.child.once('exit', (code, signal) => {
+    process.stderr.write(
+      `LVCE remote workspace backend exited (code ${code}, signal ${signal}); disconnecting clients so they can reconnect.\n`,
+    )
+    shutdown()
+  })
+  process.once('SIGTERM', shutdown)
+  process.once('SIGINT', shutdown)
+  if (backend.child.exitCode !== null || backend.child.signalCode !== null) {
+    shutdown()
+  }
+  await closed
   await cleanup()
 }
 

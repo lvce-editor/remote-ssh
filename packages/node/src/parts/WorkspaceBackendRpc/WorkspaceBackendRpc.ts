@@ -123,6 +123,7 @@ export const create = (
       return
     }
     closed = true
+    clearTimeout(readyTimeout)
     rejectReady(error)
     for (const request of pending.values()) {
       clearTimeout(request.timeout)
@@ -131,6 +132,16 @@ export const create = (
     pending.clear()
     onClose()
   }
+
+  const readyTimeout = setTimeout(() => {
+    close(
+      new RemoteSshError(
+        'Remote workspace backend WebSocket handshake timed out after 10 seconds',
+        'E_REMOTE_BACKEND_CONNECTION_TIMEOUT',
+      ),
+    )
+    webSocket.close()
+  }, 10_000)
 
   const handleMessage = async (data: unknown): Promise<void> => {
     try {
@@ -168,6 +179,7 @@ export const create = (
   }
 
   webSocket.onopen = (): void => {
+    clearTimeout(readyTimeout)
     resolveReady()
   }
   webSocket.onmessage = (event): void => {
