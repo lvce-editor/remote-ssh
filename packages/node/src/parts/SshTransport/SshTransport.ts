@@ -117,7 +117,7 @@ const getSshArgs = (
     '-o',
     'BatchMode=yes',
     '-o',
-    'ControlPersist=3h',
+    'ControlPersist=no',
     '-o',
     'ConnectTimeout=10',
     '-o',
@@ -460,19 +460,19 @@ class RemoteConnection implements Connection {
     try {
       return await rpc.invoke(method, ...params)
     } catch (error) {
-      if (this.backendRpcs.get(type) === rpc) {
-        this.backendRpcs.delete(type)
-      }
-      rpc.dispose()
       if (this.closeError) {
         throw this.closeError
       }
       if (
         error instanceof RemoteSshError &&
-        /^E_REMOTE_BACKEND_(WEBSOCKET|CONNECTION|REQUEST_TIMEOUT)/.test(
+        /^E_REMOTE_BACKEND_(WEBSOCKET|CONNECTION|REQUEST_TIMEOUT|INVALID_RESPONSE)/.test(
           error.code,
         )
       ) {
+        if (this.backendRpcs.get(type) === rpc) {
+          this.backendRpcs.delete(type)
+        }
+        rpc.dispose()
         const stderr = Buffer.concat(this.stderr).toString('utf8').trim()
         const detail = stderr
           ? new Error(`${error.message}. SSH: ${stderr}`, { cause: error })
@@ -487,6 +487,8 @@ class RemoteConnection implements Connection {
         this.child.kill()
         throw connectionError
       }
+      // Missing files and other application errors must not cancel concurrent
+      // requests or discard the shared SSH connection.
       throw error
     }
   }

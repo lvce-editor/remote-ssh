@@ -70,6 +70,25 @@ remote, and the server remains available for reconnects until it has been idle
 for three hours. The initial server target is Linux x64; other remote platforms
 report an explicit unsupported-platform error.
 
+## Local services and remote workspace transport
+
+Opening an SSH workspace keeps the editor's shared process, local filesystem,
+recent folders, and user settings on the local machine. Workspace paths retain
+the `remote-ssh://` scheme, so remote reads and writes go through this
+extension's filesystem provider.
+
+The extension owns SSH tunnels, authentication, remote search, and remote
+process WebSockets. The renderer passes MessagePorts through extension
+management without receiving SSH credentials or a backend URL. Only this
+extension needs loopback WebSocket access in its content security policy.
+
+An extension can opt a declared Node RPC into remote execution with
+`"onRemote": "runOnRemote"`. Its browser worker stays local; extension management
+transfers a scoped MessagePort to the workspace transport. Git uses this path
+for its native process. RPC declarations without that option remain local.
+Terminal connections also use the transport, with their working directories
+validated and translated by Remote SSH.
+
 ## Contributing
 
 ```sh

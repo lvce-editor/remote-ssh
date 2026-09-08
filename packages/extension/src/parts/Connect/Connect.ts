@@ -77,31 +77,10 @@ const reportError = (
 
 export const setRemoteWorkspaceUri = async (
   workspaceUri: string,
-  backend: WorkspaceBackend,
+  _backend: WorkspaceBackend,
   execute: ExecuteCommand = executeCommand,
 ): Promise<void> => {
-  let supportsConnectionCommand = false
-  try {
-    supportsConnectionCommand =
-      (await execute('Workspace.supportsConnectionCommand')) === true
-  } catch {
-    // Older LVCE hosts require the legacy backend object.
-  }
-  const connection = supportsConnectionCommand
-    ? {
-        command: WorkspaceConnection.commandId,
-        remoteCliUrl: WorkspaceConnection.getWebSocketUrlForBackend(
-          backend,
-          'shared-process',
-        ),
-        webSocketUrl: WorkspaceConnection.getWebSocketUrlForBackend(
-          backend,
-          'file-system-process',
-        ),
-        workspacePath: backend.workspacePath,
-      }
-    : backend
-  await execute('Workspace.setUri', workspaceUri, '/', connection)
+  await execute('Workspace.setUri', workspaceUri)
 }
 
 const getConfiguredHosts: GetConfiguredHosts = async () => {

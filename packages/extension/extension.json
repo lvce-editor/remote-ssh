@@ -4,7 +4,11 @@
   "description": "Open folders on SSH hosts",
   "repository": "https://github.com/lvce-editor/remote-ssh",
   "browser": "dist/remoteSshMain.js",
-  "contentSecurityPolicy": ["default-src 'none'", "script-src 'self'"],
+  "contentSecurityPolicy": [
+    "default-src 'none'",
+    "script-src 'self'",
+    "connect-src 'self' ws://127.0.0.1:* ws://localhost:*"
+  ],
   "isolated": true,
   "compatibility": {
     "web": false
@@ -20,8 +24,9 @@
   "categories": ["Other"],
   "activation": [
     "onCommand:remote-ssh.connect",
-    "onCommand:remote-ssh.getWebSocketUrl",
-    "onFileSystem:remote-ssh"
+    "onCommand:remote-ssh.connectToProcess",
+    "onFileSystem:remote-ssh",
+    "onCommand:remote-ssh.request"
   ],
   "commands": [
     {
@@ -29,7 +34,11 @@
       "label": "SSH: Connect"
     },
     {
-      "id": "remote-ssh.getWebSocketUrl",
+      "id": "remote-ssh.connectToProcess",
+      "internal": true
+    },
+    {
+      "id": "remote-ssh.request",
       "internal": true
     }
   ],
@@ -37,5 +46,10 @@
     {
       "id": "remote-ssh"
     }
-  ]
+  ],
+  "workspaceTransport": {
+    "scheme": "remote-ssh",
+    "command": "remote-ssh.connectToProcess",
+    "requestCommand": "remote-ssh.request"
+  }
 }
