@@ -43,6 +43,9 @@ jobs:
       - name: Install OpenSSH server
         if: matrix.os == 'ubuntu-24.04'
         run: sudo apt-get update && sudo apt-get install --yes openssh-server
+      - name: Check SSH process cleanup
+        if: matrix.os == 'ubuntu-24.04'
+        run: npm run e2e:cleanup --workspace=packages/e2e
       - name: Run headless test
         if: matrix.os != 'windows-2025'
         run: npm run e2e:headless

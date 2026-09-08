@@ -5,7 +5,7 @@ import {
   _getSshArgs,
 } from '../src/parts/SshTransport/SshTransport.ts'
 
-void test('builds one non-interactive persistent SSH command', () => {
+void test('keeps the SSH master in the foreground with stdin connected', () => {
   const args = _getSshArgs({
     identity: '["user","example.com","2222"]',
     path: '/',
@@ -19,6 +19,8 @@ void test('builds one non-interactive persistent SSH command', () => {
   const portIndex = args.indexOf('-p')
   strictEqual(args[portIndex + 1], '2222')
   strictEqual(args.includes('ControlPersist=no'), true)
+  strictEqual(args.includes('ForkAfterAuthentication=no'), true)
+  strictEqual(args.includes('StdinNull=no'), true)
   strictEqual(args.at(-2), 'user@example.com')
   match(args.at(-1) || '', /connect-or-start/)
   match(args.at(-1) || '', /__LVCE_REMOTE_SSH_INSTALL_REQUIRED__/)
