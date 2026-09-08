@@ -601,11 +601,13 @@ const runRealSshTest = async () => {
         const input = await openPromptScenario(page, port)
         await input.fill(target)
         await page.keyboard.press('Enter')
-        await expect(
-          page
-            .getByText('Failed to connect to SSH target:', { exact: false })
-            .first(),
-        ).toContainText(detail, { timeout: 45_000 })
+        const notification = page
+          .locator('.NotificationMessage')
+          .filter({ hasText: 'Failed to connect to SSH target:' })
+          .first()
+        await expect(notification).toBeVisible({ timeout: 45_000 })
+        await expect(notification).toContainText(detail)
+        await expect(notification).toContainText(code)
         await expect(
           page.locator('.TreeItem[aria-label="file.txt"]'),
         ).toHaveCount(0)
@@ -757,6 +759,16 @@ const runRealSshTest = async () => {
       page.locator('.TreeItem[aria-label="opened-by-remote-cli.txt"]'),
     ).toBeVisible({ timeout: 30_000 })
     expect(page.context().pages()).toHaveLength(pageCount)
+  } catch (error) {
+    if (remoteRoot) {
+      const serverLog = await readFile(
+        join(remoteRoot, 'run', 'server-dev.log'),
+        'utf8',
+      ).catch(() => '')
+      console.error(`Remote server log:\n${serverLog}`)
+    }
+    console.error(`SSH server log:\n${sshServer.getOutput()}`)
+    throw error
   } finally {
     await cleanup([
       async () => browser?.close(),
