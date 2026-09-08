@@ -629,7 +629,7 @@ const runRealSshTest = async () => {
         const output = await openSshOutput(page)
         await page
           .getByRole('button', { name: 'Maximize', exact: true })
-          .click()
+          .press('Enter')
         await expect(output).toContainText(
           'Connecting to SSH host remote-ssh://',
         )
@@ -641,7 +641,7 @@ const runRealSshTest = async () => {
         await expect(output).not.toContainText('Connected to SSH workspace')
         await page
           .getByRole('button', { name: 'Unmaximize', exact: true })
-          .click()
+          .press('Enter')
         console.log(`PASS error notification and output channel: ${code}`)
       },
     )
