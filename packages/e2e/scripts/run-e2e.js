@@ -627,7 +627,7 @@ const runRealSshTest = async () => {
           page.locator('.TreeItem[aria-label="file.txt"]'),
         ).toHaveCount(0)
         const output = await openSshOutput(page)
-        const filter = page.locator('input[name="Filter"]')
+        const filter = page.locator('input[name="filter"]')
         for (const text of [
           'Connecting to SSH host remote-ssh://',
           'ERROR: Failed to connect to SSH target:',
