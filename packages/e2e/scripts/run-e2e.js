@@ -627,19 +627,18 @@ const runRealSshTest = async () => {
           page.locator('.TreeItem[aria-label="file.txt"]'),
         ).toHaveCount(0)
         const output = await openSshOutput(page)
-        const filter = page.locator('input[name="filter"]')
-        for (const text of [
+        await output.press('Home')
+        await expect(output).toContainText(
           'Connecting to SSH host remote-ssh://',
+        )
+        await expect(output).toContainText(
           'ERROR: Failed to connect to SSH target:',
-          detail,
-          code,
-        ]) {
-          await filter.fill(text)
-          await expect(output).toContainText(text)
-        }
-        await filter.fill('Connected to SSH workspace')
-        await expect(output).toHaveText('')
-        await filter.fill('')
+        )
+        await expect(output).toContainText(detail)
+        await expect(output).not.toContainText('Connected to SSH workspace')
+        await output.press('End')
+        await expect(output).toContainText(code)
+        await expect(output).not.toContainText('Connected to SSH workspace')
         console.log(`PASS error notification and output channel: ${code}`)
       },
     )
