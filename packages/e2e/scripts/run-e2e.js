@@ -660,17 +660,22 @@ const runRealSshTest = async () => {
     await quickInput.fill(sshServer.fixture.target)
     await page.keyboard.press('Enter')
 
+    await expect(output).toContainText('Connecting to SSH host remote-ssh://')
+
     const remoteFile = page.locator('.TreeItem[aria-label="file.txt"]')
     await expect(remoteFile).toBeVisible({ timeout: 30_000 })
-    await expect(output).toContainText('Connecting to SSH host remote-ssh://')
+    // Browser hosts can restart the extension during the workspace switch.
+    await expect(output).toContainText(
+      /(?:Connecting to SSH host|Restoring SSH connection to) remote-ssh:\/\//,
+    )
     await expect(output).toContainText('Opening SSH workspace remote-ssh://')
     await expect(output).toContainText(
       /Connected to SSH workspace remote-ssh:\/\/\S+ in \d+ ms/,
     )
     const logs = await output.innerText()
-    expect(logs.indexOf('Connecting to SSH host')).toBeLessThan(
-      logs.indexOf('Opening SSH workspace'),
-    )
+    expect(
+      logs.search(/Connecting to SSH host|Restoring SSH connection to/),
+    ).toBeLessThan(logs.indexOf('Opening SSH workspace'))
     expect(logs.indexOf('Opening SSH workspace')).toBeLessThan(
       logs.indexOf('Connected to SSH workspace'),
     )

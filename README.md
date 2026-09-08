@@ -3,9 +3,8 @@
 Remote SSH extension for Lvce Editor.
 
 Select **Remote SSH** in the **Output** panel to see timestamped connection
-progress and errors. Successful connections include the total time in milliseconds
-from submitting the SSH target until the remote workspace opens. Restored SSH
-workspaces log their connection progress and duration too.
+progress and errors. Connections and restored workspaces include their elapsed time in milliseconds,
+measured from the start of the connection attempt until the workspace opens.
 
 ## Authenticated remote web experiment
 
