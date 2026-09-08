@@ -141,7 +141,7 @@ void test(
 )
 
 void test(
-  'relays the installed remote lvce command to the workspace backend',
+  'relays the installed remote lvce command directly to the SSH extension',
   { skip: process.platform === 'win32' },
   async (context) => {
     const root = await mkdtemp(path.join(tmpdir(), 'lvce-server-cli-'))
@@ -159,16 +159,14 @@ void test(
     })
 
     const connector = await connect(root)
+    const request = readLine(connector)
     await run(path.join(root, 'bin', 'lvce'), ['/home'], root)
 
-    deepStrictEqual(
-      JSON.parse(await readFile(path.join(root, 'open-request.json'), 'utf8')),
-      {
-        kind: 'folder',
-        path: '/home',
-        type: 'open',
-      },
-    )
+    deepStrictEqual(JSON.parse(await request), {
+      kind: 'folder',
+      path: '/home',
+      type: 'open',
+    })
     await stopConnector(connector)
   },
 )

@@ -314,13 +314,22 @@ const prepareExtensions = async (runtimeRoot) => {
         'Cross-Origin-Resource-Policy': 'same-origin',
       })
       const commitHash = basename(dirname(builtinExtensionsPath))
+      for (const relativePath of ['builtin.remote-ssh/dist/remoteSshMain.js']) {
+        staticConfig.files[`/${commitHash}/extensions/${relativePath}`] =
+          headerIndex
+      }
+      const localHeaderIndex = staticConfig.headers.length
+      staticConfig.headers.push({
+        ...staticConfig.headers[headerIndex],
+        'Content-Security-Policy':
+          "default-src 'none'; connect-src 'self'; script-src 'self';",
+      })
       for (const relativePath of [
-        'builtin.remote-ssh/dist/remoteSshMain.js',
         'builtin.git/dist/gitMain.js',
         'builtin.git/git-worker/dist/gitWorkerMain.js',
       ]) {
         staticConfig.files[`/${commitHash}/extensions/${relativePath}`] =
-          headerIndex
+          localHeaderIndex
       }
       await writeFile(
         staticConfigPath,
@@ -376,13 +385,16 @@ const startLvceServer = async ({ env, onlyExtensionPath, port }) => {
     detached: true,
     env: {
       ...env,
+      ELECTRON_RUN_AS_NODE: '',
       ...(process.env.LVCE_REMOTE_SSH_LOCAL_LVCE_DIST
         ? {
-            LVCE_STATIC_ROOT: join(
-              process.env.LVCE_REMOTE_SSH_LOCAL_LVCE_DIST,
-              'playground',
-              'static',
-            ),
+            LVCE_STATIC_ROOT:
+              process.env.LVCE_REMOTE_SSH_LOCAL_STATIC_ROOT ||
+              join(
+                process.env.LVCE_REMOTE_SSH_LOCAL_LVCE_DIST,
+                'playground',
+                'static',
+              ),
           }
         : {}),
       ...(onlyExtensionPath ? { ONLY_EXTENSION: onlyExtensionPath } : {}),
@@ -502,6 +514,7 @@ const runRealSshTest = async () => {
     join(runtimeParent, 'lvce-remote-ssh-runtime-'),
   )
   let browser
+  let page
   let artifactServer
   let getArtifactRequestCount
   let installedExtensionPaths = []
@@ -558,7 +571,9 @@ const runRealSshTest = async () => {
     browser = await chromium.launch({
       headless: process.argv.includes('--headless'),
     })
-    const page = await browser.newPage()
+    page = await browser.newPage()
+    const socketUrls = []
+    page.on('websocket', (socket) => socketUrls.push(new URL(socket.url())))
     page.on('console', (message) => {
       if (message.type() === 'error') {
         console.error(
@@ -677,9 +692,14 @@ const runRealSshTest = async () => {
     await page.locator('.PanelTab[name="Terminals"]').click()
     const terminal = page.locator('.XtermTerminal')
     await expect(terminal).toBeVisible({ timeout: 30_000 })
-    await terminal.click()
-    await page.keyboard.type(
+    const terminalInput = terminal.locator('.xterm-helper-textarea')
+    await expect(async () => {
+      await terminal.click()
+      await expect(terminalInput).toBeFocused({ timeout: 1_000 })
+    }).toPass({ timeout: 10_000 })
+    await terminalInput.pressSequentially(
       'pwd; printf "REMOTE_TERMINAL_SENTINEL:%s\\n" "$LVCE_REMOTE_SSH_E2E_MARKER"',
+      { delay: 20 },
     )
     await page.keyboard.press('Enter')
     await expect(terminal).toContainText(
@@ -689,10 +709,13 @@ const runRealSshTest = async () => {
     await expect(terminal).toContainText(sshServer.fixture.workspacePath, {
       timeout: 30_000,
     })
-    await page.keyboard.type('command -v lvce')
+    await terminalInput.pressSequentially('command -v lvce', { delay: 20 })
     await page.keyboard.press('Enter')
     await expect(terminal).toContainText('/bin/lvce', { timeout: 30_000 })
-    await page.keyboard.type(`printf 'REMOTE_CLI_VERSION:'; lvce -v`)
+    await terminalInput.pressSequentially(
+      `printf 'REMOTE_CLI_VERSION:'; lvce -v`,
+      { delay: 20 },
+    )
     await page.keyboard.press('Enter')
     await expect(terminal).toContainText('REMOTE_CLI_VERSION:dev', {
       timeout: 30_000,
@@ -720,46 +743,56 @@ const runRealSshTest = async () => {
       page.getByRole('button', { exact: true, name: 'main' }),
     ).toBeVisible({ timeout: 30_000 })
 
-    await page.keyboard.press('Control+Shift+P')
-    const commandInput = page.locator('.QuickPick input')
-    await expect(commandInput).toBeVisible({ timeout: 30_000 })
-    await commandInput.fill('>Developer: Open Process Explorer')
-    await expect(
-      page.locator('.QuickPickItemLabel', {
-        hasText: 'Developer: Open Process Explorer',
-      }),
-    ).toBeVisible({ timeout: 30_000 })
-    await page.keyboard.press('Enter')
-    const processExplorer = page.locator('.ProcessExplorer')
-    await expect(processExplorer).toBeVisible({ timeout: 30_000 })
-    await expect(
-      processExplorer.locator('.ProcessExplorerRow'),
-    ).not.toHaveCount(0, { timeout: 30_000 })
-    await expect(processExplorer).toContainText('shared-process', {
-      timeout: 30_000,
-    })
-    await expect(processExplorer).toContainText(
-      'gitProcess.js --ipc-type=node-forked-process',
-      { timeout: 30_000 },
+    const localServiceSockets = socketUrls.filter((url) =>
+      ['/websocket/shared-process', '/websocket/file-system-process'].includes(
+        url.pathname,
+      ),
     )
+    expect(localServiceSockets.length).toBeGreaterThan(0)
+    for (const url of localServiceSockets) {
+      expect(url.port).toBe(String(port))
+    }
+    for (const type of ['terminal-process', 'extension-node-process']) {
+      expect(
+        socketUrls.some(
+          (url) =>
+            url.pathname === `/websocket/${type}` && url.port !== String(port),
+        ),
+      ).toBe(true)
+    }
 
     const pageCount = page.context().pages().length
-    await page.locator('.PanelTab[name="Terminals"]').click()
-    await terminal.click()
-    await page.keyboard.type(
-      `lvce ${cliWorkspacePath}; printf 'REMOTE_CLI_OPEN_SENTINEL:%s\\n' "$?"`,
-    )
-    await page.keyboard.press('Enter')
-    await expect(terminal).toContainText('REMOTE_CLI_OPEN_SENTINEL:', {
-      timeout: 30_000,
-    })
-    await expect(terminal).toContainText('REMOTE_CLI_OPEN_SENTINEL:0')
     await page.keyboard.press('Control+Shift+E')
+    await expect(remoteFile).toBeVisible()
+    await page.locator('.PanelTab[name="Terminals"]').click()
+    await expect(async () => {
+      await terminal.click()
+      await expect(terminalInput).toBeFocused({ timeout: 1_000 })
+    }).toPass({ timeout: 10_000 })
+    await terminalInput.pressSequentially(`lvce ${cliWorkspacePath}`, {
+      delay: 20,
+    })
+    await page.keyboard.press('Enter')
     await expect(
       page.locator('.TreeItem[aria-label="opened-by-remote-cli.txt"]'),
     ).toBeVisible({ timeout: 30_000 })
     expect(page.context().pages()).toHaveLength(pageCount)
   } catch (error) {
+    if (page) {
+      await page
+        .screenshot({
+          path: join(repositoryRoot, '.tmp', 'remote-ssh-e2e-failure.png'),
+        })
+        .catch(() => {})
+      console.error(
+        'Workspace UI:',
+        await page
+          .locator('.TreeItem')
+          .allTextContents()
+          .catch(() => []),
+      )
+      console.error('Workspace URL:', page.url())
+    }
     if (remoteRoot) {
       const serverLog = await readFile(
         join(remoteRoot, 'run', 'server-dev.log'),
