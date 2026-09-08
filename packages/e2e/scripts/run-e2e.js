@@ -454,6 +454,21 @@ const openPromptScenario = async (page, port) => {
   return quickInput
 }
 
+const openSshOutput = async (page) => {
+  const outputTab = page.locator('.PanelTab[name="Output"]')
+  if (!(await outputTab.isVisible())) {
+    await page.keyboard.press('Control+Backquote')
+  }
+  await outputTab.click()
+  const select = page.locator('[name="output"]')
+  await expect(select.locator('option[value="remote-ssh"]')).toHaveText(
+    'Remote SSH',
+  )
+  await select.selectOption('remote-ssh')
+  await expect(select).toHaveValue('remote-ssh')
+  return page.locator('.OutputContent')
+}
+
 const expectConfiguredHosts = async (page, expectedHosts) => {
   await expect(page.locator('.QuickPickItemLabel')).toHaveText(expectedHosts, {
     timeout: 30_000,
@@ -611,18 +626,55 @@ const runRealSshTest = async () => {
         await expect(
           page.locator('.TreeItem[aria-label="file.txt"]'),
         ).toHaveCount(0)
-        console.log(`PASS error notification: ${code}`)
+        const output = await openSshOutput(page)
+        await expect(output).toContainText(
+          'Connecting to SSH host remote-ssh://',
+        )
+        await expect(output).toContainText(
+          `ERROR: Failed to connect to SSH target:`,
+        )
+        await expect(output).toContainText(detail)
+        await expect(output).toContainText(code)
+        await expect(output).not.toContainText('Connected to SSH workspace')
+        console.log(`PASS error notification and output channel: ${code}`)
       },
     )
 
     await writeFile(sshConfigPath, 'Host work staging\n')
-    const quickInput = await openPromptScenario(page, port)
+    await openPromptScenario(page, port)
+    await page.keyboard.press('Escape')
+    const output = await openSshOutput(page)
+    await expect(output).toHaveText('')
+    await page.keyboard.press('Control+Shift+P')
+    const quickInput = page.locator('.QuickPick input')
+    await quickInput.fill('>SSH: Connect')
+    await page
+      .locator('.QuickPickItemLabel')
+      .filter({ hasText: /^SSH: Connect$/ })
+      .click()
+    await expect(quickInput).toHaveAttribute('placeholder', promptPlaceholder)
     await expectConfiguredHosts(page, ['work', 'staging'])
     await quickInput.fill(sshServer.fixture.target)
     await page.keyboard.press('Enter')
 
     const remoteFile = page.locator('.TreeItem[aria-label="file.txt"]')
     await expect(remoteFile).toBeVisible({ timeout: 30_000 })
+    await expect(output).toContainText('Connecting to SSH host remote-ssh://')
+    await expect(output).toContainText('Opening SSH workspace remote-ssh://')
+    await expect(output).toContainText(
+      /Connected to SSH workspace remote-ssh:\/\/\S+ in \d+ ms/,
+    )
+    const logs = await output.innerText()
+    expect(logs.indexOf('Connecting to SSH host')).toBeLessThan(
+      logs.indexOf('Opening SSH workspace'),
+    )
+    expect(logs.indexOf('Opening SSH workspace')).toBeLessThan(
+      logs.indexOf('Connected to SSH workspace'),
+    )
+    expect(logs).not.toContain('token=')
+    console.log(
+      'PASS live SSH output channel: progress and connection duration',
+    )
     const connectionCount = sshServer.getConnectionCount()
     const remoteFolder = page.locator('.TreeItem[aria-label="folder"]')
     await remoteFolder.click()

@@ -21,7 +21,8 @@
   "activation": [
     "onCommand:remote-ssh.connect",
     "onCommand:remote-ssh.getWebSocketUrl",
-    "onFileSystem:remote-ssh"
+    "onFileSystem:remote-ssh",
+    "onOutput"
   ],
   "commands": [
     {
@@ -36,6 +37,12 @@
   "fileSystemProviders": [
     {
       "id": "remote-ssh"
+    }
+  ],
+  "outputChannels": [
+    {
+      "id": "remote-ssh",
+      "label": "Remote SSH"
     }
   ]
 }

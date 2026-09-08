@@ -2,6 +2,11 @@
 
 Remote SSH extension for Lvce Editor.
 
+Select **Remote SSH** in the **Output** panel to see timestamped connection
+progress and errors. Successful connections include the total time in milliseconds
+from submitting the SSH target until the remote workspace opens. Restored SSH
+workspaces log their connection progress and duration too.
+
 ## Authenticated remote web experiment
 
 The remote server can expose an LVCE workspace to the hosted web editor without

@@ -4,6 +4,7 @@ import {
   showQuickInput,
   showQuickPick,
 } from '@lvce-editor/api'
+import * as OutputChannel from '../OutputChannel/OutputChannel.ts'
 import * as RemoteCli from '../RemoteCli/RemoteCli.ts'
 import * as Rpc from '../Rpc/Rpc.ts'
 import * as SshTarget from '../SshTarget/SshTarget.ts'
@@ -65,14 +66,13 @@ const getErrorMessage = (error: unknown): string => {
   return String(error)
 }
 
-const reportError = (
+const reportError = async (
   error: unknown,
   notify: ShowNotification,
 ): Promise<void> => {
-  return notify(
-    'error',
-    `Failed to connect to SSH target: ${getErrorMessage(error)}`,
-  )
+  const message = `Failed to connect to SSH target: ${getErrorMessage(error)}`
+  await OutputChannel.log(`ERROR: ${message}`)
+  await notify('error', message)
 }
 
 export const setRemoteWorkspaceUri = async (
@@ -112,6 +112,23 @@ const getConfiguredHosts: GetConfiguredHosts = async () => {
   return hosts
 }
 
+const openWorkspace = async (
+  workspaceUri: string,
+  backend: WorkspaceBackend,
+  startedAt: number,
+  setUri: SetWorkspaceUri,
+  watchRemoteCli: WatchRemoteCli,
+): Promise<void> => {
+  await OutputChannel.log(`Opening SSH workspace ${workspaceUri}`)
+  WorkspaceConnection.set(backend)
+  watchRemoteCli(workspaceUri)
+  await setUri(workspaceUri, backend)
+  const elapsed = Math.round(performance.now() - startedAt)
+  await OutputChannel.log(
+    `Connected to SSH workspace ${workspaceUri} in ${elapsed} ms`,
+  )
+}
+
 export const restore = async (
   workspaceUri: string,
   setUri: SetWorkspaceUri = setRemoteWorkspaceUri,
@@ -119,11 +136,17 @@ export const restore = async (
   watchRemoteCli: WatchRemoteCli = RemoteCli.watch,
   notify: ShowNotification = showNotification,
 ): Promise<void> => {
+  const startedAt = performance.now()
   try {
+    await OutputChannel.log(`Restoring SSH connection to ${workspaceUri}`)
     const backend = getWorkspaceBackend(await connectRemote(workspaceUri))
-    WorkspaceConnection.set(backend)
-    watchRemoteCli(workspaceUri)
-    await setUri(workspaceUri, backend)
+    await openWorkspace(
+      workspaceUri,
+      backend,
+      startedAt,
+      setUri,
+      watchRemoteCli,
+    )
   } catch (error) {
     await reportError(error, notify)
     throw error
@@ -170,20 +193,24 @@ export const connect = async (
   if (!value || !value.trim()) {
     return
   }
+  const startedAt = performance.now()
   let workspaceUri: string
   let backend: WorkspaceBackend
   try {
     workspaceUri = SshTarget.toRemoteSshUri(value)
+    await OutputChannel.log(`Connecting to SSH host ${workspaceUri}`)
     backend = getWorkspaceBackend(await connectRemote(workspaceUri))
   } catch (error) {
     await reportError(error, notify)
     throw error
   }
   schedule(() => {
-    WorkspaceConnection.set(backend)
-    watchRemoteCli(workspaceUri)
-    void setUri(workspaceUri, backend).catch((error) =>
-      reportError(error, notify),
-    )
+    void openWorkspace(
+      workspaceUri,
+      backend,
+      startedAt,
+      setUri,
+      watchRemoteCli,
+    ).catch((error) => reportError(error, notify))
   })
 }

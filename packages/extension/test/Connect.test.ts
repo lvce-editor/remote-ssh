@@ -1,11 +1,16 @@
 import type { NotificationType } from '@lvce-editor/api'
-import { expect, jest, test } from '@jest/globals'
-import {
-  connect,
-  placeholder,
-  restore,
-  setRemoteWorkspaceUri,
-} from '../src/parts/Connect/Connect.ts'
+import { beforeEach, expect, jest, test } from '@jest/globals'
+
+const log = jest.fn(async (_message: string) => {})
+jest.unstable_mockModule('../src/parts/OutputChannel/OutputChannel.ts', () => ({
+  log,
+}))
+const { connect, placeholder, restore, setRemoteWorkspaceUri } =
+  await import('../src/parts/Connect/Connect.ts')
+
+beforeEach(() => {
+  log.mockClear()
+})
 
 const backend = {
   token: 'secret',
@@ -215,6 +220,9 @@ test('reports SSH connection failures without switching workspaces', async () =>
     'Failed to connect to SSH target: connection failed',
   )
   expect(setUri).not.toHaveBeenCalled()
+  expect(log).toHaveBeenLastCalledWith(
+    'ERROR: Failed to connect to SSH target: connection failed',
+  )
 })
 
 test('reports invalid SSH targets without starting a connection', async () => {
@@ -372,9 +380,47 @@ test('reports failure while switching to an already connected workspace', async 
     () => {},
     notify,
   )
-  await Promise.resolve()
+  await new Promise((resolve) => setTimeout(resolve, 0))
   expect(notify).toHaveBeenCalledWith(
     'error',
     'Failed to connect to SSH target: Remote backend disconnected',
   )
+  expect(log).toHaveBeenLastCalledWith(
+    'ERROR: Failed to connect to SSH target: Remote backend disconnected',
+  )
+  expect(
+    log.mock.calls.some(([line]) =>
+      line.startsWith('Connected to SSH workspace'),
+    ),
+  ).toBe(false)
+})
+
+test('logs elapsed time only after the workspace is open', async () => {
+  const now = jest.spyOn(performance, 'now')
+  now.mockReturnValue(100)
+  const { promise, resolve } = Promise.withResolvers<void>()
+  const setUri = jest.fn(() => promise)
+  const finished = restore(
+    'remote-ssh://host/',
+    setUri,
+    async () => backend,
+    () => {},
+  )
+  try {
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(setUri).toHaveBeenCalled()
+    expect(log.mock.calls.map(([line]) => line)).toEqual([
+      'Restoring SSH connection to remote-ssh://host/',
+      'Opening SSH workspace remote-ssh://host/',
+    ])
+    now.mockReturnValue(1734)
+    resolve()
+    await finished
+    expect(log).toHaveBeenLastCalledWith(
+      'Connected to SSH workspace remote-ssh://host/ in 1634 ms',
+    )
+  } finally {
+    resolve()
+    now.mockRestore()
+  }
 })
