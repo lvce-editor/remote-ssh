@@ -573,7 +573,11 @@ const runRealSshTest = async () => {
     })
     page = await browser.newPage()
     const socketUrls = []
-    page.on('websocket', (socket) => socketUrls.push(new URL(socket.url())))
+    const sockets = []
+    page.on('websocket', (socket) => {
+      sockets.push(socket)
+      socketUrls.push(new URL(socket.url()))
+    })
     page.on('console', (message) => {
       if (message.type() === 'error') {
         console.error(
@@ -747,7 +751,7 @@ const runRealSshTest = async () => {
     const gitScenario = process.env.LVCE_REMOTE_SSH_TEST_GIT_SCENARIO
     if (gitScenario) {
       const { test } = await import(pathToFileURL(gitScenario).href)
-      await test({ page, expect, sshServer, port, socketUrls })
+      await test({ page, expect, sshServer, port, socketUrls, sockets })
     }
 
     const localServiceSockets = socketUrls.filter((url) =>
