@@ -1,4 +1,3 @@
-import * as esbuild from 'esbuild'
 import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { brotliDecompressSync } from 'node:zlib'
@@ -13,6 +12,7 @@ import {
 } from 'node:fs/promises'
 import path from 'node:path'
 import { promisify } from 'node:util'
+import { bundleJs } from './bundleJs.ts'
 import { root } from './root.ts'
 
 const execFileAsync = promisify(execFile)
@@ -136,22 +136,13 @@ export const buildServer = async () => {
   const manifestPath = path.join(root, manifestName)
   await rm(serverBuildDirectory, { force: true, recursive: true })
   await mkdir(serverBuildDirectory, { recursive: true })
-  await esbuild.build({
-    banner: {
-      js: "import { createRequire as __createRequire } from 'node:module'; const require = __createRequire(import.meta.url);",
-    },
-    bundle: true,
+  await bundleJs({
     define: {
       __LVCE_REMOTE_SSH_SERVER_VERSION__: JSON.stringify(version),
     },
-    entryPoints: [
-      path.join(root, 'packages', 'server', 'src', 'remoteSshServer.ts'),
-    ],
-    external: ['node:*'],
-    format: 'esm',
+    input: path.join(root, 'packages', 'server', 'src', 'remoteSshServer.ts'),
     outfile: path.join(serverBuildDirectory, serverFileName),
     platform: 'node',
-    target: 'node24',
   })
   const lvceServerDirectory = path.join(serverBuildDirectory, 'lvce-server')
   await mkdir(lvceServerDirectory, { recursive: true })
