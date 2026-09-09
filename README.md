@@ -97,3 +97,9 @@ cd remote-ssh
 npm ci
 npm test
 ```
+
+### Testing a Git extension build over SSH
+
+Set `LVCE_REMOTE_SSH_TEST_GIT_EXTENSION_PATH` to an absolute path to a built Git extension before `npm run build`. The test server archive and the browser test then use that build on both machines. Leave it unset to use the pinned Git release.
+
+An optional `LVCE_REMOTE_SSH_TEST_GIT_SCENARIO` absolute module path can export `test({ page, expect, sshServer, port, socketUrls })`. The real SSH test invokes it after connecting, editing and saving a remote file, and checking the Git source control view. The harness owns server, browser, and fixture cleanup.

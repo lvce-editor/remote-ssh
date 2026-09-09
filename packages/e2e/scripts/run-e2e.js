@@ -744,6 +744,12 @@ const runRealSshTest = async () => {
       page.getByRole('button', { exact: true, name: 'main' }),
     ).toBeVisible({ timeout: 30_000 })
 
+    const gitScenario = process.env.LVCE_REMOTE_SSH_TEST_GIT_SCENARIO
+    if (gitScenario) {
+      const { test } = await import(pathToFileURL(gitScenario).href)
+      await test({ page, expect, sshServer, port, socketUrls })
+    }
+
     const localServiceSockets = socketUrls.filter((url) =>
       ['/websocket/shared-process', '/websocket/file-system-process'].includes(
         url.pathname,

@@ -104,16 +104,23 @@ const installBuiltinExtensions = async (
   await cp(staticExtensionsPath, extensionsPath, {
     recursive: true,
   })
-  const archive = await downloadVerified(
-    gitExtensionArchiveUrl,
-    gitExtensionArchiveSha256,
-  )
-  const tarPath = path.join(serverBuildDirectory, 'git-extension.tar')
   const gitPath = path.join(extensionsPath, 'builtin.git')
-  await mkdir(gitPath, { recursive: true })
-  await writeFile(tarPath, brotliDecompressSync(archive))
-  await execFileAsync('tar', ['-xf', tarPath, '-C', gitPath])
-  await rm(tarPath, { force: true })
+  const testGitExtensionPath =
+    process.env.LVCE_REMOTE_SSH_TEST_GIT_EXTENSION_PATH
+  if (testGitExtensionPath) {
+    await rm(gitPath, { recursive: true, force: true })
+    await cp(testGitExtensionPath, gitPath, { recursive: true })
+  } else {
+    const archive = await downloadVerified(
+      gitExtensionArchiveUrl,
+      gitExtensionArchiveSha256,
+    )
+    const tarPath = path.join(serverBuildDirectory, 'git-extension.tar')
+    await mkdir(gitPath, { recursive: true })
+    await writeFile(tarPath, brotliDecompressSync(archive))
+    await execFileAsync('tar', ['-xf', tarPath, '-C', gitPath])
+    await rm(tarPath, { force: true })
+  }
   await cp(gitPath, path.join(staticExtensionsPath, 'builtin.git'), {
     recursive: true,
   })
