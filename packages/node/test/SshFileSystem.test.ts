@@ -44,7 +44,7 @@ void test('invokes the existing remote file-system process', async () => {
   ])
 })
 
-void test('preserves sorting and legacy symbolic-link behavior', () => {
+void test('preserves sorting and symbolic-link types for workspace confinement', () => {
   deepStrictEqual(
     _sortDirents([
       { name: 'z-link', type: 9 },
@@ -52,7 +52,7 @@ void test('preserves sorting and legacy symbolic-link behavior', () => {
     ]),
     [
       { name: 'a-folder', type: 3 },
-      { name: 'z-link', type: 7 },
+      { name: 'z-link', type: 9 },
     ],
   )
 })
