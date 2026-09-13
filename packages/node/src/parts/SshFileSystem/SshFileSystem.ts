@@ -41,7 +41,9 @@ const sortDirents = (value: unknown): readonly unknown[] => {
   if (!Array.isArray(value)) {
     throw new TypeError('Remote SSH directory read returned invalid entries')
   }
-  return value.toSorted((a, b) => String(a?.name).localeCompare(String(b?.name)))
+  return value.toSorted((a, b) =>
+    String(a?.name).localeCompare(String(b?.name)),
+  )
 }
 
 export const connect = async (uri: string): Promise<WorkspaceBackend> => {
