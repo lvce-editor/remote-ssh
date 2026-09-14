@@ -95,6 +95,10 @@ export const readFile = async (uri: string): Promise<string> => {
   return result
 }
 
+export const stat = (uri: string): Promise<unknown> => {
+  return invoke('FileSystem.stat', uri)
+}
+
 export const writeFile = (uri: string, content: string): Promise<unknown> => {
   const location = RemoteSshUri.parse(uri)
   requireMutable(location.path)
