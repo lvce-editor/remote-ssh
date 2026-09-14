@@ -14,6 +14,7 @@ export interface RemoteFileSystem extends FileSystemProvider {
   readonly readFile: (uri: string) => Promise<Blob>
   readonly remove: (uri: string) => Promise<void>
   readonly rename: (oldUri: string, newUri: string) => Promise<void>
+  readonly stat: (uri: string) => Promise<number>
   readonly writeFile: (uri: string, content: string) => Promise<void>
 }
 
@@ -52,6 +53,9 @@ export const createRemoteFileSystem = (
     },
     rename: async (oldUri, newUri): Promise<void> => {
       await invoke('SshFileSystem.rename', oldUri, newUri)
+    },
+    stat: async (uri): Promise<number> => {
+      return (await invoke('SshFileSystem.stat', uri)) as number
     },
     writeFile: async (uri, content): Promise<void> => {
       await invoke('SshFileSystem.writeFile', uri, content)

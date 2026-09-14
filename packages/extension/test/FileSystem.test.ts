@@ -9,6 +9,9 @@ test('forwards all file system operations to the SSH node client', async () => {
     if (method === 'SshFileSystem.readFile') {
       return 'aGVsbG8='
     }
+    if (method === 'SshFileSystem.stat') {
+      return 3
+    }
     return undefined
   })
   const fileSystem = createRemoteFileSystem(invoke)
@@ -25,6 +28,7 @@ test('forwards all file system operations to the SSH node client', async () => {
   await fileSystem.mkdir('remote-ssh://example.com/folder')
   await fileSystem.rename(file, renamed)
   await fileSystem.remove(renamed)
+  await expect(fileSystem.stat(file)).resolves.toBe(3)
 
   expect(invoke.mock.calls).toEqual([
     ['SshFileSystem.readDirWithFileTypes', root],
@@ -33,6 +37,7 @@ test('forwards all file system operations to the SSH node client', async () => {
     ['SshFileSystem.mkdir', 'remote-ssh://example.com/folder'],
     ['SshFileSystem.rename', file, renamed],
     ['SshFileSystem.remove', renamed],
+    ['SshFileSystem.stat', file],
   ])
   expect(fileSystem.isReadonly?.()).toBe(false)
 })
@@ -55,4 +60,15 @@ test('preserves SSH client errors', async () => {
   await expect(
     fileSystem.readFile('remote-ssh://example.com/root/secret'),
   ).rejects.toThrow('Permission denied')
+})
+
+test('preserves SSH stat errors', async () => {
+  const error = new Error('Permission denied')
+  const fileSystem = createRemoteFileSystem(async () => {
+    throw error
+  })
+
+  await expect(
+    fileSystem.stat('remote-ssh://example.com/root/secret'),
+  ).rejects.toBe(error)
 })
