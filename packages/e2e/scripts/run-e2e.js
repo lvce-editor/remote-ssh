@@ -780,13 +780,19 @@ const runRealSshTest = async () => {
       await terminal.click()
       await expect(terminalInput).toBeFocused({ timeout: 1_000 })
     }).toPass({ timeout: 10_000 })
-    await terminalInput.pressSequentially(`lvce ${cliWorkspacePath}`, {
-      delay: 20,
-    })
+    await terminalInput.pressSequentially(
+      `lvce ${cliWorkspacePath}; printf 'REMOTE_CLI_EXIT:%s\\n' "$?"`,
+      {
+        delay: 20,
+      },
+    )
     await page.keyboard.press('Enter')
     await expect(
       page.locator('.TreeItem[aria-label="opened-by-remote-cli.txt"]'),
     ).toBeVisible({ timeout: 30_000 })
+    await expect(terminal).toContainText('REMOTE_CLI_EXIT:0', {
+      timeout: 30_000,
+    })
     expect(page.context().pages()).toHaveLength(pageCount)
   } catch (error) {
     if (page) {
