@@ -339,3 +339,54 @@ test('reports failure while switching to an already connected workspace', async 
     'Failed to connect to SSH target: Remote backend disconnected',
   )
 })
+
+test('keeps workspace progress active through the connection and workspace switch', async () => {
+  const startProgress = jest.fn(async (_message: string) => 42)
+  const endProgress = jest.fn(async (_id: number) => {})
+  const connectRemote = jest.fn(async (_uri: string) => backend)
+  const setUri = jest.fn(async (_uri: string) => {})
+
+  await connect(
+    async () => 'user@example.com',
+    setUri,
+    connectRemote,
+    (callback) => callback(),
+    async () => [],
+    undefined,
+    undefined,
+    undefined,
+    startProgress,
+    endProgress,
+  )
+
+  expect(startProgress).toHaveBeenCalledWith('Opening Remote Workspace…')
+  expect(connectRemote).toHaveBeenCalled()
+  expect(setUri).toHaveBeenCalled()
+  await Promise.resolve()
+  expect(endProgress).toHaveBeenCalledWith(42)
+})
+
+test('clears workspace progress when connection fails', async () => {
+  const startProgress = jest.fn(async (_message: string) => 42)
+  const endProgress = jest.fn(async (_id: number) => {})
+  const error = new Error('connection failed')
+
+  await expect(
+    connect(
+      async () => 'user@example.com',
+      async () => {},
+      async () => {
+        throw error
+      },
+      undefined,
+      async () => [],
+      undefined,
+      undefined,
+      async () => {},
+      startProgress,
+      endProgress,
+    ),
+  ).rejects.toBe(error)
+
+  expect(endProgress).toHaveBeenCalledWith(42)
+})
