@@ -247,17 +247,7 @@ fi
 
 rm -f "$NODE_ARCHIVE" "$SERVER_ARCHIVE"
 
-INACTIVE_COUNT=0
-for OLD_SERVER in $(ls -1dt "$ROOT"/servers/* 2>/dev/null || true); do
-  [ -d "$OLD_SERVER" ] || continue
-  OLD_VERSION="$(basename "$OLD_SERVER")"
-  [ "$OLD_VERSION" = "$SERVER_VERSION" ] && continue
-  [ -f "$ROOT/run/server-$OLD_VERSION.json" ] && continue
-  INACTIVE_COUNT=$((INACTIVE_COUNT + 1))
-  if [ "$INACTIVE_COUNT" -gt 5 ]; then
-    rm -rf "$OLD_SERVER"
-  fi
-done
+# Keep older version directories available to older clients that reconnect later.
 printf '${installedMarker}%s\\n' "$SERVER_VERSION"
 `
 }

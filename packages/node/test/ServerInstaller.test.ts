@@ -6,6 +6,7 @@ import {
   copyFile,
   mkdir,
   mkdtemp,
+  readdir,
   readFile,
   rm,
   writeFile,
@@ -130,6 +131,30 @@ void test(
       ],
     )
     strictEqual(version.stdout, 'test\n')
+
+    for (let index = 2; index <= 8; index++) {
+      await runShell(
+        createInstallScript({
+          ...manifest,
+          serverVersion: `test-server-${index}`,
+        }),
+        {
+          ...process.env,
+          HOME: home,
+        },
+      )
+    }
+    const installedServers = await readdir(
+      path.join(home, '.lvce-server', 'servers'),
+    )
+    strictEqual(installedServers.length, 8)
+    strictEqual(installedServers.includes('test-server'), true)
+    strictEqual(installedServers.includes('test-server-8'), true)
+    const reconnect = await runShell(createInstallScript(manifest), {
+      ...process.env,
+      HOME: home,
+    })
+    match(reconnect.stdout, new RegExp(installedMarker))
   },
 )
 
