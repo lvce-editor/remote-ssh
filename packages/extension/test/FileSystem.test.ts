@@ -55,7 +55,7 @@ test('preserves binary file content', async () => {
 
 test('labels remote SVG blobs with the SVG MIME type', async () => {
   const svg = '<svg xmlns="http://www.w3.org/2000/svg"></svg>'
-  const encodedSvg = Buffer.from(svg).toString('base64')
+  const encodedSvg = btoa(svg)
   const fileSystem = createRemoteFileSystem(async () => encodedSvg)
 
   const blob = await fileSystem.readFile('remote-ssh://example.com/image.svg')
