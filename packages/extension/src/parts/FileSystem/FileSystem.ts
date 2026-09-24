@@ -1,6 +1,8 @@
 import type { FileSystemDirent, FileSystemProvider } from '@lvce-editor/api'
 import * as Rpc from '../Rpc/Rpc.ts'
 
+// cspell:ignore apng jfif
+
 export type Invoke = (
   method: string,
   ...params: readonly unknown[]
@@ -26,6 +28,43 @@ const decodeBase64 = (value: string): ArrayBuffer => {
   return bytes.buffer
 }
 
+const getMimeType = (uri: string): string => {
+  const path = new URL(uri).pathname.toLowerCase()
+  const extension = path.slice(path.lastIndexOf('.'))
+  switch (extension) {
+    case '.apng':
+      return 'image/apng'
+    case '.avif':
+      return 'image/avif'
+    case '.bmp':
+      return 'image/bmp'
+    case '.gif':
+      return 'image/gif'
+    case '.heic':
+      return 'image/heic'
+    case '.heif':
+      return 'image/heif'
+    case '.ico':
+      return 'image/x-icon'
+    case '.jfif':
+    case '.jpe':
+    case '.jpeg':
+    case '.jpg':
+      return 'image/jpeg'
+    case '.png':
+      return 'image/png'
+    case '.svg':
+      return 'image/svg+xml'
+    case '.tif':
+    case '.tiff':
+      return 'image/tiff'
+    case '.webp':
+      return 'image/webp'
+    default:
+      return ''
+  }
+}
+
 export const createRemoteFileSystem = (
   invoke: Invoke = Rpc.invoke,
 ): RemoteFileSystem => {
@@ -46,7 +85,7 @@ export const createRemoteFileSystem = (
       if (typeof value !== 'string') {
         throw new TypeError('Remote SSH read returned invalid content')
       }
-      return new Blob([decodeBase64(value)])
+      return new Blob([decodeBase64(value)], { type: getMimeType(uri) })
     },
     remove: async (uri): Promise<void> => {
       await invoke('SshFileSystem.remove', uri)
