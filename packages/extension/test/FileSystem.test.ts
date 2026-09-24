@@ -50,6 +50,18 @@ test('preserves binary file content', async () => {
   expect(new Uint8Array(await blob.arrayBuffer())).toEqual(
     new Uint8Array([0, 255, 1, 128]),
   )
+  expect(blob.type).toBe('image/png')
+})
+
+test('labels remote SVG blobs with the SVG MIME type', async () => {
+  const svg = '<svg xmlns="http://www.w3.org/2000/svg"></svg>'
+  const encodedSvg = Buffer.from(svg).toString('base64')
+  const fileSystem = createRemoteFileSystem(async () => encodedSvg)
+
+  const blob = await fileSystem.readFile('remote-ssh://example.com/image.svg')
+
+  expect(blob.type).toBe('image/svg+xml')
+  await expect(blob.text()).resolves.toBe(svg)
 })
 
 test('preserves SSH client errors', async () => {
