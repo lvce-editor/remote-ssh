@@ -2,7 +2,7 @@ import { deepStrictEqual, rejects } from 'node:assert/strict'
 import { test } from 'node:test'
 import { request } from '../src/parts/SshWorkspace/SshWorkspace.ts'
 
-void test('routes remote searches and terminal discovery through the SSH transport', async () => {
+void test('routes remote workspace requests through the SSH transport', async () => {
   const calls: unknown[][] = []
   const invoke = async (...args: readonly unknown[]): Promise<unknown> => {
     calls.push([...args])
@@ -32,6 +32,12 @@ void test('routes remote searches and terminal discovery through the SSH transpo
   deepStrictEqual(calls[2]?.slice(1), [
     'shared-process',
     'GetTerminalSpawnOptions.getTerminalSpawnOptions',
+  ])
+  await request('remote-ssh://host/work/my%20folder', 'git-remote', [], invoke)
+  deepStrictEqual(calls[3]?.slice(1), [
+    'shared-process',
+    'Workspace.getGitRemote',
+    '/work/my folder',
   ])
   await rejects(
     request('remote-ssh://host/work', 'shared-process', [], invoke),

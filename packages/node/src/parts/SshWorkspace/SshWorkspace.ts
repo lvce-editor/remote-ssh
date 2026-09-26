@@ -34,6 +34,13 @@ export const request = async (
         'shared-process',
         'GetTerminalSpawnOptions.getTerminalSpawnOptions',
       )
+    case 'git-remote':
+      return invoke(
+        location,
+        'shared-process',
+        'Workspace.getGitRemote',
+        location.path,
+      )
     case 'text-search':
       return invoke(location, 'search-process', 'TextSearch.search', {
         ripGrepArgs: args,
