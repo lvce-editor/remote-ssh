@@ -28,6 +28,13 @@ export const request = async (
       }
       return result.split(/\r?\n/).filter(Boolean)
     }
+    case 'git-remote':
+      return invoke(
+        location,
+        'shared-process',
+        'Workspace.getGitRemote',
+        location.path,
+      )
     case 'terminal-options':
       return invoke(
         location,
