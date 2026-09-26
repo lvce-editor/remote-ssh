@@ -3,6 +3,7 @@ import {
   getWorkspaceUri,
   registerCommand,
   registerFileSystemProvider,
+  registerPortProvider,
 } from '@lvce-editor/api'
 import * as Connect from '../Connect/Connect.ts'
 import { fileSystem } from '../FileSystem/FileSystem.ts'
@@ -13,6 +14,7 @@ import * as WorkspaceConnection from '../WorkspaceConnection/WorkspaceConnection
 
 const state = {
   activated: false,
+  portProviderRegistration: undefined as { dispose: () => void } | undefined,
 }
 
 export const activate = async (): Promise<void> => {
@@ -23,9 +25,38 @@ export const activate = async (): Promise<void> => {
   try {
     await activateExtensionApi()
     registerFileSystemProvider(fileSystem)
+    state.portProviderRegistration = registerPortProvider({
+      async providePorts(workspaceUri) {
+        const ports = (await Rpc.invoke(
+          'SshWorkspace.getForwardedPorts',
+          workspaceUri,
+        )) as readonly {
+          readonly localPort: number
+          readonly remotePort: number
+        }[]
+        return ports.map(({ localPort, remotePort }) => ({
+          active: true,
+          forwardedAddress: `localhost:${localPort}`,
+          origin: 'Remote SSH',
+          port: remotePort,
+          runningProcess: '',
+        }))
+      },
+      scheme: 'remote-ssh',
+    })
     registerCommand({
       execute: () => Connect.connect(),
       id: 'remote-ssh.connect',
+    })
+    registerCommand({
+      execute: (workspaceUri: string, port: number) =>
+        Rpc.invoke('SshWorkspace.forwardPort', workspaceUri, port),
+      id: 'remote-ssh.forwardPort',
+    })
+    registerCommand({
+      execute: (workspaceUri: string, port: number) =>
+        Rpc.invoke('SshWorkspace.stopForwardPort', workspaceUri, port),
+      id: 'remote-ssh.stopForwardPort',
     })
     registerCommand({
       execute: ProcessConnection.connect,
@@ -45,6 +76,8 @@ export const activate = async (): Promise<void> => {
     }
   } catch (error) {
     state.activated = false
+    state.portProviderRegistration?.dispose()
+    state.portProviderRegistration = undefined
     WorkspaceConnection.reset()
     throw error
   }
@@ -52,6 +85,8 @@ export const activate = async (): Promise<void> => {
 
 export const deactivate = async (): Promise<void> => {
   state.activated = false
+  state.portProviderRegistration?.dispose()
+  state.portProviderRegistration = undefined
   ProcessConnection.dispose()
   RemoteCli.stop()
   WorkspaceConnection.reset()

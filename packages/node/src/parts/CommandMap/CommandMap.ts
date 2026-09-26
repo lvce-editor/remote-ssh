@@ -15,5 +15,8 @@ export const commandMap = {
   'SshFileSystem.stat': SshFileSystem.stat,
   'SshFileSystem.waitForOpenRequest': SshFileSystem.waitForOpenRequest,
   'SshFileSystem.writeFile': SshFileSystem.writeFile,
+  'SshWorkspace.forwardPort': SshWorkspace.forwardPort,
+  'SshWorkspace.getForwardedPorts': SshWorkspace.getForwardedPorts,
   'SshWorkspace.request': SshWorkspace.request,
+  'SshWorkspace.stopForwardPort': SshWorkspace.stopForwardPort,
 }

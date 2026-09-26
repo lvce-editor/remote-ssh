@@ -1,6 +1,9 @@
 import * as RemoteSshUri from '../RemoteSshUri/RemoteSshUri.ts'
 import {
   invokeWorkspaceBackend,
+  forwardPort as forwardSshPort,
+  getForwardedPorts as getSshForwardedPorts,
+  stopForwardPort as stopSshForwardPort,
   type InvokeBackend,
 } from '../SshTransport/SshTransport.ts'
 
@@ -49,4 +52,24 @@ export const request = async (
     default:
       throw new Error(`Unsupported remote workspace request: ${type}`)
   }
+}
+
+export const forwardPort = async (
+  uri: string,
+  port: number,
+): Promise<unknown> => {
+  return forwardSshPort(RemoteSshUri.parse(uri), port)
+}
+
+export const stopForwardPort = async (
+  uri: string,
+  port: number,
+): Promise<void> => {
+  await stopSshForwardPort(RemoteSshUri.parse(uri), port)
+}
+
+export const getForwardedPorts = async (
+  uri: string,
+): Promise<readonly unknown[]> => {
+  return getSshForwardedPorts(RemoteSshUri.parse(uri))
 }

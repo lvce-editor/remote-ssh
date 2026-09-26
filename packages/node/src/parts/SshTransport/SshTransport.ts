@@ -38,13 +38,29 @@ interface OpenMessage extends OpenRequest {
 type ServerMessage = OpenMessage | ReadyMessage
 
 interface Connection {
+  readonly forwardPort: (
+    workspacePath: string,
+    remotePort: number,
+  ) => Promise<ForwardedPort>
+  readonly getForwardedPorts: (
+    workspacePath: string,
+  ) => Promise<readonly ForwardedPort[]>
   readonly getWorkspaceBackend: () => Promise<WorkspaceBackend>
   readonly invokeBackend: (
     type: string,
     method: string,
     params: readonly unknown[],
   ) => Promise<unknown>
+  readonly stopForwardPort: (
+    workspacePath: string,
+    remotePort: number,
+  ) => Promise<void>
   readonly waitForOpenRequest: () => Promise<OpenRequest>
+}
+
+export interface ForwardedPort {
+  readonly localPort: number
+  readonly remotePort: number
 }
 
 export interface WorkspaceBackend {
@@ -152,6 +168,12 @@ const getAvailablePort = async (): Promise<number> => {
   return port
 }
 
+const validatePort = (port: number): void => {
+  if (!Number.isSafeInteger(port) || port < 1 || port > 65_535) {
+    throw new TypeError('Remote port must be between 1 and 65535')
+  }
+}
+
 const addForward = async (
   location: RemoteLocation,
   controlPath: string,
@@ -188,6 +210,47 @@ const addForward = async (
     throw new Error(
       Buffer.concat(stderr).toString('utf8').trim() ||
         `Failed to forward the remote workspace backend (status ${code})`,
+    )
+  }
+}
+
+const runForwardControl = async (
+  controlPath: string,
+  target: string,
+  operation: 'cancel' | 'forward',
+  localPort: number,
+  remotePort: number,
+): Promise<void> => {
+  const child = SshProcessRegistry.register(
+    spawn(
+      sshExecutable,
+      [
+        '-S',
+        controlPath,
+        '-O',
+        operation,
+        '-o',
+        'ExitOnForwardFailure=yes',
+        '-L',
+        `127.0.0.1:${localPort}:127.0.0.1:${remotePort}`,
+        '--',
+        target,
+      ],
+      { stdio: ['ignore', 'pipe', 'pipe'] },
+    ),
+  )
+  const stderr: Buffer[] = []
+  child.stderr.on('data', (chunk: Buffer) => {
+    stderr.push(chunk)
+  })
+  const code = await new Promise<number | null>((resolve, reject) => {
+    child.once('error', reject)
+    child.once('close', resolve)
+  })
+  if (code !== 0) {
+    throw new Error(
+      Buffer.concat(stderr).toString('utf8').trim() ||
+        `Failed to ${operation} Remote SSH port ${remotePort} (status ${code})`,
     )
   }
 }
@@ -238,6 +301,14 @@ class RemoteConnection implements Connection {
   private readonly ready: Promise<void>
   private readonly readyTimeout: NodeJS.Timeout
   private readonly stderr: Buffer[] = []
+  private readonly forwardedPorts = new Map<
+    number,
+    {
+      owners: Set<string>
+      readonly forwarding: Promise<ForwardedPort>
+      stopping?: Promise<void>
+    }
+  >()
   private workspaceBackend: WorkspaceBackend | undefined
 
   constructor(
@@ -508,6 +579,104 @@ class RemoteConnection implements Connection {
       this.openRequestWaiters.push({ reject, resolve })
     })
   }
+
+  async forwardPort(
+    workspacePath: string,
+    remotePort: number,
+  ): Promise<ForwardedPort> {
+    validatePort(remotePort)
+    if (this.closed) {
+      throw (
+        this.closeError ||
+        new Error('Remote SSH workspace connection is closed')
+      )
+    }
+    const existing = this.forwardedPorts.get(remotePort)
+    if (existing) {
+      if (existing.stopping) {
+        await existing.stopping
+        return this.forwardPort(workspacePath, remotePort)
+      }
+      existing.owners.add(workspacePath)
+      return existing.forwarding
+    }
+    const forwarding = (async (): Promise<ForwardedPort> => {
+      const localPort = await getAvailablePort()
+      await runForwardControl(
+        this.controlPath,
+        this.location.target,
+        'forward',
+        localPort,
+        remotePort,
+      )
+      return { localPort, remotePort }
+    })()
+    const owners = new Set([workspacePath])
+    this.forwardedPorts.set(remotePort, { forwarding, owners })
+    try {
+      return await forwarding
+    } catch (error) {
+      if (this.forwardedPorts.get(remotePort)?.forwarding === forwarding) {
+        this.forwardedPorts.delete(remotePort)
+      }
+      throw error
+    }
+  }
+
+  async stopForwardPort(
+    workspacePath: string,
+    remotePort: number,
+  ): Promise<void> {
+    const entry = this.forwardedPorts.get(remotePort)
+    if (!entry || !entry.owners.has(workspacePath)) {
+      return
+    }
+    if (entry.stopping) {
+      await entry.stopping
+      return
+    }
+    if (entry.owners.size > 1) {
+      entry.owners.delete(workspacePath)
+      return
+    }
+    const stopping = (async (): Promise<void> => {
+      const port = await entry.forwarding
+      await runForwardControl(
+        this.controlPath,
+        this.location.target,
+        'cancel',
+        port.localPort,
+        port.remotePort,
+      )
+      if (this.forwardedPorts.get(remotePort) === entry) {
+        entry.owners.delete(workspacePath)
+        this.forwardedPorts.delete(remotePort)
+      }
+    })()
+    entry.stopping = stopping
+    try {
+      await stopping
+    } finally {
+      if (entry.stopping === stopping) {
+        entry.stopping = undefined
+      }
+    }
+  }
+
+  async getForwardedPorts(
+    workspacePath: string,
+  ): Promise<readonly ForwardedPort[]> {
+    const entries = this.forwardedPorts
+      .values()
+      .filter((entry) => entry.owners.has(workspacePath))
+      .toArray()
+    const results = await Promise.allSettled(
+      entries.map((entry) => entry.forwarding),
+    )
+    return results.flatMap((result) =>
+      result.status === 'fulfilled' ? [result.value] : [],
+    )
+  }
 }
 
 const spawnConnection = async (
@@ -594,6 +763,39 @@ export const connectWorkspaceBackend = async (
   return connection.getWorkspaceBackend()
 }
 
+export const forwardPort = async (
+  location: RemoteLocation,
+  remotePort: number,
+): Promise<ForwardedPort> => {
+  validatePort(remotePort)
+  const connection = await getConnection(location)
+  return connection.forwardPort(location.path, remotePort)
+}
+
+export const stopForwardPort = async (
+  location: RemoteLocation,
+  remotePort: number,
+): Promise<void> => {
+  validatePort(remotePort)
+  const connection = connections.get(location.identity)
+  if (!connection) {
+    return
+  }
+  const activeConnection = await connection
+  await activeConnection.stopForwardPort(location.path, remotePort)
+}
+
+export const getForwardedPorts = async (
+  location: RemoteLocation,
+): Promise<readonly ForwardedPort[]> => {
+  const connection = connections.get(location.identity)
+  if (!connection) {
+    return []
+  }
+  const activeConnection = await connection
+  return activeConnection.getForwardedPorts(location.path)
+}
+
 export const waitForOpenRequest = async (
   location: RemoteLocation,
 ): Promise<OpenRequest> => {
@@ -603,4 +805,5 @@ export const waitForOpenRequest = async (
 
 export const _getSshArgs = getSshArgs
 export const _getRemoteCommand = getRemoteCommand
+export const _validatePort = validatePort
 export const _resetConnections = (): void => connections.clear()

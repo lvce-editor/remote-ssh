@@ -27,7 +27,8 @@
     "onCommand:remote-ssh.connect",
     "onCommand:remote-ssh.connectToProcess",
     "onFileSystem:remote-ssh",
-    "onCommand:remote-ssh.request"
+    "onCommand:remote-ssh.request",
+    "onPorts:remote-ssh"
   ],
   "commands": [
     {
@@ -40,6 +41,14 @@
     },
     {
       "id": "remote-ssh.request",
+      "internal": true
+    },
+    {
+      "id": "remote-ssh.forwardPort",
+      "internal": true
+    },
+    {
+      "id": "remote-ssh.stopForwardPort",
       "internal": true
     }
   ],

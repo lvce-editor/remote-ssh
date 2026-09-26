@@ -1,6 +1,6 @@
 import { fork, spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { createServer as createHttpServer } from 'node:http'
+import { createServer as createHttpServer, get as getHttp } from 'node:http'
 import {
   access,
   chmod,
@@ -17,6 +17,14 @@ import { basename, dirname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { chromium, expect } from '@playwright/test'
 import { createSshServer } from 'e2e-helpers'
+import { parse as parseRemoteSshUri } from '../../node/src/parts/RemoteSshUri/RemoteSshUri.ts'
+import {
+  forwardPort,
+  getForwardedPorts,
+  stopForwardPort,
+} from '../../node/src/parts/SshTransport/SshTransport.ts'
+import { dispose as disposeSshProcesses } from '../../node/src/parts/SshProcessRegistry/SshProcessRegistry.ts'
+import { toRemoteSshUri } from '../../extension/src/parts/SshTarget/SshTarget.ts'
 import { runConnectionErrorScenarios } from './connection-error-scenarios.js'
 
 const currentDir = dirname(fileURLToPath(import.meta.url))
@@ -466,6 +474,108 @@ const openPromptScenario = async (page, port) => {
   return quickInput
 }
 
+const verifyHttpPortForwarding = async (
+  sshServer,
+  remoteArtifacts,
+  homeRoot,
+) => {
+  const getResponseText = (port) =>
+    new Promise((resolve, reject) => {
+      const request = getHttp(
+        { agent: false, hostname: '127.0.0.1', port },
+        (response) => {
+          const chunks = []
+          response.on('data', (chunk) => chunks.push(chunk))
+          response.once('end', () => resolve(Buffer.concat(chunks).toString()))
+        },
+      )
+      request.once('error', reject)
+    })
+  const firstHttpServer = createHttpServer((_request, response) => {
+    response.end('first-remote-port')
+  })
+  const secondHttpServer = createHttpServer((_request, response) => {
+    response.end('second-remote-port')
+  })
+  const listen = (server) =>
+    new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
+  await Promise.all([listen(firstHttpServer), listen(secondHttpServer)])
+  const firstAddress = firstHttpServer.address()
+  const secondAddress = secondHttpServer.address()
+  if (
+    !firstAddress ||
+    typeof firstAddress === 'string' ||
+    !secondAddress ||
+    typeof secondAddress === 'string'
+  ) {
+    throw new Error('Could not start the Remote SSH forwarding HTTP fixtures')
+  }
+  const uri = toRemoteSshUri(sshServer.fixture.target)
+  const location = parseRemoteSshUri(uri)
+  const otherWorkspace = {
+    ...location,
+    path: `${location.path}/another-workspace`,
+  }
+  const env = { ...sshServer.env, ...remoteArtifacts.env, HOME: homeRoot }
+  const oldEnv = new Map(Object.keys(env).map((key) => [key, process.env[key]]))
+  Object.assign(process.env, env)
+  let forwardedPort
+  let secondForwardedPort
+  try {
+    forwardedPort = await forwardPort(location, firstAddress.port)
+    secondForwardedPort = await forwardPort(location, secondAddress.port)
+    const sharedForward = await forwardPort(otherWorkspace, firstAddress.port)
+    expect(sharedForward).toEqual(forwardedPort)
+    expect(await getForwardedPorts(location)).toContainEqual(forwardedPort)
+    expect(await getForwardedPorts(otherWorkspace)).toContainEqual(
+      forwardedPort,
+    )
+    expect(await getResponseText(forwardedPort.localPort)).toBe(
+      'first-remote-port',
+    )
+    expect(await getResponseText(secondForwardedPort.localPort)).toBe(
+      'second-remote-port',
+    )
+    await stopForwardPort(location, firstAddress.port)
+    expect(await getForwardedPorts(location)).not.toContainEqual(forwardedPort)
+    expect(await getForwardedPorts(otherWorkspace)).toContainEqual(
+      forwardedPort,
+    )
+    expect(await getResponseText(forwardedPort.localPort)).toBe(
+      'first-remote-port',
+    )
+    await stopForwardPort(otherWorkspace, firstAddress.port)
+    await expect(getResponseText(forwardedPort.localPort)).rejects.toThrow()
+    expect(await getResponseText(secondForwardedPort.localPort)).toBe(
+      'second-remote-port',
+    )
+    console.log(
+      `PASS remote HTTP port forwarding ${firstAddress.port} -> ${forwardedPort.localPort}`,
+    )
+  } finally {
+    if (forwardedPort) {
+      await stopForwardPort(location, firstAddress.port).catch(() => {})
+    }
+    await disposeSshProcesses()
+    if (secondForwardedPort) {
+      await expect(
+        getResponseText(secondForwardedPort.localPort),
+      ).rejects.toThrow()
+    }
+    for (const [key, value] of oldEnv) {
+      if (value === undefined) {
+        delete process.env[key]
+      } else {
+        process.env[key] = value
+      }
+    }
+    await Promise.all([
+      closeServer(firstHttpServer),
+      closeServer(secondHttpServer),
+    ])
+  }
+}
+
 const expectConfiguredHosts = async (page, expectedHosts) => {
   await expect(page.locator('.QuickPickItemLabel')).toHaveText(expectedHosts, {
     timeout: 30_000,
@@ -753,6 +863,8 @@ const runRealSshTest = async () => {
       const { test } = await import(pathToFileURL(gitScenario).href)
       await test({ page, expect, sshServer, port, socketUrls, sockets })
     }
+
+    await verifyHttpPortForwarding(sshServer, remoteArtifacts, homeRoot)
 
     const localServiceSockets = socketUrls.filter((url) =>
       ['/websocket/shared-process', '/websocket/file-system-process'].includes(
