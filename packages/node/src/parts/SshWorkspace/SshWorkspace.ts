@@ -28,18 +28,18 @@ export const request = async (
       }
       return result.split(/\r?\n/).filter(Boolean)
     }
-    case 'terminal-options':
-      return invoke(
-        location,
-        'shared-process',
-        'GetTerminalSpawnOptions.getTerminalSpawnOptions',
-      )
     case 'git-remote':
       return invoke(
         location,
         'shared-process',
         'Workspace.getGitRemote',
         location.path,
+      )
+    case 'terminal-options':
+      return invoke(
+        location,
+        'shared-process',
+        'GetTerminalSpawnOptions.getTerminalSpawnOptions',
       )
     case 'text-search':
       return invoke(location, 'search-process', 'TextSearch.search', {
