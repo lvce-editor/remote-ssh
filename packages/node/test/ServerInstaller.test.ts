@@ -219,3 +219,133 @@ void test('transfers archives into the setup version directory', () => {
     }
   }
 })
+
+void test(
+  'upgrades the actual backend atomically, reuses it, and retains older clients on failure',
+  { skip: process.platform !== 'linux' || process.arch !== 'x64' },
+  async (context) => {
+    const directory = await mkdtemp(
+      path.join(tmpdir(), 'lvce-installer-version-'),
+    )
+    context.after(() => rm(directory, { force: true, recursive: true }))
+    const source = path.join(directory, 'source')
+    const runtimeSource = path.join(source, 'node-test')
+    await mkdir(path.join(runtimeSource, 'bin'), { recursive: true })
+    await copyFile(process.execPath, path.join(runtimeSource, 'bin', 'node'))
+    await chmod(path.join(runtimeSource, 'bin', 'node'), 0o755)
+    const npmPath = path.join(
+      runtimeSource,
+      'lib',
+      'node_modules',
+      'npm',
+      'bin',
+    )
+    await mkdir(npmPath, { recursive: true })
+    // Controlled registry stand-in exercises the generated shell's real install path.
+    await writeFile(
+      path.join(npmPath, 'npm-cli.js'),
+      `
+    const fs = require('fs'); const path = require('path');
+    const args = process.argv.slice(2);
+    const version = args.at(-1).split('@').at(-1);
+    if (version === '0.120.99') throw new Error('Matching backend unavailable');
+    const prefix = args[args.indexOf('--prefix') + 1];
+    fs.appendFileSync(process.env.INSTALL_LOG, version + '\\n');
+    fs.writeFileSync(path.join(prefix, 'node_modules/@lvce-editor/server/package.json'), JSON.stringify({ version }));
+  `,
+    )
+    const backend = path.join(
+      source,
+      'lvce-server',
+      'node_modules',
+      '@lvce-editor',
+      'server',
+    )
+    await mkdir(backend, { recursive: true })
+    await writeFile(
+      path.join(backend, 'package.json'),
+      JSON.stringify({ version: '0.120.9' }),
+    )
+    await writeFile(
+      path.join(source, 'lvce-remote-ssh-server.mjs'),
+      "if (process.argv[2] === 'version') process.stdout.write('ok\\n')",
+    )
+    const nodeArchive = path.join(directory, 'node.tar.gz')
+    const serverArchive = path.join(directory, 'server.tar.gz')
+    await execFileAsync('tar', ['-czf', nodeArchive, '-C', source, 'node-test'])
+    await execFileAsync('tar', [
+      '-czf',
+      serverArchive,
+      '-C',
+      source,
+      'lvce-server',
+      'lvce-remote-ssh-server.mjs',
+    ])
+    const manifest: ServerManifest = {
+      editorVersion: '0.120.10',
+      nodeArchiveName: 'node.tar.gz',
+      nodeArchiveSha256: await sha256(nodeArchive),
+      nodeArchiveUrl: `file://${nodeArchive}`,
+      nodeVersion: 'test-node',
+      protocolVersion: 1,
+      serverArchiveName: 'server.tar.gz',
+      serverArchiveSha256: await sha256(serverArchive),
+      serverArchiveUrl: `file://${serverArchive}`,
+      serverVersion: 'ssh-editor-0.120.10',
+    }
+    const home = path.join(directory, 'home')
+    await mkdir(home)
+    const installLog = path.join(directory, 'installs.log')
+    const env = { ...process.env, HOME: home, INSTALL_LOG: installLog }
+    const serverRoot = path.join(home, '.lvce-server', 'servers')
+    const previous = process.env.LVCE_REMOTE_SSH_REMOTE_ROOT
+    delete process.env.LVCE_REMOTE_SSH_REMOTE_ROOT
+    try {
+      await runShell(
+        createInstallScript({
+          ...manifest,
+          editorVersion: '0.120.9',
+          serverVersion: 'ssh-editor-0.120.9',
+        }),
+        env,
+      )
+      await runShell(createInstallScript(manifest), env)
+      const installed = JSON.parse(
+        await readFile(
+          path.join(
+            serverRoot,
+            manifest.serverVersion,
+            'lvce-server/node_modules/@lvce-editor/server/package.json',
+          ),
+          'utf8',
+        ),
+      )
+      strictEqual(installed.version, '0.120.10')
+      await runShell(createInstallScript(manifest), env)
+      strictEqual(await readFile(installLog, 'utf8'), '0.120.10\n')
+      const { rejects } = await import('node:assert/strict')
+      await rejects(
+        runShell(
+          createInstallScript({
+            ...manifest,
+            editorVersion: '0.120.99',
+            serverVersion: 'ssh-editor-0.120.99',
+          }),
+          env,
+        ),
+        /Matching backend unavailable/,
+      )
+      const versions = await readdir(serverRoot)
+      strictEqual(versions.includes('ssh-editor-0.120.9'), true)
+      strictEqual(versions.includes('ssh-editor-0.120.10'), true)
+      strictEqual(versions.includes('ssh-editor-0.120.99'), false)
+      strictEqual(
+        versions.some((value) => value.startsWith('.')),
+        false,
+      )
+    } finally {
+      if (previous === undefined) delete process.env.LVCE_REMOTE_SSH_REMOTE_ROOT
+      else process.env.LVCE_REMOTE_SSH_REMOTE_ROOT = previous
+    }
+  },
+)

@@ -8,6 +8,7 @@ import {
   mkdir,
   mkdtemp,
   readFile,
+  readdir,
   rm,
   writeFile,
 } from 'node:fs/promises'
@@ -95,6 +96,12 @@ const createRemoteServerArtifacts = async (runtimeRoot) => {
     await mkdir(nodeRoot, { recursive: true })
     await cp(process.execPath, join(nodeRoot, 'node'))
     await chmod(join(nodeRoot, 'node'), 0o755)
+    // Include npm from the test runtime for the exact-version backend install.
+    await cp(
+      join(dirname(process.execPath), '..', 'lib', 'node_modules', 'npm'),
+      join(artifactsRoot, 'node-test', 'lib', 'node_modules', 'npm'),
+      { recursive: true },
+    )
     await runProcessChecked('tar', [
       '-czf',
       nodeArchivePath,
@@ -136,7 +143,9 @@ const createRemoteServerArtifacts = async (runtimeRoot) => {
       LVCE_REMOTE_SSH_NODE_VERSION: 'test-node',
       LVCE_REMOTE_SSH_FORCE_LOCAL_TRANSFER: '1',
       LVCE_REMOTE_SSH_REMOTE_ROOT: remoteRoot,
-      LVCE_REMOTE_SSH_BACKEND_SCRIPT: backendScript,
+      ...(process.env.LVCE_REMOTE_SSH_BACKEND_SCRIPT
+        ? { LVCE_REMOTE_SSH_BACKEND_SCRIPT: backendScript }
+        : {}),
       LVCE_REMOTE_SSH_SERVER_ARCHIVE_NAME: serverArchiveName,
       LVCE_REMOTE_SSH_SERVER_ARCHIVE_SHA256: await getSha256(serverArchivePath),
       LVCE_REMOTE_SSH_SERVER_ARCHIVE_URL: `${archiveBaseUrl}/${serverArchiveName}`,
@@ -161,10 +170,19 @@ const stopRemoteServer = async (remoteRoot) => {
     return
   }
   try {
-    const state = JSON.parse(
-      await readFile(join(remoteRoot, 'run', 'server-dev.json'), 'utf8'),
-    )
-    process.kill(state.pid, 'SIGTERM')
+    const files = await readdir(join(remoteRoot, 'run'))
+    for (const file of files.filter(
+      (value) => value.startsWith('server-') && value.endsWith('.json'),
+    )) {
+      const state = JSON.parse(
+        await readFile(join(remoteRoot, 'run', file), 'utf8'),
+      )
+      try {
+        process.kill(state.pid, 'SIGTERM')
+      } catch {
+        /* Already exited. */
+      }
+    }
   } catch {
     // The remote server may not have started or may already have exited.
   }
@@ -293,7 +311,25 @@ const prepareExtensions = async (runtimeRoot) => {
       await cp(source, installedExtensionPaths[index], { recursive: true })
     }
 
-    const testExtensionPath = join(runtimeRoot, 'extension')
+    const frontendConfig = JSON.parse(
+      await readFile(
+        join(builtinExtensionsPath, '..', '..', '..', 'config.json'),
+        'utf8',
+      ),
+    )
+    const frontendVersion = frontendConfig.version.replace(/^v/, '')
+    const installationVersion = `dev-editor-${frontendVersion}`
+    const testExtensionPath = join(
+      runtimeRoot,
+      'static',
+      'test',
+      'extensions',
+      'builtin.remote-ssh',
+    )
+    await writeFile(
+      join(runtimeRoot, 'config.json'),
+      JSON.stringify(frontendConfig),
+    )
     await cp(extensionPath, testExtensionPath, { recursive: true })
     const manifestPath = join(testExtensionPath, 'extension.json')
     const manifest = JSON.parse(await readFile(manifestPath, 'utf8'))
@@ -347,6 +383,8 @@ const prepareExtensions = async (runtimeRoot) => {
 
     return {
       builtinExtensionsPath,
+      frontendVersion,
+      installationVersion,
       installedExtensionPaths,
       staticConfigContent,
       staticConfigPath,
@@ -623,6 +661,7 @@ const runRealSshTest = async () => {
   const runtimeRoot = await mkdtemp(
     join(runtimeParent, 'lvce-remote-ssh-runtime-'),
   )
+  let installationVersion = 'dev'
   let browser
   let page
   let artifactServer
@@ -634,6 +673,7 @@ const runRealSshTest = async () => {
   let staticConfigPath
   try {
     const prepared = await prepareExtensions(runtimeRoot)
+    installationVersion = prepared.installationVersion
     const remoteArtifacts = await createRemoteServerArtifacts(runtimeRoot)
     artifactServer = remoteArtifacts.artifactServer
     getArtifactRequestCount = remoteArtifacts.getRequestCount
@@ -742,6 +782,7 @@ const runRealSshTest = async () => {
         ).toHaveCount(0)
         console.log(`PASS error notification: ${code}`)
       },
+      prepared.installationVersion,
     )
 
     await writeFile(sshConfigPath, 'Host work staging\n')
@@ -832,9 +873,12 @@ const runRealSshTest = async () => {
       { delay: 20 },
     )
     await page.keyboard.press('Enter')
-    await expect(terminal).toContainText('REMOTE_CLI_VERSION:0.120.9', {
-      timeout: 30_000,
-    })
+    await expect(terminal).toContainText(
+      `REMOTE_CLI_VERSION:${prepared.frontendVersion}`,
+      {
+        timeout: 30_000,
+      },
+    )
 
     await page.keyboard.press('Control+Shift+F')
     const search = page.locator('.Search')
@@ -907,6 +951,15 @@ const runRealSshTest = async () => {
       timeout: 30_000,
     })
     expect(page.context().pages()).toHaveLength(pageCount)
+    const reconnectDownloads = getArtifactRequestCount()
+    await page.reload()
+    await expect(
+      page.locator('.TreeItem[aria-label="opened-by-remote-cli.txt"]'),
+    ).toBeVisible({ timeout: 30_000 })
+    expect(getArtifactRequestCount()).toBe(reconnectDownloads)
+    console.log(
+      `PASS exact backend ${prepared.frontendVersion}, terminal CLI, and equal-version reconnect`,
+    )
   } catch (error) {
     if (page) {
       await page
@@ -925,7 +978,7 @@ const runRealSshTest = async () => {
     }
     if (remoteRoot) {
       const serverLog = await readFile(
-        join(remoteRoot, 'run', 'server-dev.log'),
+        join(remoteRoot, 'run', `server-${installationVersion}.log`),
         'utf8',
       ).catch(() => '')
       console.error(`Remote server log:\n${serverLog}`)

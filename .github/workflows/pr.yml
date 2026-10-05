@@ -52,3 +52,4 @@ jobs:
         run: npm run e2e:headless
         env:
           PLAYWRIGHT_BROWSERS_PATH: 0
+          LVCE_REMOTE_SSH_LVCE_SERVER_VERSION: 0.120.9

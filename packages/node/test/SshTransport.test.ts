@@ -57,3 +57,13 @@ void test('validates forwarded port numbers before opening an SSH connection', (
     })
   }
 })
+
+void test('selects a separate installation and handshake for each frontend version', async () => {
+  const { manifest, selectFrontendVersion } =
+    await import('../src/parts/ServerManifest/ServerManifest.ts')
+  const older = _getRemoteCommand(selectFrontendVersion(manifest, '0.120.9'))
+  const newer = _getRemoteCommand(selectFrontendVersion(manifest, '0.120.10'))
+  match(older, /servers\/dev-editor-0\.120\.9\//)
+  match(newer, /servers\/dev-editor-0\.120\.10\//)
+  match(newer, /LVCE_REMOTE_SSH_CLIENT_VERSION='dev-editor-0\.120\.10'/)
+})

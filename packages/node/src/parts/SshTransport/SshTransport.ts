@@ -8,7 +8,10 @@ import type { RemoteLocation } from '../RemoteSshUri/RemoteSshUri.ts'
 import * as ConnectionError from '../ConnectionError/ConnectionError.ts'
 import { RemoteSshError } from '../RemoteSshError/RemoteSshError.ts'
 import { installServer } from '../ServerInstaller/ServerInstaller.ts'
-import { manifest } from '../ServerManifest/ServerManifest.ts'
+import {
+  manifest,
+  type ServerManifest,
+} from '../ServerManifest/ServerManifest.ts'
 import * as SshProcessRegistry from '../SshProcessRegistry/SshProcessRegistry.ts'
 import * as WorkspaceBackendRpc from '../WorkspaceBackendRpc/WorkspaceBackendRpc.ts'
 
@@ -98,7 +101,9 @@ const getPortArgs = (location: RemoteLocation): readonly string[] => {
   return location.port ? ['-p', location.port] : []
 }
 
-const getRemoteCommand = (): string => {
+const getRemoteCommand = (
+  selectedManifest: ServerManifest = manifest,
+): string => {
   const configuredRoot = process.env.LVCE_REMOTE_SSH_REMOTE_ROOT
   const root = configuredRoot
     ? escapeShell(configuredRoot)
@@ -107,7 +112,7 @@ const getRemoteCommand = (): string => {
   const backendEnvironment = configuredBackend
     ? ` LVCE_REMOTE_SSH_BACKEND_SCRIPT=${escapeShell(configuredBackend)}`
     : ''
-  return `printf '${connectedMarker}\\n'; root=${root}; runtime="$root/runtimes/${manifest.nodeVersion}/bin/node"; server="$root/servers/${manifest.serverVersion}/lvce-remote-ssh-server.mjs"; if [ -x "$runtime" ] && [ -f "$server" ]; then LVCE_REMOTE_SSH_ROOT="$root" LVCE_REMOTE_SSH_CLIENT_VERSION=${escapeShell(manifest.serverVersion)}${backendEnvironment} exec "$runtime" "$server" connect-or-start; else printf '${installRequiredMarker}\\n'; exit 86; fi`
+  return `printf '${connectedMarker}\\n'; root=${root}; runtime="$root/runtimes/${selectedManifest.nodeVersion}/bin/node"; server="$root/servers/${selectedManifest.serverVersion}/lvce-remote-ssh-server.mjs"; if [ -x "$runtime" ] && [ -f "$server" ]; then LVCE_REMOTE_SSH_ROOT="$root" LVCE_REMOTE_SSH_CLIENT_VERSION=${escapeShell(selectedManifest.serverVersion)}${backendEnvironment} exec "$runtime" "$server" connect-or-start; else printf '${installRequiredMarker}\\n'; exit 86; fi`
 }
 
 const getControlPath = (location: RemoteLocation): string => {

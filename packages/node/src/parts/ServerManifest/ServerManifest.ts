@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+
 declare const __LVCE_REMOTE_SSH_NODE_ARCHIVE_NAME__: string
 declare const __LVCE_REMOTE_SSH_NODE_ARCHIVE_SHA256__: string
 declare const __LVCE_REMOTE_SSH_NODE_ARCHIVE_URL__: string
@@ -12,6 +14,7 @@ const getDefined = (value: string | undefined, fallback: string): string => {
 }
 
 export interface ServerManifest {
+  readonly editorVersion?: string
   readonly nodeArchiveName: string
   readonly nodeArchiveSha256: string
   readonly nodeArchiveUrl: string
@@ -23,7 +26,7 @@ export interface ServerManifest {
   readonly serverVersion: string
 }
 
-export const manifest: ServerManifest = {
+const embeddedManifest: ServerManifest = {
   nodeArchiveName:
     process.env.LVCE_REMOTE_SSH_NODE_ARCHIVE_NAME ||
     getDefined(
@@ -90,3 +93,44 @@ export const manifest: ServerManifest = {
       'dev',
     ),
 }
+
+// Packaged Electron and static-server extensions share this layout:
+// config.json, static/<commit>/extensions/builtin.remote-ssh/dist/<entry>.js.
+// Development extensions have no application config and keep the embedded backend.
+export const readFrontendVersion = (entryUrl: string): string | undefined => {
+  let config: { version?: unknown }
+  try {
+    config = JSON.parse(
+      readFileSync(new URL('../../../../../config.json', entryUrl), 'utf8'),
+    )
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined
+    throw error
+  }
+  if (config.version === 'dev' || config.version === '0.0.0-dev')
+    return undefined
+  if (typeof config.version !== 'string')
+    throw new Error('Invalid frontend editor version')
+  const version = config.version.replace(/^v/, '')
+  if (!/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(version)) {
+    throw new Error(`Unsupported frontend editor version: ${config.version}`)
+  }
+  return version
+}
+
+export const selectFrontendVersion = (
+  value: ServerManifest,
+  editorVersion: string | undefined,
+): ServerManifest => {
+  if (!editorVersion) return value
+  return {
+    ...value,
+    editorVersion,
+    serverVersion: `${value.serverVersion}-editor-${editorVersion}`,
+  }
+}
+
+export const manifest = selectFrontendVersion(
+  embeddedManifest,
+  readFrontendVersion(import.meta.url),
+)
