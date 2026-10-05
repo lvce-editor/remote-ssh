@@ -53,6 +53,19 @@ offers them as choices while continuing to accept a free-form destination.
 Wildcard and negated patterns are omitted. Missing, unreadable, empty, or
 malformed config entries fall back to the free-form prompt.
 
+Packaged frontends select the exact published `@lvce-editor/server` version
+from the application config used by About. The checksum-verified SSH bootstrap
+stays tied to the extension release; when necessary, its private Node/npm runtime
+installs the matching backend from the public npm registry, with package integrity
+checks and lifecycle scripts disabled. This backend update requires registry
+access from the remote host. An unavailable matching version fails installation
+without replacing existing versions. The verified native terminal build is retained
+only when its package version matches the requested backend; a backend requiring
+a different native build needs an updated bootstrap release. Each frontend/extension
+pair has its own installation, sockets, and terminal CLI launcher; reconnects reuse that pair and
+older clients can keep their installations. `lvce -v` reads the installed backend's
+package version. Unpackaged development extensions keep their embedded backend.
+
 The extension uses the system `ssh` executable. Authentication comes from the
 user's existing OpenSSH config, agent, and keys. Connections are non-interactive,
 so password prompts are not yet supported. New host keys are accepted by

@@ -136,8 +136,11 @@ export const prepare = async (
   root: string,
   nodePath: string,
   serverPath: string,
+  installationVersion?: string,
 ): Promise<string> => {
-  const binDirectory = path.join(root, 'bin')
+  const binDirectory = installationVersion
+    ? path.join(root, 'bin', installationVersion)
+    : path.join(root, 'bin')
   await mkdir(binDirectory, { mode: 0o700, recursive: true })
   const executablePath = path.join(binDirectory, 'lvce')
   const contents = `#!/bin/sh\nLVCE_REMOTE_SSH_ROOT=${escapeShell(root)} exec ${escapeShell(nodePath)} ${escapeShell(serverPath)} cli "$@"\n`

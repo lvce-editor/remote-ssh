@@ -136,3 +136,23 @@ void test('writes a private launcher for the bundled runtime', async (context) =
   match(launcher, /'\/runtime\/with '\\'' quote\/node'/)
   strictEqual(launcher.includes(' cli "$@"'), true)
 })
+
+void test('keeps CLI launchers separate when older and newer backends coexist', async (context) => {
+  const root = await mkdtemp(path.join(tmpdir(), 'lvce-cli-coexist-'))
+  context.after(() => rm(root, { recursive: true, force: true }))
+  const older = await prepare(
+    root,
+    '/node',
+    '/older/server.mjs',
+    'ssh-editor-0.120.9',
+  )
+  const newer = await prepare(
+    root,
+    '/node',
+    '/newer/server.mjs',
+    'ssh-editor-0.120.10',
+  )
+  strictEqual(older === newer, false)
+  match(await readFile(path.join(older, 'lvce'), 'utf8'), /\/older\/server.mjs/)
+  match(await readFile(path.join(newer, 'lvce'), 'utf8'), /\/newer\/server.mjs/)
+})

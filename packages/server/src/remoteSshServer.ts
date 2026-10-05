@@ -1,6 +1,6 @@
 import { spawn, type ChildProcess } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
-import { closeSync, openSync } from 'node:fs'
+import { closeSync, openSync, readFileSync } from 'node:fs'
 import {
   chmod,
   mkdir,
@@ -21,14 +21,36 @@ declare const __LVCE_REMOTE_SSH_SERVER_VERSION__: string
 declare const __LVCE_REMOTE_SSH_EDITOR_VERSION__: string
 
 const protocolVersion = 1
-const serverVersion =
+const bundledServerVersion =
   typeof __LVCE_REMOTE_SSH_SERVER_VERSION__ === 'string'
     ? __LVCE_REMOTE_SSH_SERVER_VERSION__
     : 'dev'
-const editorVersion =
+const bundledEditorVersion =
   typeof __LVCE_REMOTE_SSH_EDITOR_VERSION__ === 'string'
     ? __LVCE_REMOTE_SSH_EDITOR_VERSION__
     : 'dev'
+const readInstalledMetadata = (
+  relativePath: string,
+): { serverVersion?: string; version?: string } | undefined => {
+  try {
+    return JSON.parse(
+      readFileSync(
+        path.join(path.dirname(process.argv[1]), relativePath),
+        'utf8',
+      ),
+    )
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined
+    throw error
+  }
+}
+const serverVersion =
+  readInstalledMetadata('remote-ssh-installation.json')?.serverVersion ||
+  bundledServerVersion
+const editorVersion =
+  readInstalledMetadata(
+    'lvce-server/node_modules/@lvce-editor/server/package.json',
+  )?.version || bundledEditorVersion
 const idleTimeout = Number.parseInt(
   process.env.LVCE_REMOTE_SSH_IDLE_TIMEOUT || String(3 * 60 * 60 * 1000),
 )
@@ -364,6 +386,7 @@ const runDaemon = async (): Promise<void> => {
     root,
     process.execPath,
     process.argv[1],
+    serverVersion,
   )
   const log = openSync(logPath, 'a', 0o600)
   let backend: Awaited<ReturnType<typeof startWorkspaceBackend>>
