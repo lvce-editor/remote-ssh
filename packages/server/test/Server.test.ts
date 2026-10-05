@@ -160,7 +160,7 @@ void test(
 
     const connector = await connect(root)
     const request = readLine(connector)
-    await run(path.join(root, 'bin', 'lvce'), ['/home'], root)
+    await run(path.join(root, 'bin', 'dev', 'lvce'), ['/home'], root)
 
     deepStrictEqual(JSON.parse(await request), {
       kind: 'folder',
