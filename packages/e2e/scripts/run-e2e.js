@@ -867,7 +867,10 @@ const runRealSshTest = async () => {
     })
     await terminalInput.pressSequentially('command -v lvce', { delay: 20 })
     await page.keyboard.press('Enter')
-    await expect(terminal).toContainText('/bin/lvce', { timeout: 30_000 })
+    await expect(terminal).toContainText(
+      `/bin/${prepared.installationVersion}/lvce`,
+      { timeout: 30_000 },
+    )
     await terminalInput.pressSequentially(
       `printf 'REMOTE_CLI_VERSION:'; lvce -v`,
       { delay: 20 },

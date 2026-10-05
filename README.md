@@ -59,8 +59,10 @@ stays tied to the extension release; when necessary, its private Node/npm runtim
 installs the matching backend from the public npm registry, with package integrity
 checks and lifecycle scripts disabled. This backend update requires registry
 access from the remote host. An unavailable matching version fails installation
-without replacing existing versions. Each frontend/extension pair has its own
-installation, sockets, and terminal CLI launcher; reconnects reuse that pair and
+without replacing existing versions. The verified native terminal build is retained
+only when its package version matches the requested backend; a backend requiring
+a different native build needs an updated bootstrap release. Each frontend/extension
+pair has its own installation, sockets, and terminal CLI launcher; reconnects reuse that pair and
 older clients can keep their installations. `lvce -v` reads the installed backend's
 package version. Unpackaged development extensions keep their embedded backend.
 
