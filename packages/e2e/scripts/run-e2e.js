@@ -19,12 +19,6 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 import { chromium, expect } from '@playwright/test'
 import { createSshServer } from 'e2e-helpers'
 import { parse as parseRemoteSshUri } from '../../node/src/parts/RemoteSshUri/RemoteSshUri.ts'
-import {
-  forwardPort,
-  getForwardedPorts,
-  stopForwardPort,
-} from '../../node/src/parts/SshTransport/SshTransport.ts'
-import { dispose as disposeSshProcesses } from '../../node/src/parts/SshProcessRegistry/SshProcessRegistry.ts'
 import { toRemoteSshUri } from '../../extension/src/parts/SshTarget/SshTarget.ts'
 import { runConnectionErrorScenarios } from './connection-error-scenarios.js'
 
@@ -557,6 +551,12 @@ const verifyHttpPortForwarding = async (
   const env = { ...sshServer.env, ...remoteArtifacts.env, HOME: homeRoot }
   const oldEnv = new Map(Object.keys(env).map((key) => [key, process.env[key]]))
   Object.assign(process.env, env)
+  // Load this second client after its artifact environment is established.
+  // It intentionally uses the older development installation, separately from the UI.
+  const { forwardPort, getForwardedPorts, stopForwardPort } =
+    await import('../../node/src/parts/SshTransport/SshTransport.ts')
+  const { dispose: disposeSshProcesses } =
+    await import('../../node/src/parts/SshProcessRegistry/SshProcessRegistry.ts')
   let forwardedPort
   let secondForwardedPort
   try {
@@ -972,6 +972,13 @@ const runRealSshTest = async () => {
     expect(page.context().pages()).toHaveLength(pageCount)
     const reconnectDownloads = getArtifactRequestCount()
     await page.reload()
+    const reconnectInput = page.locator('.QuickPick input')
+    await expect(reconnectInput).toBeVisible({ timeout: 30_000 })
+    const reconnectTarget = new URL(toRemoteSshUri(sshServer.fixture.target))
+    reconnectTarget.protocol = 'ssh:'
+    reconnectTarget.pathname = cliWorkspacePath
+    await reconnectInput.fill(reconnectTarget.href)
+    await page.keyboard.press('Enter')
     await expect(
       page.locator('.TreeItem[aria-label="opened-by-remote-cli.txt"]'),
     ).toBeVisible({ timeout: 30_000 })
