@@ -255,6 +255,9 @@ if [ ! -f "$SERVER/lvce-remote-ssh-server.mjs" ]; then
         --userconfig="$BACKEND/.npmrc-user" --globalconfig="$BACKEND/.npmrc-global" \
         --registry=https://registry.npmjs.org "@lvce-editor/server@$EDITOR_VERSION"
     fi
+    # The server resolves node extensions through its matching static-server bundle.
+    # Restore the verified bootstrap Git override after npm replaces that bundle.
+    "$RUNTIME/bin/node" -e 'const fs = require("fs"), path = require("path"); const backend = process.argv[1]; const git = path.join(backend, "extensions/builtin.git"); if (fs.existsSync(git)) { const root = path.join(backend, "node_modules/@lvce-editor/static-server/static"); for (const entry of fs.readdirSync(root, {withFileTypes: true})) { if (!entry.isDirectory()) continue; const extensions = path.join(root, entry.name, "extensions"); if (fs.existsSync(extensions)) fs.cpSync(git, path.join(extensions, "builtin.git"), {recursive: true}); } }' "$BACKEND"
     "$RUNTIME/bin/node" -e 'const fs = require("fs"); const actual = JSON.parse(fs.readFileSync(process.argv[1], "utf8")).version; if (actual !== process.argv[2]) throw new Error("Installed backend version mismatch: " + actual)' "$BACKEND/node_modules/@lvce-editor/server/package.json" "$EDITOR_VERSION"
     "$RUNTIME/bin/node" -e 'require("fs").writeFileSync(process.argv[1], JSON.stringify({serverVersion: process.argv[2]}))' "$SERVER_TMP/remote-ssh-installation.json" "$SERVER_VERSION"
   fi

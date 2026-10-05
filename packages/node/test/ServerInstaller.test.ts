@@ -252,6 +252,9 @@ void test(
     const prefix = args[args.indexOf('--prefix') + 1];
     fs.appendFileSync(process.env.INSTALL_LOG, version + '\\n');
     fs.writeFileSync(path.join(prefix, 'node_modules/@lvce-editor/server/package.json'), JSON.stringify({ version }));
+    const staticRoot = path.join(prefix, 'node_modules/@lvce-editor/static-server/static');
+    fs.rmSync(staticRoot, { recursive: true, force: true });
+    fs.mkdirSync(path.join(staticRoot, version, 'extensions'), { recursive: true });
   `,
     )
     const backend = path.join(
@@ -269,6 +272,30 @@ void test(
     await writeFile(
       path.join(source, 'lvce-remote-ssh-server.mjs'),
       "if (process.argv[2] === 'version') process.stdout.write('ok\\n')",
+    )
+    const extensions = path.join(
+      source,
+      'lvce-server',
+      'extensions',
+      'builtin.git',
+    )
+    await mkdir(extensions, { recursive: true })
+    await writeFile(
+      path.join(extensions, 'extension.json'),
+      JSON.stringify({ id: 'builtin.git' }),
+    )
+    await mkdir(
+      path.join(
+        source,
+        'lvce-server',
+        'node_modules',
+        '@lvce-editor',
+        'static-server',
+        'static',
+        'old',
+        'extensions',
+      ),
+      { recursive: true },
     )
     const nodeArchive = path.join(directory, 'node.tar.gz')
     const serverArchive = path.join(directory, 'server.tar.gz')
@@ -321,6 +348,18 @@ void test(
         ),
       )
       strictEqual(installed.version, '0.120.10')
+      const restoredGit = JSON.parse(
+        await readFile(
+          path.join(
+            serverRoot,
+            manifest.serverVersion,
+            'lvce-server/node_modules/@lvce-editor/static-server/static/0.120.10/extensions/builtin.git/extension.json',
+          ),
+          'utf8',
+        ),
+      )
+      strictEqual(restoredGit.id, 'builtin.git')
+
       await runShell(createInstallScript(manifest), env)
       strictEqual(await readFile(installLog, 'utf8'), '0.120.10\n')
       const { rejects } = await import('node:assert/strict')
