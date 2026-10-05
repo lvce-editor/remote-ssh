@@ -909,6 +909,22 @@ const runRealSshTest = async () => {
     }
 
     await verifyHttpPortForwarding(sshServer, remoteArtifacts, homeRoot)
+    const installedBackend = JSON.parse(
+      await readFile(
+        join(
+          remoteRoot,
+          'servers',
+          prepared.installationVersion,
+          'lvce-server/node_modules/@lvce-editor/server/package.json',
+        ),
+        'utf8',
+      ),
+    )
+    expect(installedBackend.version).toBe(prepared.frontendVersion)
+    // The forwarding client still uses the older bootstrap installation.
+    await access(
+      join(remoteRoot, 'servers', 'dev', 'lvce-remote-ssh-server.mjs'),
+    )
 
     const localServiceSockets = socketUrls.filter((url) =>
       ['/websocket/shared-process', '/websocket/file-system-process'].includes(

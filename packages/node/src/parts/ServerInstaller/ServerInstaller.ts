@@ -245,6 +245,11 @@ if [ ! -f "$SERVER/lvce-remote-ssh-server.mjs" ]; then
     BACKEND="$SERVER_TMP/lvce-server"
     CURRENT_VERSION="$("$RUNTIME/bin/node" -p "JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8')).version" "$BACKEND/node_modules/@lvce-editor/server/package.json")"
     if [ "$CURRENT_VERSION" != "$EDITOR_VERSION" ]; then
+      # npm can replace native packages even when their version is unchanged.
+      # Retain the verified node-pty build for this private Node runtime.
+      if [ -f "$BACKEND/node_modules/node-pty/build/Release/pty.node" ]; then
+        cp -R "$BACKEND/node_modules/node-pty" "$SERVER_TMP/native-node-pty"
+      fi
       # npm verifies registry integrity; install exact coordinated server dependencies.
       # Keep the verified bootstrap and its builtin extension overrides.
       : > "$BACKEND/.npmrc-user"
@@ -254,6 +259,10 @@ if [ ! -f "$SERVER/lvce-remote-ssh-server.mjs" ]; then
         --no-audit --no-fund --package-lock=false \
         --userconfig="$BACKEND/.npmrc-user" --globalconfig="$BACKEND/.npmrc-global" \
         --registry=https://registry.npmjs.org "@lvce-editor/server@$EDITOR_VERSION"
+    fi
+    if [ -d "$SERVER_TMP/native-node-pty" ]; then
+      "$RUNTIME/bin/node" -e 'const fs = require("fs"), path = require("path"); const original = process.argv[1], target = process.argv[2]; const version = (root) => JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")).version; if (version(original) !== version(target)) throw new Error("Matching backend requires a different native terminal build"); fs.cpSync(path.join(original, "build"), path.join(target, "build"), {recursive: true})' "$SERVER_TMP/native-node-pty" "$BACKEND/node_modules/node-pty"
+      rm -rf "$SERVER_TMP/native-node-pty"
     fi
     # The server resolves node extensions through its matching static-server bundle.
     # Restore the verified bootstrap Git override after npm replaces that bundle.

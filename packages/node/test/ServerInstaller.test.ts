@@ -252,6 +252,10 @@ void test(
     const prefix = args[args.indexOf('--prefix') + 1];
     fs.appendFileSync(process.env.INSTALL_LOG, version + '\\n');
     fs.writeFileSync(path.join(prefix, 'node_modules/@lvce-editor/server/package.json'), JSON.stringify({ version }));
+    const native = path.join(prefix, 'node_modules/node-pty');
+    fs.rmSync(native, { recursive: true, force: true });
+    fs.mkdirSync(native, { recursive: true });
+    fs.writeFileSync(path.join(native, 'package.json'), JSON.stringify({ version: '1.1.0' }));
     const staticRoot = path.join(prefix, 'node_modules/@lvce-editor/static-server/static');
     fs.rmSync(staticRoot, { recursive: true, force: true });
     fs.mkdirSync(path.join(staticRoot, version, 'extensions'), { recursive: true });
@@ -272,6 +276,16 @@ void test(
     await writeFile(
       path.join(source, 'lvce-remote-ssh-server.mjs'),
       "if (process.argv[2] === 'version') process.stdout.write('ok\\n')",
+    )
+    const native = path.join(source, 'lvce-server', 'node_modules', 'node-pty')
+    await mkdir(path.join(native, 'build', 'Release'), { recursive: true })
+    await writeFile(
+      path.join(native, 'package.json'),
+      JSON.stringify({ version: '1.1.0' }),
+    )
+    await writeFile(
+      path.join(native, 'build', 'Release', 'pty.node'),
+      'verified-native-build',
     )
     const extensions = path.join(
       source,
@@ -348,6 +362,18 @@ void test(
         ),
       )
       strictEqual(installed.version, '0.120.10')
+      strictEqual(
+        await readFile(
+          path.join(
+            serverRoot,
+            manifest.serverVersion,
+            'lvce-server/node_modules/node-pty/build/Release/pty.node',
+          ),
+          'utf8',
+        ),
+        'verified-native-build',
+      )
+
       const restoredGit = JSON.parse(
         await readFile(
           path.join(
