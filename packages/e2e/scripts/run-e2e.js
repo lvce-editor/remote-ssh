@@ -832,7 +832,7 @@ const runRealSshTest = async () => {
       { delay: 20 },
     )
     await page.keyboard.press('Enter')
-    await expect(terminal).toContainText('REMOTE_CLI_VERSION:dev', {
+    await expect(terminal).toContainText('REMOTE_CLI_VERSION:0.120.9', {
       timeout: 30_000,
     })
 
