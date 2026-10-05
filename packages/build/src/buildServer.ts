@@ -136,14 +136,6 @@ export const buildServer = async () => {
   const manifestPath = path.join(root, manifestName)
   await rm(serverBuildDirectory, { force: true, recursive: true })
   await mkdir(serverBuildDirectory, { recursive: true })
-  await bundleJs({
-    define: {
-      __LVCE_REMOTE_SSH_SERVER_VERSION__: JSON.stringify(version),
-    },
-    input: path.join(root, 'packages', 'server', 'src', 'remoteSshServer.ts'),
-    outfile: path.join(serverBuildDirectory, serverFileName),
-    platform: 'node',
-  })
   const lvceServerDirectory = path.join(serverBuildDirectory, 'lvce-server')
   await mkdir(lvceServerDirectory, { recursive: true })
   await writeFile(
@@ -164,6 +156,30 @@ export const buildServer = async () => {
       shell: process.platform === 'win32',
     },
   )
+  const installedServerPackage = JSON.parse(
+    await readFile(
+      path.join(
+        lvceServerDirectory,
+        'node_modules',
+        '@lvce-editor',
+        'server',
+        'package.json',
+      ),
+      'utf8',
+    ),
+  ) as { version: string }
+  const installedLvceServerVersion = installedServerPackage.version
+  await bundleJs({
+    define: {
+      __LVCE_REMOTE_SSH_EDITOR_VERSION__: JSON.stringify(
+        installedLvceServerVersion,
+      ),
+      __LVCE_REMOTE_SSH_SERVER_VERSION__: JSON.stringify(version),
+    },
+    input: path.join(root, 'packages', 'server', 'src', 'remoteSshServer.ts'),
+    outfile: path.join(serverBuildDirectory, serverFileName),
+    platform: 'node',
+  })
   await installBuiltinExtensions(serverBuildDirectory, lvceServerDirectory)
   await rm(serverArchivePath, { force: true })
   await execFileAsync('tar', [
@@ -181,7 +197,7 @@ export const buildServer = async () => {
       {
         nodeVersion,
         gitExtensionVersion,
-        lvceServerVersion,
+        lvceServerVersion: installedLvceServerVersion,
         platforms: {
           'linux-x64': {
             node: {
@@ -216,6 +232,9 @@ export const buildServer = async () => {
         JSON.stringify(serverArchiveSha256),
       __LVCE_REMOTE_SSH_SERVER_ARCHIVE_URL__: JSON.stringify(serverArchiveUrl),
       __LVCE_REMOTE_SSH_SERVER_VERSION__: JSON.stringify(version),
+      __LVCE_REMOTE_SSH_EDITOR_VERSION__: JSON.stringify(
+        installedLvceServerVersion,
+      ),
     },
     manifestName,
     manifestPath,

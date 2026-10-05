@@ -18,11 +18,16 @@ import * as RemoteCli from './parts/RemoteCli/RemoteCli.ts'
 import { createRemoteWebGateway } from './RemoteWebGateway.ts'
 
 declare const __LVCE_REMOTE_SSH_SERVER_VERSION__: string
+declare const __LVCE_REMOTE_SSH_EDITOR_VERSION__: string
 
 const protocolVersion = 1
 const serverVersion =
   typeof __LVCE_REMOTE_SSH_SERVER_VERSION__ === 'string'
     ? __LVCE_REMOTE_SSH_SERVER_VERSION__
+    : 'dev'
+const editorVersion =
+  typeof __LVCE_REMOTE_SSH_EDITOR_VERSION__ === 'string'
+    ? __LVCE_REMOTE_SSH_EDITOR_VERSION__
     : 'dev'
 const idleTimeout = Number.parseInt(
   process.env.LVCE_REMOTE_SSH_IDLE_TIMEOUT || String(3 * 60 * 60 * 1000),
@@ -567,7 +572,7 @@ const main = async (): Promise<void> => {
       await connectOrStart()
       return
     case 'cli':
-      await RemoteCli.run(root, serverVersion)
+      await RemoteCli.run(root, serverVersion, editorVersion)
       return
     case 'daemon':
       await runDaemon()

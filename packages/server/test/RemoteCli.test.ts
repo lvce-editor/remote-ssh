@@ -43,13 +43,36 @@ void test('rejects unsupported options and multiple paths', async () => {
   await rejects(resolveOpenRequest(['/home', '/tmp']), /one path/)
 })
 
-void test('prints the remote SSH server version', async () => {
+void test('prints the bundled LVCE Editor version', async () => {
   const output: string[] = []
 
-  await run('/unused', 'v1.2.3', ['-v'], (value) => output.push(value))
+  await run('/unused', 'v0.14.0', '0.120.9', ['-v'], (value) =>
+    output.push(value),
+  )
 
-  deepStrictEqual(output, ['v1.2.3\n'])
+  deepStrictEqual(output, ['0.120.9\n'])
 })
+
+void test(
+  'uses the remote SSH artifact version to route open requests',
+  { skip: isWindows },
+  async (context) => {
+    const root = await mkdtemp(path.join(tmpdir(), 'lvce-remote-cli-version-'))
+    const requests: unknown[] = []
+    const server = await listen(root, 'v0.14.0', (request) => {
+      requests.push(request)
+      return true
+    })
+    context.after(async () => {
+      await close(server, root, 'v0.14.0')
+      await rm(root, { force: true, recursive: true })
+    })
+
+    await run(root, 'v0.14.0', '0.120.9', [root])
+
+    deepStrictEqual(requests, [{ kind: 'folder', path: root, type: 'open' }])
+  },
+)
 
 void test(
   'relays validated requests to the connected editor',

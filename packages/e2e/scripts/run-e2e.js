@@ -832,7 +832,7 @@ const runRealSshTest = async () => {
       { delay: 20 },
     )
     await page.keyboard.press('Enter')
-    await expect(terminal).toContainText('REMOTE_CLI_VERSION:dev', {
+    await expect(terminal).toContainText('REMOTE_CLI_VERSION:0.120.9', {
       timeout: 30_000,
     })
 
@@ -902,6 +902,7 @@ const runRealSshTest = async () => {
     await expect(
       page.locator('.TreeItem[aria-label="opened-by-remote-cli.txt"]'),
     ).toBeVisible({ timeout: 30_000 })
+    await page.locator('.PanelTab[name="Terminals"]').click()
     await expect(terminal).toContainText('REMOTE_CLI_EXIT:0', {
       timeout: 30_000,
     })
