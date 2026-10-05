@@ -902,6 +902,7 @@ const runRealSshTest = async () => {
     await expect(
       page.locator('.TreeItem[aria-label="opened-by-remote-cli.txt"]'),
     ).toBeVisible({ timeout: 30_000 })
+    await page.locator('.PanelTab[name="Terminals"]').click()
     await expect(terminal).toContainText('REMOTE_CLI_EXIT:0', {
       timeout: 30_000,
     })
