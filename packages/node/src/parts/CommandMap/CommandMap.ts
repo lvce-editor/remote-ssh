@@ -1,6 +1,7 @@
 import * as SshConfigHosts from '../SshConfigHosts/SshConfigHosts.ts'
 import * as SshFileSystem from '../SshFileSystem/SshFileSystem.ts'
 import * as SshProcessRegistry from '../SshProcessRegistry/SshProcessRegistry.ts'
+import * as SshWorkspace from '../SshWorkspace/SshWorkspace.ts'
 
 export const commandMap = {
   'RemoteSsh.dispose': SshProcessRegistry.dispose,
@@ -11,6 +12,11 @@ export const commandMap = {
   'SshFileSystem.readFile': SshFileSystem.readFile,
   'SshFileSystem.remove': SshFileSystem.remove,
   'SshFileSystem.rename': SshFileSystem.rename,
+  'SshFileSystem.stat': SshFileSystem.stat,
   'SshFileSystem.waitForOpenRequest': SshFileSystem.waitForOpenRequest,
   'SshFileSystem.writeFile': SshFileSystem.writeFile,
+  'SshWorkspace.forwardPort': SshWorkspace.forwardPort,
+  'SshWorkspace.getForwardedPorts': SshWorkspace.getForwardedPorts,
+  'SshWorkspace.request': SshWorkspace.request,
+  'SshWorkspace.stopForwardPort': SshWorkspace.stopForwardPort,
 }

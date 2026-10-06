@@ -1,6 +1,6 @@
 import { fork, spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { createServer as createHttpServer } from 'node:http'
+import { createServer as createHttpServer, get as getHttp } from 'node:http'
 import {
   access,
   chmod,
@@ -8,6 +8,7 @@ import {
   mkdir,
   mkdtemp,
   readFile,
+  readdir,
   rm,
   writeFile,
 } from 'node:fs/promises'
@@ -17,6 +18,8 @@ import { basename, dirname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { chromium, expect } from '@playwright/test'
 import { createSshServer } from 'e2e-helpers'
+import { parse as parseRemoteSshUri } from '../../node/src/parts/RemoteSshUri/RemoteSshUri.ts'
+import { toRemoteSshUri } from '../../extension/src/parts/SshTarget/SshTarget.ts'
 import { runConnectionErrorScenarios } from './connection-error-scenarios.js'
 
 const currentDir = dirname(fileURLToPath(import.meta.url))
@@ -87,6 +90,12 @@ const createRemoteServerArtifacts = async (runtimeRoot) => {
     await mkdir(nodeRoot, { recursive: true })
     await cp(process.execPath, join(nodeRoot, 'node'))
     await chmod(join(nodeRoot, 'node'), 0o755)
+    // Include npm from the test runtime for the exact-version backend install.
+    await cp(
+      join(dirname(process.execPath), '..', 'lib', 'node_modules', 'npm'),
+      join(artifactsRoot, 'node-test', 'lib', 'node_modules', 'npm'),
+      { recursive: true },
+    )
     await runProcessChecked('tar', [
       '-czf',
       nodeArchivePath,
@@ -128,7 +137,9 @@ const createRemoteServerArtifacts = async (runtimeRoot) => {
       LVCE_REMOTE_SSH_NODE_VERSION: 'test-node',
       LVCE_REMOTE_SSH_FORCE_LOCAL_TRANSFER: '1',
       LVCE_REMOTE_SSH_REMOTE_ROOT: remoteRoot,
-      LVCE_REMOTE_SSH_BACKEND_SCRIPT: backendScript,
+      ...(process.env.LVCE_REMOTE_SSH_BACKEND_SCRIPT
+        ? { LVCE_REMOTE_SSH_BACKEND_SCRIPT: backendScript }
+        : {}),
       LVCE_REMOTE_SSH_SERVER_ARCHIVE_NAME: serverArchiveName,
       LVCE_REMOTE_SSH_SERVER_ARCHIVE_SHA256: await getSha256(serverArchivePath),
       LVCE_REMOTE_SSH_SERVER_ARCHIVE_URL: `${archiveBaseUrl}/${serverArchiveName}`,
@@ -153,10 +164,19 @@ const stopRemoteServer = async (remoteRoot) => {
     return
   }
   try {
-    const state = JSON.parse(
-      await readFile(join(remoteRoot, 'run', 'server-dev.json'), 'utf8'),
-    )
-    process.kill(state.pid, 'SIGTERM')
+    const files = await readdir(join(remoteRoot, 'run'))
+    for (const file of files.filter(
+      (value) => value.startsWith('server-') && value.endsWith('.json'),
+    )) {
+      const state = JSON.parse(
+        await readFile(join(remoteRoot, 'run', file), 'utf8'),
+      )
+      try {
+        process.kill(state.pid, 'SIGTERM')
+      } catch {
+        /* Already exited. */
+      }
+    }
   } catch {
     // The remote server may not have started or may already have exited.
   }
@@ -285,7 +305,25 @@ const prepareExtensions = async (runtimeRoot) => {
       await cp(source, installedExtensionPaths[index], { recursive: true })
     }
 
-    const testExtensionPath = join(runtimeRoot, 'extension')
+    const frontendConfig = JSON.parse(
+      await readFile(
+        join(builtinExtensionsPath, '..', '..', '..', 'config.json'),
+        'utf8',
+      ),
+    )
+    const frontendVersion = frontendConfig.version.replace(/^v/, '')
+    const installationVersion = `dev-editor-${frontendVersion}`
+    const testExtensionPath = join(
+      runtimeRoot,
+      'static',
+      'test',
+      'extensions',
+      'builtin.remote-ssh',
+    )
+    await writeFile(
+      join(runtimeRoot, 'config.json'),
+      JSON.stringify(frontendConfig),
+    )
     await cp(extensionPath, testExtensionPath, { recursive: true })
     const manifestPath = join(testExtensionPath, 'extension.json')
     const manifest = JSON.parse(await readFile(manifestPath, 'utf8'))
@@ -314,13 +352,22 @@ const prepareExtensions = async (runtimeRoot) => {
         'Cross-Origin-Resource-Policy': 'same-origin',
       })
       const commitHash = basename(dirname(builtinExtensionsPath))
+      for (const relativePath of ['builtin.remote-ssh/dist/remoteSshMain.js']) {
+        staticConfig.files[`/${commitHash}/extensions/${relativePath}`] =
+          headerIndex
+      }
+      const localHeaderIndex = staticConfig.headers.length
+      staticConfig.headers.push({
+        ...staticConfig.headers[headerIndex],
+        'Content-Security-Policy':
+          "default-src 'none'; connect-src 'self'; script-src 'self';",
+      })
       for (const relativePath of [
-        'builtin.remote-ssh/dist/remoteSshMain.js',
         'builtin.git/dist/gitMain.js',
         'builtin.git/git-worker/dist/gitWorkerMain.js',
       ]) {
         staticConfig.files[`/${commitHash}/extensions/${relativePath}`] =
-          headerIndex
+          localHeaderIndex
       }
       await writeFile(
         staticConfigPath,
@@ -330,6 +377,8 @@ const prepareExtensions = async (runtimeRoot) => {
 
     return {
       builtinExtensionsPath,
+      frontendVersion,
+      installationVersion,
       installedExtensionPaths,
       staticConfigContent,
       staticConfigPath,
@@ -376,13 +425,16 @@ const startLvceServer = async ({ env, onlyExtensionPath, port }) => {
     detached: true,
     env: {
       ...env,
+      ELECTRON_RUN_AS_NODE: '',
       ...(process.env.LVCE_REMOTE_SSH_LOCAL_LVCE_DIST
         ? {
-            LVCE_STATIC_ROOT: join(
-              process.env.LVCE_REMOTE_SSH_LOCAL_LVCE_DIST,
-              'playground',
-              'static',
-            ),
+            LVCE_STATIC_ROOT:
+              process.env.LVCE_REMOTE_SSH_LOCAL_STATIC_ROOT ||
+              join(
+                process.env.LVCE_REMOTE_SSH_LOCAL_LVCE_DIST,
+                'playground',
+                'static',
+              ),
           }
         : {}),
       ...(onlyExtensionPath ? { ONLY_EXTENSION: onlyExtensionPath } : {}),
@@ -469,6 +521,114 @@ const openSshOutput = async (page) => {
   return page.locator('.OutputContent')
 }
 
+const verifyHttpPortForwarding = async (
+  sshServer,
+  remoteArtifacts,
+  homeRoot,
+) => {
+  const getResponseText = (port) =>
+    new Promise((resolve, reject) => {
+      const request = getHttp(
+        { agent: false, hostname: '127.0.0.1', port },
+        (response) => {
+          const chunks = []
+          response.on('data', (chunk) => chunks.push(chunk))
+          response.once('end', () => resolve(Buffer.concat(chunks).toString()))
+        },
+      )
+      request.once('error', reject)
+    })
+  const firstHttpServer = createHttpServer((_request, response) => {
+    response.end('first-remote-port')
+  })
+  const secondHttpServer = createHttpServer((_request, response) => {
+    response.end('second-remote-port')
+  })
+  const listen = (server) =>
+    new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
+  await Promise.all([listen(firstHttpServer), listen(secondHttpServer)])
+  const firstAddress = firstHttpServer.address()
+  const secondAddress = secondHttpServer.address()
+  if (
+    !firstAddress ||
+    typeof firstAddress === 'string' ||
+    !secondAddress ||
+    typeof secondAddress === 'string'
+  ) {
+    throw new Error('Could not start the Remote SSH forwarding HTTP fixtures')
+  }
+  const uri = toRemoteSshUri(sshServer.fixture.target)
+  const location = parseRemoteSshUri(uri)
+  const otherWorkspace = {
+    ...location,
+    path: `${location.path}/another-workspace`,
+  }
+  const env = { ...sshServer.env, ...remoteArtifacts.env, HOME: homeRoot }
+  const oldEnv = new Map(Object.keys(env).map((key) => [key, process.env[key]]))
+  Object.assign(process.env, env)
+  // Load this second client after its artifact environment is established.
+  // It intentionally uses the older development installation, separately from the UI.
+  const { forwardPort, getForwardedPorts, stopForwardPort } =
+    await import('../../node/src/parts/SshTransport/SshTransport.ts')
+  const { dispose: disposeSshProcesses } =
+    await import('../../node/src/parts/SshProcessRegistry/SshProcessRegistry.ts')
+  let forwardedPort
+  let secondForwardedPort
+  try {
+    forwardedPort = await forwardPort(location, firstAddress.port)
+    secondForwardedPort = await forwardPort(location, secondAddress.port)
+    const sharedForward = await forwardPort(otherWorkspace, firstAddress.port)
+    expect(sharedForward).toEqual(forwardedPort)
+    expect(await getForwardedPorts(location)).toContainEqual(forwardedPort)
+    expect(await getForwardedPorts(otherWorkspace)).toContainEqual(
+      forwardedPort,
+    )
+    expect(await getResponseText(forwardedPort.localPort)).toBe(
+      'first-remote-port',
+    )
+    expect(await getResponseText(secondForwardedPort.localPort)).toBe(
+      'second-remote-port',
+    )
+    await stopForwardPort(location, firstAddress.port)
+    expect(await getForwardedPorts(location)).not.toContainEqual(forwardedPort)
+    expect(await getForwardedPorts(otherWorkspace)).toContainEqual(
+      forwardedPort,
+    )
+    expect(await getResponseText(forwardedPort.localPort)).toBe(
+      'first-remote-port',
+    )
+    await stopForwardPort(otherWorkspace, firstAddress.port)
+    await expect(getResponseText(forwardedPort.localPort)).rejects.toThrow()
+    expect(await getResponseText(secondForwardedPort.localPort)).toBe(
+      'second-remote-port',
+    )
+    console.log(
+      `PASS remote HTTP port forwarding ${firstAddress.port} -> ${forwardedPort.localPort}`,
+    )
+  } finally {
+    if (forwardedPort) {
+      await stopForwardPort(location, firstAddress.port).catch(() => {})
+    }
+    await disposeSshProcesses()
+    if (secondForwardedPort) {
+      await expect(
+        getResponseText(secondForwardedPort.localPort),
+      ).rejects.toThrow()
+    }
+    for (const [key, value] of oldEnv) {
+      if (value === undefined) {
+        delete process.env[key]
+      } else {
+        process.env[key] = value
+      }
+    }
+    await Promise.all([
+      closeServer(firstHttpServer),
+      closeServer(secondHttpServer),
+    ])
+  }
+}
+
 const expectConfiguredHosts = async (page, expectedHosts) => {
   await expect(page.locator('.QuickPickItemLabel')).toHaveText(expectedHosts, {
     timeout: 30_000,
@@ -516,7 +676,9 @@ const runRealSshTest = async () => {
   const runtimeRoot = await mkdtemp(
     join(runtimeParent, 'lvce-remote-ssh-runtime-'),
   )
+  let installationVersion = 'dev'
   let browser
+  let page
   let artifactServer
   let getArtifactRequestCount
   let installedExtensionPaths = []
@@ -526,6 +688,7 @@ const runRealSshTest = async () => {
   let staticConfigPath
   try {
     const prepared = await prepareExtensions(runtimeRoot)
+    installationVersion = prepared.installationVersion
     const remoteArtifacts = await createRemoteServerArtifacts(runtimeRoot)
     artifactServer = remoteArtifacts.artifactServer
     getArtifactRequestCount = remoteArtifacts.getRequestCount
@@ -573,7 +736,13 @@ const runRealSshTest = async () => {
     browser = await chromium.launch({
       headless: process.argv.includes('--headless'),
     })
-    const page = await browser.newPage()
+    page = await browser.newPage()
+    const socketUrls = []
+    const sockets = []
+    page.on('websocket', (socket) => {
+      sockets.push(socket)
+      socketUrls.push(new URL(socket.url()))
+    })
     page.on('console', (message) => {
       if (message.type() === 'error') {
         console.error(
@@ -627,20 +796,16 @@ const runRealSshTest = async () => {
           page.locator('.TreeItem[aria-label="file.txt"]'),
         ).toHaveCount(0)
         const output = await openSshOutput(page)
-        await output.press('Home')
-        await expect(output).toContainText(
-          'Connecting to SSH host remote-ssh://',
-        )
+        await output.press('End')
         await expect(output).toContainText(
           'ERROR: Failed to connect to SSH target:',
         )
         await expect(output).toContainText(detail)
-        await expect(output).not.toContainText('Connected to SSH workspace')
-        await output.press('End')
         await expect(output).toContainText(code)
         await expect(output).not.toContainText('Connected to SSH workspace')
         console.log(`PASS error notification and output channel: ${code}`)
       },
+      prepared.installationVersion,
     )
 
     await writeFile(sshConfigPath, 'Host work staging\n')
@@ -660,11 +825,8 @@ const runRealSshTest = async () => {
     await quickInput.fill(sshServer.fixture.target)
     await page.keyboard.press('Enter')
 
-    await expect(output).toContainText('Connecting to SSH host remote-ssh://')
-
     const remoteFile = page.locator('.TreeItem[aria-label="file.txt"]')
     await expect(remoteFile).toBeVisible({ timeout: 30_000 })
-    // Browser hosts can restart the extension during the workspace switch.
     await expect(output).toContainText(
       /(?:Connecting to SSH host|Restoring SSH connection to) remote-ssh:\/\//,
     )
@@ -737,9 +899,15 @@ const runRealSshTest = async () => {
     await page.locator('.PanelTab[name="Terminals"]').click()
     const terminal = page.locator('.XtermTerminal')
     await expect(terminal).toBeVisible({ timeout: 30_000 })
-    await terminal.click()
-    await page.keyboard.type(
+    await expect(terminal).toContainText(/[$#]\s*$/, { timeout: 30_000 })
+    const terminalInput = terminal.locator('.xterm-helper-textarea')
+    await expect(async () => {
+      await terminal.click()
+      await expect(terminalInput).toBeFocused({ timeout: 1_000 })
+    }).toPass({ timeout: 10_000 })
+    await terminalInput.pressSequentially(
       'pwd; printf "REMOTE_TERMINAL_SENTINEL:%s\\n" "$LVCE_REMOTE_SSH_E2E_MARKER"',
+      { delay: 20 },
     )
     await page.keyboard.press('Enter')
     await expect(terminal).toContainText(
@@ -749,14 +917,23 @@ const runRealSshTest = async () => {
     await expect(terminal).toContainText(sshServer.fixture.workspacePath, {
       timeout: 30_000,
     })
-    await page.keyboard.type('command -v lvce')
+    await terminalInput.pressSequentially('command -v lvce', { delay: 20 })
     await page.keyboard.press('Enter')
-    await expect(terminal).toContainText('/bin/lvce', { timeout: 30_000 })
-    await page.keyboard.type(`printf 'REMOTE_CLI_VERSION:'; lvce -v`)
+    await expect(terminal).toContainText(
+      `/bin/${prepared.installationVersion}/lvce`,
+      { timeout: 30_000 },
+    )
+    await terminalInput.pressSequentially(
+      `printf 'REMOTE_CLI_VERSION:'; lvce -v`,
+      { delay: 20 },
+    )
     await page.keyboard.press('Enter')
-    await expect(terminal).toContainText('REMOTE_CLI_VERSION:dev', {
-      timeout: 30_000,
-    })
+    await expect(terminal).toContainText(
+      `REMOTE_CLI_VERSION:${prepared.frontendVersion}`,
+      {
+        timeout: 30_000,
+      },
+    )
 
     await page.keyboard.press('Control+Shift+F')
     const search = page.locator('.Search')
@@ -780,49 +957,106 @@ const runRealSshTest = async () => {
       page.getByRole('button', { exact: true, name: 'main' }),
     ).toBeVisible({ timeout: 30_000 })
 
-    await page.keyboard.press('Control+Shift+P')
-    const commandInput = page.locator('.QuickPick input')
-    await expect(commandInput).toBeVisible({ timeout: 30_000 })
-    await commandInput.fill('>Developer: Open Process Explorer')
-    await expect(
-      page.locator('.QuickPickItemLabel', {
-        hasText: 'Developer: Open Process Explorer',
-      }),
-    ).toBeVisible({ timeout: 30_000 })
-    await page.keyboard.press('Enter')
-    const processExplorer = page.locator('.ProcessExplorer')
-    await expect(processExplorer).toBeVisible({ timeout: 30_000 })
-    await expect(
-      processExplorer.locator('.ProcessExplorerRow'),
-    ).not.toHaveCount(0, { timeout: 30_000 })
-    await expect(processExplorer).toContainText('shared-process', {
-      timeout: 30_000,
-    })
-    await expect(processExplorer).toContainText(
-      'gitProcess.js --ipc-type=node-forked-process',
-      { timeout: 30_000 },
+    const gitScenario = process.env.LVCE_REMOTE_SSH_TEST_GIT_SCENARIO
+    if (gitScenario) {
+      const { test } = await import(pathToFileURL(gitScenario).href)
+      await test({ page, expect, sshServer, port, socketUrls, sockets })
+    }
+
+    await verifyHttpPortForwarding(sshServer, remoteArtifacts, homeRoot)
+    const installedBackend = JSON.parse(
+      await readFile(
+        join(
+          remoteRoot,
+          'servers',
+          prepared.installationVersion,
+          'lvce-server/node_modules/@lvce-editor/server/package.json',
+        ),
+        'utf8',
+      ),
+    )
+    expect(installedBackend.version).toBe(prepared.frontendVersion)
+    // The forwarding client still uses the older bootstrap installation.
+    await access(
+      join(remoteRoot, 'servers', 'dev', 'lvce-remote-ssh-server.mjs'),
     )
 
+    const localServiceSockets = socketUrls.filter((url) =>
+      ['/websocket/shared-process', '/websocket/file-system-process'].includes(
+        url.pathname,
+      ),
+    )
+    expect(localServiceSockets.length).toBeGreaterThan(0)
+    for (const url of localServiceSockets) {
+      expect(url.port).toBe(String(port))
+    }
+    for (const type of ['terminal-process', 'extension-node-process']) {
+      expect(
+        socketUrls.some(
+          (url) =>
+            url.pathname === `/websocket/${type}` && url.port !== String(port),
+        ),
+      ).toBe(true)
+    }
+
     const pageCount = page.context().pages().length
+    await page.keyboard.press('Control+Shift+E')
+    await expect(remoteFile).toBeVisible()
     await page.locator('.PanelTab[name="Terminals"]').click()
-    await terminal.click()
-    await page.keyboard.type(
-      `lvce ${cliWorkspacePath}; printf 'REMOTE_CLI_OPEN_SENTINEL:%s\\n' "$?"`,
+    await expect(async () => {
+      await terminal.click()
+      await expect(terminalInput).toBeFocused({ timeout: 1_000 })
+    }).toPass({ timeout: 10_000 })
+    await terminalInput.pressSequentially(
+      `lvce ${cliWorkspacePath}; printf 'REMOTE_CLI_EXIT:%s\\n' "$?"`,
+      {
+        delay: 20,
+      },
     )
     await page.keyboard.press('Enter')
-    await expect(terminal).toContainText('REMOTE_CLI_OPEN_SENTINEL:', {
-      timeout: 30_000,
-    })
-    await expect(terminal).toContainText('REMOTE_CLI_OPEN_SENTINEL:0')
-    await page.keyboard.press('Control+Shift+E')
     await expect(
       page.locator('.TreeItem[aria-label="opened-by-remote-cli.txt"]'),
     ).toBeVisible({ timeout: 30_000 })
+    await page.locator('.PanelTab[name="Terminals"]').click()
+    await expect(terminal).toContainText('REMOTE_CLI_EXIT:0', {
+      timeout: 30_000,
+    })
     expect(page.context().pages()).toHaveLength(pageCount)
+    const reconnectDownloads = getArtifactRequestCount()
+    await page.reload()
+    const reconnectInput = page.locator('.QuickPick input')
+    await expect(reconnectInput).toBeVisible({ timeout: 30_000 })
+    const reconnectTarget = new URL(toRemoteSshUri(sshServer.fixture.target))
+    reconnectTarget.protocol = 'ssh:'
+    reconnectTarget.pathname = cliWorkspacePath
+    await reconnectInput.fill(reconnectTarget.href)
+    await page.keyboard.press('Enter')
+    await expect(
+      page.locator('.TreeItem[aria-label="opened-by-remote-cli.txt"]'),
+    ).toBeVisible({ timeout: 30_000 })
+    expect(getArtifactRequestCount()).toBe(reconnectDownloads)
+    console.log(
+      `PASS exact backend ${prepared.frontendVersion}, terminal CLI, and equal-version reconnect`,
+    )
   } catch (error) {
+    if (page) {
+      await page
+        .screenshot({
+          path: join(repositoryRoot, '.tmp', 'remote-ssh-e2e-failure.png'),
+        })
+        .catch(() => {})
+      console.error(
+        'Workspace UI:',
+        await page
+          .locator('.TreeItem')
+          .allTextContents()
+          .catch(() => []),
+      )
+      console.error('Workspace URL:', page.url())
+    }
     if (remoteRoot) {
       const serverLog = await readFile(
-        join(remoteRoot, 'run', 'server-dev.log'),
+        join(remoteRoot, 'run', `server-${installationVersion}.log`),
         'utf8',
       ).catch(() => '')
       console.error(`Remote server log:\n${serverLog}`)

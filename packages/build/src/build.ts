@@ -1,9 +1,8 @@
 import { packageExtension } from '@lvce-editor/package-extension'
-import * as esbuild from 'esbuild'
 import fs from 'node:fs'
 import path from 'node:path'
 import { buildServer } from './buildServer.ts'
-import { getRemoteSshProcessBuildOptions } from './getRemoteSshProcessBuildOptions.ts'
+import { bundleJs } from './bundleJs.ts'
 import { root } from './root.ts'
 
 const extension = path.join(root, 'packages', 'extension')
@@ -30,45 +29,31 @@ fs.copyFileSync(
 
 const server = await buildServer()
 
-await esbuild.build({
-  bundle: true,
-  entryPoints: [path.join(extension, 'src', 'remoteSshMain.ts')],
-  external: ['electron', 'node:*'],
-  format: 'esm',
+await bundleJs({
+  input: path.join(extension, 'src', 'remoteSshMain.ts'),
   outfile: path.join(bundleDirectory, 'remoteSshMain.js'),
   platform: 'browser',
-  target: 'esnext',
 })
 
-await esbuild.build({
-  bundle: true,
-  entryPoints: [path.join(webExtension, 'src', 'remoteServerMain.ts')],
-  external: ['electron', 'node:*'],
-  format: 'esm',
+await bundleJs({
+  input: path.join(webExtension, 'src', 'remoteServerMain.ts'),
   outfile: path.join(webBundleDirectory, 'remoteServerMain.js'),
   platform: 'browser',
-  target: 'esnext',
 })
 
-await esbuild.build({
-  bundle: true,
+await bundleJs({
   define: server.define,
-  entryPoints: [
-    path.join(root, 'packages', 'node', 'src', 'remoteSshClient.ts'),
-  ],
-  external: ['electron', 'node:*'],
-  format: 'esm',
+  input: path.join(root, 'packages', 'node', 'src', 'remoteSshClient.ts'),
   outfile: path.join(bundleDirectory, 'remoteSshClient.js'),
   platform: 'node',
-  target: 'node22',
 })
 
-await esbuild.build(
-  getRemoteSshProcessBuildOptions({
-    define: server.define,
-    outdir: bundleDirectory,
-  }),
-)
+await bundleJs({
+  define: server.define,
+  input: path.join(root, 'packages', 'node', 'src', 'remoteSshProcess.ts'),
+  outfile: path.join(bundleDirectory, 'remoteSshProcess.js'),
+  platform: 'node',
+})
 
 await packageExtension({
   highestCompression: true,

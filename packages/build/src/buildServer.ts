@@ -1,4 +1,3 @@
-import * as esbuild from 'esbuild'
 import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { brotliDecompressSync } from 'node:zlib'
@@ -13,6 +12,7 @@ import {
 } from 'node:fs/promises'
 import path from 'node:path'
 import { promisify } from 'node:util'
+import { bundleJs } from './bundleJs.ts'
 import { root } from './root.ts'
 
 const execFileAsync = promisify(execFile)
@@ -22,10 +22,10 @@ export const nodeArchiveName = `node-${nodeVersion}-linux-x64.tar.gz`
 export const nodeArchiveSha256 =
   '44836872d9aec49f1e6b52a9a922872db9a2b02d235a616a5681b6a85fec8d89'
 export const nodeArchiveUrl = `https://nodejs.org/dist/${nodeVersion}/${nodeArchiveName}`
-export const gitExtensionVersion = 'v5.25.1'
+export const gitExtensionVersion = 'v5.31.0'
 export const gitExtensionArchiveName = `git-${gitExtensionVersion}.tar.br`
 export const gitExtensionArchiveSha256 =
-  '8173b1d928d0a21e7d22ce5508b3862e1e6ad06647861f4c6686c188f5cf9264'
+  '888a4ad3d7e040e273e0fbe7132379d9cf7feefcb9707f55725682416cea1db8'
 export const gitExtensionArchiveUrl = `https://github.com/lvce-editor/git/releases/download/${gitExtensionVersion}/${gitExtensionArchiveName}`
 
 const rootPackage = JSON.parse(
@@ -104,16 +104,23 @@ const installBuiltinExtensions = async (
   await cp(staticExtensionsPath, extensionsPath, {
     recursive: true,
   })
-  const archive = await downloadVerified(
-    gitExtensionArchiveUrl,
-    gitExtensionArchiveSha256,
-  )
-  const tarPath = path.join(serverBuildDirectory, 'git-extension.tar')
   const gitPath = path.join(extensionsPath, 'builtin.git')
-  await mkdir(gitPath, { recursive: true })
-  await writeFile(tarPath, brotliDecompressSync(archive))
-  await execFileAsync('tar', ['-xf', tarPath, '-C', gitPath])
-  await rm(tarPath, { force: true })
+  const testGitExtensionPath =
+    process.env.LVCE_REMOTE_SSH_TEST_GIT_EXTENSION_PATH
+  if (testGitExtensionPath) {
+    await rm(gitPath, { recursive: true, force: true })
+    await cp(testGitExtensionPath, gitPath, { recursive: true })
+  } else {
+    const archive = await downloadVerified(
+      gitExtensionArchiveUrl,
+      gitExtensionArchiveSha256,
+    )
+    const tarPath = path.join(serverBuildDirectory, 'git-extension.tar')
+    await mkdir(gitPath, { recursive: true })
+    await writeFile(tarPath, brotliDecompressSync(archive))
+    await execFileAsync('tar', ['-xf', tarPath, '-C', gitPath])
+    await rm(tarPath, { force: true })
+  }
   await cp(gitPath, path.join(staticExtensionsPath, 'builtin.git'), {
     recursive: true,
   })
@@ -129,23 +136,6 @@ export const buildServer = async () => {
   const manifestPath = path.join(root, manifestName)
   await rm(serverBuildDirectory, { force: true, recursive: true })
   await mkdir(serverBuildDirectory, { recursive: true })
-  await esbuild.build({
-    banner: {
-      js: "import { createRequire as __createRequire } from 'node:module'; const require = __createRequire(import.meta.url);",
-    },
-    bundle: true,
-    define: {
-      __LVCE_REMOTE_SSH_SERVER_VERSION__: JSON.stringify(version),
-    },
-    entryPoints: [
-      path.join(root, 'packages', 'server', 'src', 'remoteSshServer.ts'),
-    ],
-    external: ['node:*'],
-    format: 'esm',
-    outfile: path.join(serverBuildDirectory, serverFileName),
-    platform: 'node',
-    target: 'node24',
-  })
   const lvceServerDirectory = path.join(serverBuildDirectory, 'lvce-server')
   await mkdir(lvceServerDirectory, { recursive: true })
   await writeFile(
@@ -166,6 +156,30 @@ export const buildServer = async () => {
       shell: process.platform === 'win32',
     },
   )
+  const installedServerPackage = JSON.parse(
+    await readFile(
+      path.join(
+        lvceServerDirectory,
+        'node_modules',
+        '@lvce-editor',
+        'server',
+        'package.json',
+      ),
+      'utf8',
+    ),
+  ) as { version: string }
+  const installedLvceServerVersion = installedServerPackage.version
+  await bundleJs({
+    define: {
+      __LVCE_REMOTE_SSH_EDITOR_VERSION__: JSON.stringify(
+        installedLvceServerVersion,
+      ),
+      __LVCE_REMOTE_SSH_SERVER_VERSION__: JSON.stringify(version),
+    },
+    input: path.join(root, 'packages', 'server', 'src', 'remoteSshServer.ts'),
+    outfile: path.join(serverBuildDirectory, serverFileName),
+    platform: 'node',
+  })
   await installBuiltinExtensions(serverBuildDirectory, lvceServerDirectory)
   await rm(serverArchivePath, { force: true })
   await execFileAsync('tar', [
@@ -183,7 +197,7 @@ export const buildServer = async () => {
       {
         nodeVersion,
         gitExtensionVersion,
-        lvceServerVersion,
+        lvceServerVersion: installedLvceServerVersion,
         platforms: {
           'linux-x64': {
             node: {
@@ -218,6 +232,9 @@ export const buildServer = async () => {
         JSON.stringify(serverArchiveSha256),
       __LVCE_REMOTE_SSH_SERVER_ARCHIVE_URL__: JSON.stringify(serverArchiveUrl),
       __LVCE_REMOTE_SSH_SERVER_VERSION__: JSON.stringify(version),
+      __LVCE_REMOTE_SSH_EDITOR_VERSION__: JSON.stringify(
+        installedLvceServerVersion,
+      ),
     },
     manifestName,
     manifestPath,

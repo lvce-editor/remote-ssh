@@ -90,11 +90,12 @@ const escapeShell = (value: string): string => {
   return "'" + value.replaceAll("'", "'\\''") + "'"
 }
 
-// cspell:ignore esac
+// cspell:ignore esac userconfig globalconfig
 export const createInstallScript = (manifest: ServerManifest): string => {
   const forceLocalTransfer =
     process.env.LVCE_REMOTE_SSH_FORCE_LOCAL_TRANSFER === '1' ? '1' : '0'
   const values = {
+    editorVersion: escapeShell(manifest.editorVersion || ''),
     nodeArchiveName: escapeShell(manifest.nodeArchiveName),
     nodeArchiveSha256: escapeShell(manifest.nodeArchiveSha256),
     nodeArchiveUrl: escapeShell(manifest.nodeArchiveUrl),
@@ -109,6 +110,7 @@ export const createInstallScript = (manifest: ServerManifest): string => {
     ? escapeShell(configuredRoot)
     : '"$HOME/.lvce-server"'
   return `set -eu
+EDITOR_VERSION=${values.editorVersion}
 NODE_ARCHIVE_NAME=${values.nodeArchiveName}
 NODE_SHA256=${values.nodeArchiveSha256}
 NODE_URL=${values.nodeArchiveUrl}
@@ -239,6 +241,35 @@ if [ ! -f "$SERVER/lvce-remote-ssh-server.mjs" ]; then
   rm -rf "$SERVER_TMP"
   mkdir "$SERVER_TMP"
   tar -xzf "$SERVER_ARCHIVE" -C "$SERVER_TMP"
+  if [ -n "$EDITOR_VERSION" ]; then
+    BACKEND="$SERVER_TMP/lvce-server"
+    CURRENT_VERSION="$("$RUNTIME/bin/node" -p "JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8')).version" "$BACKEND/node_modules/@lvce-editor/server/package.json")"
+    if [ "$CURRENT_VERSION" != "$EDITOR_VERSION" ]; then
+      # npm can replace native packages even when their version is unchanged.
+      # Retain the verified node-pty build for this private Node runtime.
+      if [ -f "$BACKEND/node_modules/node-pty/build/Release/pty.node" ]; then
+        cp -R "$BACKEND/node_modules/node-pty" "$SERVER_TMP/native-node-pty"
+      fi
+      # npm verifies registry integrity; install exact coordinated server dependencies.
+      # Keep the verified bootstrap and its builtin extension overrides.
+      : > "$BACKEND/.npmrc-user"
+      : > "$BACKEND/.npmrc-global"
+      "$RUNTIME/bin/node" "$RUNTIME/lib/node_modules/npm/bin/npm-cli.js" install \
+        --prefix "$BACKEND" --save-exact --omit=dev --ignore-scripts \
+        --no-audit --no-fund --package-lock=false \
+        --userconfig="$BACKEND/.npmrc-user" --globalconfig="$BACKEND/.npmrc-global" \
+        --registry=https://registry.npmjs.org "@lvce-editor/server@$EDITOR_VERSION"
+    fi
+    if [ -d "$SERVER_TMP/native-node-pty" ]; then
+      "$RUNTIME/bin/node" -e 'const fs = require("fs"), path = require("path"); const original = process.argv[1], target = process.argv[2]; const version = (root) => JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")).version; if (version(original) !== version(target)) throw new Error("Matching backend requires a different native terminal build"); fs.cpSync(path.join(original, "build"), path.join(target, "build"), {recursive: true})' "$SERVER_TMP/native-node-pty" "$BACKEND/node_modules/node-pty"
+      rm -rf "$SERVER_TMP/native-node-pty"
+    fi
+    # The server resolves node extensions through its matching static-server bundle.
+    # Restore the verified bootstrap Git override after npm replaces that bundle.
+    "$RUNTIME/bin/node" -e 'const fs = require("fs"), path = require("path"); const backend = process.argv[1]; const git = path.join(backend, "extensions/builtin.git"); if (fs.existsSync(git)) { const root = path.join(backend, "node_modules/@lvce-editor/static-server/static"); for (const entry of fs.readdirSync(root, {withFileTypes: true})) { if (!entry.isDirectory()) continue; const extensions = path.join(root, entry.name, "extensions"); if (fs.existsSync(extensions)) fs.cpSync(git, path.join(extensions, "builtin.git"), {recursive: true}); } }' "$BACKEND"
+    "$RUNTIME/bin/node" -e 'const fs = require("fs"); const actual = JSON.parse(fs.readFileSync(process.argv[1], "utf8")).version; if (actual !== process.argv[2]) throw new Error("Installed backend version mismatch: " + actual)' "$BACKEND/node_modules/@lvce-editor/server/package.json" "$EDITOR_VERSION"
+    "$RUNTIME/bin/node" -e 'require("fs").writeFileSync(process.argv[1], JSON.stringify({serverVersion: process.argv[2]}))' "$SERVER_TMP/remote-ssh-installation.json" "$SERVER_VERSION"
+  fi
   "$RUNTIME/bin/node" "$SERVER_TMP/lvce-remote-ssh-server.mjs" version >/dev/null
   rm -rf "$SERVER"
   mv "$SERVER_TMP" "$SERVER"
@@ -247,17 +278,7 @@ fi
 
 rm -f "$NODE_ARCHIVE" "$SERVER_ARCHIVE"
 
-INACTIVE_COUNT=0
-for OLD_SERVER in $(ls -1dt "$ROOT"/servers/* 2>/dev/null || true); do
-  [ -d "$OLD_SERVER" ] || continue
-  OLD_VERSION="$(basename "$OLD_SERVER")"
-  [ "$OLD_VERSION" = "$SERVER_VERSION" ] && continue
-  [ -f "$ROOT/run/server-$OLD_VERSION.json" ] && continue
-  INACTIVE_COUNT=$((INACTIVE_COUNT + 1))
-  if [ "$INACTIVE_COUNT" -gt 5 ]; then
-    rm -rf "$OLD_SERVER"
-  fi
-done
+# Keep older version directories available to older clients that reconnect later.
 printf '${installedMarker}%s\\n' "$SERVER_VERSION"
 `
 }

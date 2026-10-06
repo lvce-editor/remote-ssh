@@ -14,6 +14,7 @@ export interface RemoteServerFileSystem extends FileSystemProvider {
   readonly readFile: (uri: string) => Promise<string>
   readonly remove: (uri: string) => Promise<void>
   readonly rename: (oldUri: string, newUri: string) => Promise<void>
+  readonly stat: (uri: string) => Promise<number>
   readonly writeFile: (uri: string, content: string) => Promise<void>
 }
 
@@ -130,6 +131,9 @@ export const createRemoteServerFileSystem = (
         toFileUri(oldLocation.path),
         toFileUri(newLocation.path),
       )
+    },
+    stat: async (uri): Promise<number> => {
+      return (await invokeFileSystem(invoke, 'FileSystem.stat', uri)) as number
     },
     writeFile: async (uri, content): Promise<void> => {
       requireMutable(uri)

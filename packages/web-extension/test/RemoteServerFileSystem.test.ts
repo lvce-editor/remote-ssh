@@ -36,6 +36,24 @@ test('maps remote server URIs onto backend file URIs', async () => {
   )
 })
 
+test('forwards stat requests and preserves backend errors', async () => {
+  invoke.mockResolvedValueOnce(3)
+
+  await expect(
+    fileSystem.stat('remote-server://remote.example.com/home/test/link'),
+  ).resolves.toBe(3)
+  expect(invoke).toHaveBeenCalledWith(
+    'FileSystem.stat',
+    'file:///home/test/link',
+  )
+
+  const error = new Error('Permission denied')
+  invoke.mockRejectedValueOnce(error)
+  await expect(
+    fileSystem.stat('remote-server://remote.example.com/home/test/secret'),
+  ).rejects.toBe(error)
+})
+
 test('sorts directory entries and normalizes symbolic links', async () => {
   invoke.mockResolvedValueOnce([
     { name: 'z-link', type: 9 },

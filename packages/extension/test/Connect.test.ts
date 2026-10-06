@@ -12,14 +12,14 @@ const log = jest.fn(async (_message: string) => {})
 const connect = (
   ...args: Parameters<typeof connectWithLogging>
 ): Promise<void> => {
-  args[8] = log
+  args[10] = log
   return connectWithLogging(...args)
 }
 
 const restore = (
   ...args: Parameters<typeof restoreWithLogging>
 ): Promise<void> => {
-  args[5] = log
+  args[7] = log
   return restoreWithLogging(...args)
 }
 
@@ -33,57 +33,18 @@ const backend = {
   workspacePath: '/work',
 }
 
-test('uses an extension-owned connection command with a current LVCE host', async () => {
-  const execute = jest
-    .fn<(id: string, ...args: readonly unknown[]) => Promise<unknown>>()
-    .mockResolvedValueOnce(true)
-    .mockResolvedValueOnce(undefined)
-
+test('keeps remote URIs and transport credentials inside the extension', async () => {
+  const execute = jest.fn<
+    (id: string, ...args: readonly unknown[]) => Promise<unknown>
+  >(async () => {})
   await setRemoteWorkspaceUri(
     'remote-ssh://user@example.com/work',
     backend,
     execute,
   )
-
-  expect(execute).toHaveBeenNthCalledWith(
-    1,
-    'Workspace.supportsConnectionCommand',
-  )
-  expect(execute).toHaveBeenNthCalledWith(
-    2,
-    'Workspace.setUri',
-    'remote-ssh://user@example.com/work',
-    '/',
-    {
-      command: 'remote-ssh.getWebSocketUrl',
-      remoteCliUrl:
-        'ws://127.0.0.1:45123/websocket/shared-process?token=secret',
-      webSocketUrl:
-        'ws://127.0.0.1:45123/websocket/file-system-process?token=secret',
-      workspacePath: '/work',
-    },
-  )
-})
-
-test('uses the legacy backend object with an older LVCE host', async () => {
-  const execute = jest
-    .fn<(id: string, ...args: readonly unknown[]) => Promise<unknown>>()
-    .mockRejectedValueOnce(new Error('command not found'))
-    .mockResolvedValueOnce(undefined)
-
-  await setRemoteWorkspaceUri(
-    'remote-ssh://user@example.com/work',
-    backend,
-    execute,
-  )
-
-  expect(execute).toHaveBeenNthCalledWith(
-    2,
-    'Workspace.setUri',
-    'remote-ssh://user@example.com/work',
-    '/',
-    backend,
-  )
+  expect(execute.mock.calls).toEqual([
+    ['Workspace.setUri', 'remote-ssh://user@example.com/work'],
+  ])
 })
 
 test('cancellation leaves the workspace unchanged', async () => {
@@ -438,4 +399,55 @@ test('logs elapsed time only after the workspace is open', async () => {
     resolve()
     now.mockRestore()
   }
+})
+
+test('keeps workspace progress active through the connection and workspace switch', async () => {
+  const startProgress = jest.fn(async (_message: string) => 42)
+  const endProgress = jest.fn(async (_id: number) => {})
+  const connectRemote = jest.fn(async (_uri: string) => backend)
+  const setUri = jest.fn(async (_uri: string) => {})
+
+  await connect(
+    async () => 'user@example.com',
+    setUri,
+    connectRemote,
+    (callback) => callback(),
+    async () => [],
+    undefined,
+    undefined,
+    undefined,
+    startProgress,
+    endProgress,
+  )
+
+  expect(startProgress).toHaveBeenCalledWith('Opening Remote Workspace…')
+  expect(connectRemote).toHaveBeenCalled()
+  expect(setUri).toHaveBeenCalled()
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  expect(endProgress).toHaveBeenCalledWith(42)
+})
+
+test('clears workspace progress when connection fails', async () => {
+  const startProgress = jest.fn(async (_message: string) => 42)
+  const endProgress = jest.fn(async (_id: number) => {})
+  const error = new Error('connection failed')
+
+  await expect(
+    connect(
+      async () => 'user@example.com',
+      async () => {},
+      async () => {
+        throw error
+      },
+      undefined,
+      async () => [],
+      undefined,
+      undefined,
+      async () => {},
+      startProgress,
+      endProgress,
+    ),
+  ).rejects.toBe(error)
+
+  expect(endProgress).toHaveBeenCalledWith(42)
 })

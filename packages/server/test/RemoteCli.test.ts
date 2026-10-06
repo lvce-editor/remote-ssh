@@ -43,13 +43,36 @@ void test('rejects unsupported options and multiple paths', async () => {
   await rejects(resolveOpenRequest(['/home', '/tmp']), /one path/)
 })
 
-void test('prints the remote SSH server version', async () => {
+void test('prints the bundled LVCE Editor version', async () => {
   const output: string[] = []
 
-  await run('/unused', 'v1.2.3', ['-v'], (value) => output.push(value))
+  await run('/unused', 'v0.14.0', '0.120.9', ['-v'], (value) =>
+    output.push(value),
+  )
 
-  deepStrictEqual(output, ['v1.2.3\n'])
+  deepStrictEqual(output, ['0.120.9\n'])
 })
+
+void test(
+  'uses the remote SSH artifact version to route open requests',
+  { skip: isWindows },
+  async (context) => {
+    const root = await mkdtemp(path.join(tmpdir(), 'lvce-remote-cli-version-'))
+    const requests: unknown[] = []
+    const server = await listen(root, 'v0.14.0', (request) => {
+      requests.push(request)
+      return true
+    })
+    context.after(async () => {
+      await close(server, root, 'v0.14.0')
+      await rm(root, { force: true, recursive: true })
+    })
+
+    await run(root, 'v0.14.0', '0.120.9', [root])
+
+    deepStrictEqual(requests, [{ kind: 'folder', path: root, type: 'open' }])
+  },
+)
 
 void test(
   'relays validated requests to the connected editor',
@@ -112,4 +135,24 @@ void test('writes a private launcher for the bundled runtime', async (context) =
   match(launcher, /^#!\/bin\/sh\n/)
   match(launcher, /'\/runtime\/with '\\'' quote\/node'/)
   strictEqual(launcher.includes(' cli "$@"'), true)
+})
+
+void test('keeps CLI launchers separate when older and newer backends coexist', async (context) => {
+  const root = await mkdtemp(path.join(tmpdir(), 'lvce-cli-coexist-'))
+  context.after(() => rm(root, { recursive: true, force: true }))
+  const older = await prepare(
+    root,
+    '/node',
+    '/older/server.mjs',
+    'ssh-editor-0.120.9',
+  )
+  const newer = await prepare(
+    root,
+    '/node',
+    '/newer/server.mjs',
+    'ssh-editor-0.120.10',
+  )
+  strictEqual(older === newer, false)
+  match(await readFile(path.join(older, 'lvce'), 'utf8'), /\/older\/server.mjs/)
+  match(await readFile(path.join(newer, 'lvce'), 'utf8'), /\/newer\/server.mjs/)
 })

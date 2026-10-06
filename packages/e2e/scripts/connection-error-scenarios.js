@@ -19,11 +19,12 @@ export const runConnectionErrorScenarios = async (
   sshServer,
   remoteRoot,
   checkError,
+  serverVersion = 'dev',
 ) => {
   const target = sshServer.fixture.target
   const installFixture = async (source) => {
     const runtime = join(remoteRoot, 'runtimes', 'test-node', 'bin')
-    const server = join(remoteRoot, 'servers', 'dev')
+    const server = join(remoteRoot, 'servers', serverVersion)
     await mkdir(runtime, { recursive: true })
     await mkdir(server, { recursive: true })
     await symlink(process.execPath, join(runtime, 'node'))
@@ -64,11 +65,11 @@ export const runConnectionErrorScenarios = async (
       arch: 'x64',
       backend: { port: await unusedPort(), token: 'test-backend-token' },
       capabilities: ['fileSystemProcess', 'remoteCli', 'workspaceBackend'],
-      clientVersion: 'dev',
+      clientVersion: serverVersion,
       platform: 'linux',
       protocolVersion: 1,
       type: 'ready',
-      version: 'dev',
+      version: serverVersion,
     }
     await installFixture(
       `console.log(${JSON.stringify(JSON.stringify(ready))}); process.stdin.resume(); process.stdin.on('end', () => process.exit(0))`,

@@ -118,25 +118,29 @@ export const requestOpen = async (
 
 export const run = async (
   root: string,
-  version: string,
+  serverVersion: string,
+  editorVersion: string,
   args = process.argv.slice(3),
   writeOutput: (value: string) => unknown = (value) =>
     process.stdout.write(value),
 ): Promise<void> => {
   if (args.length === 1 && (args[0] === '-v' || args[0] === '--version')) {
-    writeOutput(`${version}\n`)
+    writeOutput(`${editorVersion}\n`)
     return
   }
   const request = await resolveOpenRequest(args)
-  await requestOpen(getSocketPath(root, version), request)
+  await requestOpen(getSocketPath(root, serverVersion), request)
 }
 
 export const prepare = async (
   root: string,
   nodePath: string,
   serverPath: string,
+  installationVersion?: string,
 ): Promise<string> => {
-  const binDirectory = path.join(root, 'bin')
+  const binDirectory = installationVersion
+    ? path.join(root, 'bin', installationVersion)
+    : path.join(root, 'bin')
   await mkdir(binDirectory, { mode: 0o700, recursive: true })
   const executablePath = path.join(binDirectory, 'lvce')
   const contents = `#!/bin/sh\nLVCE_REMOTE_SSH_ROOT=${escapeShell(root)} exec ${escapeShell(nodePath)} ${escapeShell(serverPath)} cli "$@"\n`

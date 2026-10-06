@@ -26,6 +26,10 @@ export type ConnectToHost = (uri: string) => Promise<unknown>
 export type GetConfiguredHosts = () => Promise<readonly string[]>
 export type Schedule = (callback: () => void) => void
 export type WatchRemoteCli = (workspaceUri: string) => void
+export type StartWorkspaceProgress = (
+  message: string,
+) => Promise<number | undefined>
+export type EndWorkspaceProgress = (id: number) => Promise<void>
 
 interface WorkspaceBackend {
   readonly token: string
@@ -41,6 +45,23 @@ const scheduleAfterCommand: Schedule = (callback) => {
 
 const connectToHost: ConnectToHost = (uri) => {
   return Rpc.invoke('SshFileSystem.connect', uri)
+}
+
+const startWorkspaceProgress: StartWorkspaceProgress = async (message) => {
+  try {
+    const id = await executeCommand('Workspace.startProgress', message)
+    return typeof id === 'number' ? id : undefined
+  } catch {
+    return undefined
+  }
+}
+
+const endWorkspaceProgress: EndWorkspaceProgress = async (id) => {
+  try {
+    await executeCommand('Workspace.endProgress', id)
+  } catch {
+    // Progress is optional and must not hide the connection result.
+  }
 }
 
 const getWorkspaceBackend = (value: unknown): WorkspaceBackend => {
@@ -79,31 +100,10 @@ const reportError = async (
 
 export const setRemoteWorkspaceUri = async (
   workspaceUri: string,
-  backend: WorkspaceBackend,
+  _backend: WorkspaceBackend,
   execute: ExecuteCommand = executeCommand,
 ): Promise<void> => {
-  let supportsConnectionCommand = false
-  try {
-    supportsConnectionCommand =
-      (await execute('Workspace.supportsConnectionCommand')) === true
-  } catch {
-    // Older LVCE hosts require the legacy backend object.
-  }
-  const connection = supportsConnectionCommand
-    ? {
-        command: WorkspaceConnection.commandId,
-        remoteCliUrl: WorkspaceConnection.getWebSocketUrlForBackend(
-          backend,
-          'shared-process',
-        ),
-        webSocketUrl: WorkspaceConnection.getWebSocketUrlForBackend(
-          backend,
-          'file-system-process',
-        ),
-        workspacePath: backend.workspacePath,
-      }
-    : backend
-  await execute('Workspace.setUri', workspaceUri, '/', connection)
+  await execute('Workspace.setUri', workspaceUri)
 }
 
 const getConfiguredHosts: GetConfiguredHosts = async () => {
@@ -136,10 +136,14 @@ export const restore = async (
   connectRemote: ConnectToHost = connectToHost,
   watchRemoteCli: WatchRemoteCli = RemoteCli.watch,
   notify: ShowNotification = showNotification,
+  startProgress: StartWorkspaceProgress = startWorkspaceProgress,
+  endProgress: EndWorkspaceProgress = endWorkspaceProgress,
   log: Log = OutputChannel.log,
 ): Promise<void> => {
-  const startedAt = performance.now()
+  let progressId: number | undefined
   try {
+    progressId = await startProgress('Opening Remote Workspace…')
+    const startedAt = performance.now()
     await log(`Restoring SSH connection to ${workspaceUri}`)
     const backend = getWorkspaceBackend(await connectRemote(workspaceUri))
     await openWorkspace(
@@ -153,6 +157,10 @@ export const restore = async (
   } catch (error) {
     await reportError(error, notify, log)
     throw error
+  } finally {
+    if (progressId !== undefined) {
+      await endProgress(progressId)
+    }
   }
 }
 
@@ -191,6 +199,8 @@ export const connect = async (
   showPick: ShowQuickPick = showQuickPick,
   watchRemoteCli: WatchRemoteCli = RemoteCli.watch,
   notify: ShowNotification = showNotification,
+  startProgress: StartWorkspaceProgress = startWorkspaceProgress,
+  endProgress: EndWorkspaceProgress = endWorkspaceProgress,
   log: Log = OutputChannel.log,
 ): Promise<void> => {
   const value = await getConnectionTarget(showInput, showPick, getHosts)
@@ -200,11 +210,16 @@ export const connect = async (
   const startedAt = performance.now()
   let workspaceUri: string
   let backend: WorkspaceBackend
+  let progressId: number | undefined
   try {
     workspaceUri = SshTarget.toRemoteSshUri(value)
+    progressId = await startProgress('Opening Remote Workspace…')
     await log(`Connecting to SSH host ${workspaceUri}`)
     backend = getWorkspaceBackend(await connectRemote(workspaceUri))
   } catch (error) {
+    if (progressId !== undefined) {
+      await endProgress(progressId)
+    }
     await reportError(error, notify, log)
     throw error
   }
@@ -216,6 +231,12 @@ export const connect = async (
       setUri,
       watchRemoteCli,
       log,
-    ).catch((error) => reportError(error, notify, log))
+    )
+      .catch((error) => reportError(error, notify, log))
+      .finally(() => {
+        if (progressId !== undefined) {
+          return endProgress(progressId)
+        }
+      })
   })
 }

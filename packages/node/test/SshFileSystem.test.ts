@@ -44,7 +44,34 @@ void test('invokes the existing remote file-system process', async () => {
   ])
 })
 
-void test('preserves sorting and legacy symbolic-link behavior', () => {
+void test('forwards stat requests to the remote file-system process', async () => {
+  const calls: unknown[][] = []
+  const result = await _invoke(
+    'FileSystem.stat',
+    'remote-ssh://user@example.com/home/user/link',
+    [],
+    async (...args) => {
+      calls.push(args)
+      return 3
+    },
+  )
+  strictEqual(result, 3)
+  deepStrictEqual(calls, [
+    [
+      {
+        identity: '["user","example.com",""]',
+        path: '/home/user/link',
+        port: '',
+        target: 'user@example.com',
+      },
+      'file-system-process',
+      'FileSystem.stat',
+      'file:///home/user/link',
+    ],
+  ])
+})
+
+void test('preserves sorting and symbolic-link types for workspace confinement', () => {
   deepStrictEqual(
     _sortDirents([
       { name: 'z-link', type: 9 },
@@ -52,7 +79,7 @@ void test('preserves sorting and legacy symbolic-link behavior', () => {
     ]),
     [
       { name: 'a-folder', type: 3 },
-      { name: 'z-link', type: 7 },
+      { name: 'z-link', type: 9 },
     ],
   )
 })
