@@ -506,6 +506,21 @@ const openPromptScenario = async (page, port) => {
   return quickInput
 }
 
+const openSshOutput = async (page) => {
+  const outputTab = page.locator('.PanelTab[name="Output"]')
+  if (!(await outputTab.isVisible())) {
+    await page.keyboard.press('Control+Backquote')
+  }
+  await outputTab.click()
+  const select = page.locator('[name="output"]')
+  await expect(select.locator('option[value="remote-ssh"]')).toHaveText(
+    'Remote SSH',
+  )
+  await select.selectOption('remote-ssh')
+  await expect(select).toHaveValue('remote-ssh')
+  return page.locator('.OutputContent')
+}
+
 const verifyHttpPortForwarding = async (
   sshServer,
   remoteArtifacts,
@@ -763,30 +778,21 @@ const runRealSshTest = async () => {
     await openPromptScenario(page, port)
     await expectTextInputFallback(page)
 
-    await runConnectionErrorScenarios(
-      sshServer,
-      remoteRoot,
-      async (target, code, detail) => {
-        const input = await openPromptScenario(page, port)
-        await input.fill(target)
-        await page.keyboard.press('Enter')
-        const notification = page
-          .locator('.NotificationMessage')
-          .filter({ hasText: 'Failed to connect to SSH target:' })
-          .first()
-        await expect(notification).toBeVisible({ timeout: 45_000 })
-        await expect(notification).toContainText(detail)
-        await expect(notification).toContainText(code)
-        await expect(
-          page.locator('.TreeItem[aria-label="file.txt"]'),
-        ).toHaveCount(0)
-        console.log(`PASS error notification: ${code}`)
-      },
-      prepared.installationVersion,
-    )
-
     await writeFile(sshConfigPath, 'Host work staging\n')
-    const quickInput = await openPromptScenario(page, port)
+    // The original error scenarios cleared their temporary server installation
+    // before the successful connect below. Keep the same clean install here
+    // while deferring Output UI checks until after terminal/reconnect coverage.
+    await rm(remoteRoot, { force: true, recursive: true })
+    await openPromptScenario(page, port)
+    await page.keyboard.press('Escape')
+    await page.keyboard.press('Control+Shift+P')
+    const quickInput = page.locator('.QuickPick input')
+    await quickInput.fill('>SSH: Connect')
+    await page
+      .locator('.QuickPickItemLabel')
+      .filter({ hasText: /^SSH: Connect$/ })
+      .click()
+    await expect(quickInput).toHaveAttribute('placeholder', promptPlaceholder)
     await expectConfiguredHosts(page, ['work', 'staging'])
     await quickInput.fill(sshServer.fixture.target)
     await page.keyboard.press('Enter')
@@ -983,6 +989,60 @@ const runRealSshTest = async () => {
       page.locator('.TreeItem[aria-label="opened-by-remote-cli.txt"]'),
     ).toBeVisible({ timeout: 30_000 })
     expect(getArtifactRequestCount()).toBe(reconnectDownloads)
+    const connectionOutput = await openSshOutput(page)
+    await expect(connectionOutput).toContainText(
+      /(?:Connecting to SSH host|Restoring SSH connection to) remote-ssh:\/\//,
+    )
+    await expect(connectionOutput).toContainText(
+      'Opening SSH workspace remote-ssh://',
+    )
+    await expect(connectionOutput).toContainText(
+      /Connected to SSH workspace remote-ssh:\/\/\S+ in \d+ ms/,
+    )
+    const logs = await connectionOutput.innerText()
+    expect(
+      logs.search(/Connecting to SSH host|Restoring SSH connection to/),
+    ).toBeLessThan(logs.indexOf('Opening SSH workspace'))
+    expect(logs.indexOf('Opening SSH workspace')).toBeLessThan(
+      logs.indexOf('Connected to SSH workspace'),
+    )
+    expect(logs).not.toContain('token=')
+    console.log(
+      'PASS live SSH output channel: progress and connection duration',
+    )
+    // The error fixture writes a file at remoteRoot to simulate a blocked
+    // install, so clear the successful server installation before running it.
+    await rm(remoteRoot, { force: true, recursive: true })
+    await runConnectionErrorScenarios(
+      sshServer,
+      remoteRoot,
+      async (target, code, detail) => {
+        const input = await openPromptScenario(page, port)
+        await input.fill(target)
+        await page.keyboard.press('Enter')
+        const notification = page
+          .locator('.NotificationMessage')
+          .filter({ hasText: 'Failed to connect to SSH target:' })
+          .first()
+        await expect(notification).toBeVisible({ timeout: 45_000 })
+        await expect(notification).toContainText(detail)
+        await expect(notification).toContainText(code)
+        await expect(
+          page.locator('.TreeItem[aria-label="file.txt"]'),
+        ).toHaveCount(0)
+        const output = await openSshOutput(page)
+        await output.press('Home')
+        await expect(output).toContainText(
+          'ERROR: Failed to connect to SSH target:',
+        )
+        await expect(output).toContainText(detail)
+        await output.press('End')
+        await expect(output).toContainText(code)
+        await expect(output).not.toContainText('Connected to SSH workspace')
+        console.log(`PASS error notification and output channel: ${code}`)
+      },
+      prepared.installationVersion,
+    )
     console.log(
       `PASS exact backend ${prepared.frontendVersion}, terminal CLI, and equal-version reconnect`,
     )

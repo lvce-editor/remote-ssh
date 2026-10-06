@@ -28,7 +28,8 @@
     "onCommand:remote-ssh.connectToProcess",
     "onFileSystem:remote-ssh",
     "onCommand:remote-ssh.request",
-    "onPorts:remote-ssh"
+    "onPorts:remote-ssh",
+    "onOutput"
   ],
   "commands": [
     {
@@ -55,6 +56,12 @@
   "fileSystemProviders": [
     {
       "id": "remote-ssh"
+    }
+  ],
+  "outputChannels": [
+    {
+      "id": "remote-ssh",
+      "label": "Remote SSH"
     }
   ],
   "workspaceTransport": {
