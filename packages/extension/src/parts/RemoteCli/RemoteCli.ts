@@ -1,4 +1,5 @@
 import { executeCommand, openUri } from '@lvce-editor/api'
+import * as OutputChannel from '../OutputChannel/OutputChannel.ts'
 import * as Rpc from '../Rpc/Rpc.ts'
 
 interface OpenRequest {
@@ -11,6 +12,7 @@ export type WaitForOpenRequest = (workspaceUri: string) => Promise<unknown>
 export type OpenWindow = (url: string) => Promise<unknown>
 export type OpenFile = (uri: string) => Promise<unknown>
 export type RetryDelay = () => Promise<void>
+export type Log = (message: string) => Promise<void>
 
 const watcherTokens = new Map<string, symbol>()
 
@@ -35,6 +37,16 @@ const openFile: OpenFile = (uri) => {
 
 const retryDelay: RetryDelay = () => {
   return new Promise((resolve) => setTimeout(resolve, 1000))
+}
+
+const logWorkspaceSwitch = async (
+  currentWorkspaceUri: string,
+  nextWorkspaceUri: string,
+  log: Log,
+): Promise<void> => {
+  if (nextWorkspaceUri !== currentWorkspaceUri) {
+    await log(`Switching SSH workspace to ${nextWorkspaceUri}`)
+  }
 }
 
 const parseOpenRequest = (value: unknown): OpenRequest => {
@@ -68,6 +80,7 @@ const run = async (
   open: OpenWindow,
   openCurrentFile: OpenFile,
   waitBeforeRetry: RetryDelay,
+  log: Log,
 ): Promise<void> => {
   try {
     while (watcherTokens.get(workspaceUri) === token) {
@@ -79,6 +92,7 @@ const run = async (
         if (request.kind === 'file' && request.workspaceUri === workspaceUri) {
           await openCurrentFile(request.uri)
         } else {
+          await logWorkspaceSwitch(workspaceUri, request.workspaceUri, log)
           await open(getWindowUrl(request))
         }
       } catch {
@@ -101,6 +115,7 @@ export const watch = (
   open: OpenWindow = openWindow,
   openCurrentFile: OpenFile = openFile,
   waitBeforeRetry: RetryDelay = retryDelay,
+  log: Log = OutputChannel.log,
 ): void => {
   if (watcherTokens.has(workspaceUri)) {
     return
@@ -114,6 +129,7 @@ export const watch = (
     open,
     openCurrentFile,
     waitBeforeRetry,
+    log,
   ).catch(() => {})
 }
 
