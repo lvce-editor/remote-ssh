@@ -50,8 +50,9 @@ test('opens requests and continues waiting', async () => {
     return request
   })
   const open = jest.fn(async (_url: string) => {})
+  const log = jest.fn(async (_message: string) => {})
 
-  watch('remote-ssh://host/', wait, open)
+  watch('remote-ssh://host/', wait, open, undefined, undefined, log)
   await Promise.resolve()
   await Promise.resolve()
   await Promise.resolve()
@@ -59,6 +60,55 @@ test('opens requests and continues waiting', async () => {
     `/?workspace=${encodeURIComponent('remote-ssh://host/home')}`,
   )
   expect(wait).toHaveBeenCalledWith('remote-ssh://host/')
+})
+
+test('logs workspace switches and skips files in the current workspace', async () => {
+  const workspaceUri = 'remote-ssh://host/home'
+  const nextWorkspaceUri = 'remote-ssh://host/home/project'
+  const anotherWorkspaceUri = 'remote-ssh://host/home/another-project'
+  const requests = [
+    {
+      kind: 'folder' as const,
+      uri: nextWorkspaceUri,
+      workspaceUri: nextWorkspaceUri,
+    },
+    {
+      kind: 'folder' as const,
+      uri: anotherWorkspaceUri,
+      workspaceUri: anotherWorkspaceUri,
+    },
+    {
+      kind: 'file' as const,
+      uri: `${workspaceUri}/package.json`,
+      workspaceUri,
+    },
+  ]
+  const wait = jest.fn(async () => {
+    const request = requests.shift()
+    if (!request) {
+      return new Promise(() => {})
+    }
+    return request
+  })
+  const log = jest.fn(async (_message: string) => {})
+  const open = jest.fn(async (_url: string) => {})
+  const openFile = jest.fn(async (_uri: string) => {})
+
+  watch(workspaceUri, wait, open, openFile, async () => {}, log)
+  for (let i = 0; i < 20; i++) {
+    await Promise.resolve()
+  }
+
+  expect(log).toHaveBeenCalledTimes(2)
+  expect(log).toHaveBeenNthCalledWith(
+    1,
+    `Switching SSH workspace to ${nextWorkspaceUri}`,
+  )
+  expect(log).toHaveBeenNthCalledWith(
+    2,
+    `Switching SSH workspace to ${anotherWorkspaceUri}`,
+  )
+  expect(openFile).toHaveBeenCalledWith(`${workspaceUri}/package.json`)
 })
 
 test('opens a file from the current workspace in the current window', async () => {

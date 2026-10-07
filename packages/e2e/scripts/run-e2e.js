@@ -975,6 +975,12 @@ const runRealSshTest = async () => {
     await expect(terminal).toContainText('REMOTE_CLI_EXIT:0', {
       timeout: 30_000,
     })
+    const switchOutput = await openSshOutput(page)
+    const cliWorkspaceUri = new URL(toRemoteSshUri(sshServer.fixture.target))
+    cliWorkspaceUri.pathname = cliWorkspacePath
+    await expect(switchOutput).toContainText(
+      `Switching SSH workspace to ${cliWorkspaceUri.href}`,
+    )
     expect(page.context().pages()).toHaveLength(pageCount)
     const reconnectDownloads = getArtifactRequestCount()
     await page.reload()
