@@ -519,7 +519,7 @@ class RemoteConnection implements Connection {
       }
       this.stage = 'session'
       this.isReady = true
-      this.onProgress('')
+      this.onProgress('Opening the workspace on the Remote SSH host…')
       clearTimeout(this.readyTimeout)
       this.readyResolve()
     } catch (error) {
