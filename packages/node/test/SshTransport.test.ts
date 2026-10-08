@@ -24,6 +24,7 @@ void test('keeps the SSH master in the foreground with stdin connected', () => {
   strictEqual(args.includes('StdinNull=no'), true)
   strictEqual(args.at(-2), 'user@example.com')
   match(args.at(-1) || '', /connect-or-start/)
+  match(args.at(-1) || '', /__LVCE_REMOTE_SSH_STARTING__/)
   match(args.at(-1) || '', /__LVCE_REMOTE_SSH_INSTALL_REQUIRED__/)
 })
 

@@ -2,6 +2,7 @@ import path from 'node:path'
 import * as RemoteSshUri from '../RemoteSshUri/RemoteSshUri.ts'
 import {
   connectWorkspaceBackend,
+  getConnectionProgress,
   invokeWorkspaceBackend,
   type InvokeBackend,
   type OpenRequest,
@@ -56,6 +57,11 @@ export const connect = async (uri: string): Promise<WorkspaceBackend> => {
     ...(await connectWorkspaceBackend(location)),
     workspacePath: location.path,
   }
+}
+
+export const getProgress = (uri: string): string => {
+  const location = RemoteSshUri.parse(uri)
+  return getConnectionProgress(location)
 }
 
 export const waitForOpenRequest = async (
