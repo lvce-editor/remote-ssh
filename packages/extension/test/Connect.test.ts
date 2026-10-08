@@ -125,6 +125,32 @@ test('restores a directly opened remote workspace backend', async () => {
   expect(watchRemoteCli).toHaveBeenCalledWith('remote-ssh://user@example.com/')
 })
 
+test('reports connection and workspace opening stages during restore', async () => {
+  const startProgress = jest.fn(async (_message: string) => 7)
+  const updateProgress = jest.fn(async (_id: number, _message: string) => {})
+  const rootBackend = { ...backend, workspacePath: '/' }
+
+  await restoreWithLogging(
+    'remote-ssh://user@example.com/',
+    async () => {},
+    async () => rootBackend,
+    () => {},
+    undefined,
+    startProgress,
+    async () => {},
+    log,
+    updateProgress,
+  )
+
+  expect(startProgress).toHaveBeenCalledWith(
+    'Establishing connection to the Remote SSH host…',
+  )
+  expect(updateProgress).toHaveBeenCalledWith(
+    7,
+    'Opening Remote SSH workspace…',
+  )
+})
+
 test('starts watching remote CLI requests before restoring the workspace', async () => {
   const rootBackend = { ...backend, workspacePath: '/' }
   const watchRemoteCli = jest.fn((_uri: string) => {})
@@ -406,6 +432,7 @@ test('keeps workspace progress active through the connection and workspace switc
   const endProgress = jest.fn(async (_id: number) => {})
   const connectRemote = jest.fn(async (_uri: string) => backend)
   const setUri = jest.fn(async (_uri: string) => {})
+  const updateProgress = jest.fn(async (_id: number, _message: string) => {})
 
   await connect(
     async () => 'user@example.com',
@@ -418,10 +445,18 @@ test('keeps workspace progress active through the connection and workspace switc
     undefined,
     startProgress,
     endProgress,
+    log,
+    updateProgress,
   )
 
-  expect(startProgress).toHaveBeenCalledWith('Opening Remote Workspace…')
+  expect(startProgress).toHaveBeenCalledWith(
+    'Establishing connection to the Remote SSH host…',
+  )
   expect(connectRemote).toHaveBeenCalled()
+  expect(updateProgress).toHaveBeenCalledWith(
+    42,
+    'Opening Remote SSH workspace…',
+  )
   expect(setUri).toHaveBeenCalled()
   await new Promise((resolve) => setTimeout(resolve, 0))
   expect(endProgress).toHaveBeenCalledWith(42)

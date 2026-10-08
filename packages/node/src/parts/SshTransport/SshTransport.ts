@@ -80,6 +80,7 @@ export type InvokeBackend = (
 ) => Promise<unknown>
 
 const connectedMarker = '__LVCE_REMOTE_SSH_CONNECTED__'
+const serverStartingMarker = '__LVCE_REMOTE_SSH_STARTING__'
 const remoteLogPath = `${process.env.LVCE_REMOTE_SSH_REMOTE_ROOT || '$HOME/.lvce-server'}/run/server-${manifest.serverVersion}.log`
 
 const installRequiredMarker = '__LVCE_REMOTE_SSH_INSTALL_REQUIRED__'
@@ -89,7 +90,19 @@ const sshExecutable =
     : '/usr/bin/ssh'
 
 const connections = new Map<string, Promise<Connection>>()
+const connectionProgress = new Map<string, string>()
 const state = { nextConnectionId: 1 }
+
+const setConnectionProgress = (
+  location: RemoteLocation,
+  message: string,
+): void => {
+  connectionProgress.set(location.identity, message)
+}
+
+export const getConnectionProgress = (location: RemoteLocation): string => {
+  return connectionProgress.get(location.identity) || ''
+}
 
 class InstallRequiredError extends Error {}
 
@@ -112,7 +125,7 @@ const getRemoteCommand = (
   const backendEnvironment = configuredBackend
     ? ` LVCE_REMOTE_SSH_BACKEND_SCRIPT=${escapeShell(configuredBackend)}`
     : ''
-  return `printf '${connectedMarker}\\n'; root=${root}; runtime="$root/runtimes/${selectedManifest.nodeVersion}/bin/node"; server="$root/servers/${selectedManifest.serverVersion}/lvce-remote-ssh-server.mjs"; if [ -x "$runtime" ] && [ -f "$server" ]; then LVCE_REMOTE_SSH_ROOT="$root" LVCE_REMOTE_SSH_CLIENT_VERSION=${escapeShell(selectedManifest.serverVersion)}${backendEnvironment} exec "$runtime" "$server" connect-or-start; else printf '${installRequiredMarker}\\n'; exit 86; fi`
+  return `printf '${connectedMarker}\\n'; root=${root}; runtime="$root/runtimes/${selectedManifest.nodeVersion}/bin/node"; server="$root/servers/${selectedManifest.serverVersion}/lvce-remote-ssh-server.mjs"; if [ -x "$runtime" ] && [ -f "$server" ]; then printf '${serverStartingMarker}\\n'; LVCE_REMOTE_SSH_ROOT="$root" LVCE_REMOTE_SSH_CLIENT_VERSION=${escapeShell(selectedManifest.serverVersion)}${backendEnvironment} exec "$runtime" "$server" connect-or-start; else printf '${installRequiredMarker}\\n'; exit 86; fi`
 }
 
 const getControlPath = (location: RemoteLocation): string => {
@@ -296,6 +309,7 @@ class RemoteConnection implements Connection {
   private readonly localPort: number
   private readonly location: RemoteLocation
   private readonly onClose: () => void
+  private readonly onProgress: (message: string) => void
   private readonly openRequests: OpenRequest[] = []
   private readonly openRequestWaiters: Array<{
     readonly reject: (error: Error) => void
@@ -322,12 +336,14 @@ class RemoteConnection implements Connection {
     controlPath: string,
     localPort: number,
     onClose: () => void,
+    onProgress: (message: string) => void,
   ) {
     this.child = child
     this.location = location
     this.controlPath = controlPath
     this.localPort = localPort
     this.onClose = onClose
+    this.onProgress = onProgress
     this.ready = new Promise((resolve, reject) => {
       this.readyResolve = resolve
       this.readyReject = reject
@@ -411,7 +427,14 @@ class RemoteConnection implements Connection {
       this.stage = 'start'
       return
     }
+    if (line === serverStartingMarker) {
+      this.onProgress('Starting the LVCE Editor server on the Remote SSH host…')
+      return
+    }
     if (line === installRequiredMarker) {
+      this.onProgress(
+        'Installing the LVCE Editor server on the Remote SSH host…',
+      )
       this.close(new InstallRequiredError(installRequiredMarker))
       return
     }
@@ -496,6 +519,7 @@ class RemoteConnection implements Connection {
       }
       this.stage = 'session'
       this.isReady = true
+      this.onProgress('')
       clearTimeout(this.readyTimeout)
       this.readyResolve()
     } catch (error) {
@@ -702,6 +726,7 @@ const spawnConnection = async (
     controlPath,
     localPort,
     onClose,
+    (message) => setConnectionProgress(location, message),
   )
   await connection.waitUntilReady()
   return connection
@@ -711,15 +736,25 @@ const createConnection = async (
   location: RemoteLocation,
   onClose: () => void,
 ): Promise<Connection> => {
+  setConnectionProgress(
+    location,
+    'Establishing connection to the Remote SSH host…',
+  )
   try {
     return await spawnConnection(location, onClose)
   } catch (error) {
     if (!(error instanceof InstallRequiredError)) {
+      connectionProgress.delete(location.identity)
       throw error
     }
+    setConnectionProgress(
+      location,
+      'Installing the LVCE Editor server on the Remote SSH host…',
+    )
     try {
       await installServer(location)
     } catch (error) {
+      connectionProgress.delete(location.identity)
       throw ConnectionError.create(
         location.target,
         'install',
@@ -727,6 +762,10 @@ const createConnection = async (
         remoteLogPath,
       )
     }
+    setConnectionProgress(
+      location,
+      'Starting the LVCE Editor server on the Remote SSH host…',
+    )
     return spawnConnection(location, onClose)
   }
 }
@@ -737,6 +776,7 @@ const getConnection = (location: RemoteLocation): Promise<Connection> => {
     return existing
   }
   const onClose = (): void => {
+    connectionProgress.delete(location.identity)
     if (connections.get(location.identity) === connection) {
       connections.delete(location.identity)
     }

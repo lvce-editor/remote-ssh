@@ -30,6 +30,10 @@ export type StartWorkspaceProgress = (
   message: string,
 ) => Promise<number | undefined>
 export type EndWorkspaceProgress = (id: number) => Promise<void>
+export type UpdateWorkspaceProgress = (
+  id: number,
+  message: string,
+) => Promise<void>
 
 interface WorkspaceBackend {
   readonly token: string
@@ -61,6 +65,57 @@ const endWorkspaceProgress: EndWorkspaceProgress = async (id) => {
     await executeCommand('Workspace.endProgress', id)
   } catch {
     // Progress is optional and must not hide the connection result.
+  }
+}
+
+const updateWorkspaceProgress: UpdateWorkspaceProgress = async (
+  id,
+  message,
+) => {
+  try {
+    await executeCommand('Workspace.updateProgress', id, message)
+  } catch {
+    // Progress is optional and must not hide the connection result.
+  }
+}
+
+const delay = (milliseconds: number): Promise<void> => {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds))
+}
+
+const connectWithProgress = async (
+  uri: string,
+  progressId: number | undefined,
+  connectRemote: ConnectToHost,
+  updateProgress: UpdateWorkspaceProgress,
+): Promise<unknown> => {
+  if (progressId === undefined) {
+    return connectRemote(uri)
+  }
+  let active = true
+  let lastMessage = ''
+  const pollProgress = async (): Promise<void> => {
+    while (active) {
+      try {
+        const message = await Rpc.invoke('SshFileSystem.getProgress', uri)
+        if (typeof message === 'string' && message && message !== lastMessage) {
+          lastMessage = message
+          await updateProgress(progressId, message)
+        }
+      } catch {
+        // Older remote-ssh versions do not expose stage updates.
+      }
+      if (active) {
+        await delay(200)
+      }
+    }
+  }
+  const polling = pollProgress()
+  try {
+    return await connectRemote(uri)
+  } finally {
+    active = false
+    await polling
   }
 }
 
@@ -139,13 +194,26 @@ export const restore = async (
   startProgress: StartWorkspaceProgress = startWorkspaceProgress,
   endProgress: EndWorkspaceProgress = endWorkspaceProgress,
   log: Log = OutputChannel.log,
+  updateProgress: UpdateWorkspaceProgress = updateWorkspaceProgress,
 ): Promise<void> => {
   let progressId: number | undefined
   try {
-    progressId = await startProgress('Opening Remote Workspace…')
+    progressId = await startProgress(
+      'Establishing connection to the Remote SSH host…',
+    )
     const startedAt = performance.now()
     await log(`Restoring SSH connection to ${workspaceUri}`)
-    const backend = getWorkspaceBackend(await connectRemote(workspaceUri))
+    const backend = getWorkspaceBackend(
+      await connectWithProgress(
+        workspaceUri,
+        progressId,
+        connectRemote,
+        updateProgress,
+      ),
+    )
+    if (progressId !== undefined) {
+      await updateProgress(progressId, 'Opening Remote SSH workspace…')
+    }
     await openWorkspace(
       workspaceUri,
       backend,
@@ -202,6 +270,7 @@ export const connect = async (
   startProgress: StartWorkspaceProgress = startWorkspaceProgress,
   endProgress: EndWorkspaceProgress = endWorkspaceProgress,
   log: Log = OutputChannel.log,
+  updateProgress: UpdateWorkspaceProgress = updateWorkspaceProgress,
 ): Promise<void> => {
   const value = await getConnectionTarget(showInput, showPick, getHosts)
   if (!value || !value.trim()) {
@@ -213,9 +282,21 @@ export const connect = async (
   let progressId: number | undefined
   try {
     workspaceUri = SshTarget.toRemoteSshUri(value)
-    progressId = await startProgress('Opening Remote Workspace…')
+    progressId = await startProgress(
+      'Establishing connection to the Remote SSH host…',
+    )
     await log(`Connecting to SSH host ${workspaceUri}`)
-    backend = getWorkspaceBackend(await connectRemote(workspaceUri))
+    backend = getWorkspaceBackend(
+      await connectWithProgress(
+        workspaceUri,
+        progressId,
+        connectRemote,
+        updateProgress,
+      ),
+    )
+    if (progressId !== undefined) {
+      await updateProgress(progressId, 'Opening Remote SSH workspace…')
+    }
   } catch (error) {
     if (progressId !== undefined) {
       await endProgress(progressId)
