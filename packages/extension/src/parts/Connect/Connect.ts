@@ -45,37 +45,39 @@ export type UpdateWorkspaceProgress = (
 ) => Promise<void>
 
 type WorkspaceProgressStatus = 'idle' | 'in-progress' | 'finished' | 'error'
-let workspaceProgressData: {
-  message: string
-  status: WorkspaceProgressStatus
-} = { message: '', status: 'idle' }
-let workspaceProgressOperationId: number | undefined
 type WorkspaceProgressHandle = {
   dispose(): Promise<void>
   refresh(operationId?: number): Promise<void>
 }
-const registerWorkspaceProgressProvider = (
-  ExtensionApi as typeof ExtensionApi & {
-    registerWorkspaceProgressProvider(provider: {
-      getProgressData: () => typeof workspaceProgressData
-      id: string
-    }): WorkspaceProgressHandle
-  }
-).registerWorkspaceProgressProvider
-let workspaceProgressRegistration: WorkspaceProgressHandle | undefined
+const workspaceProgressApi = ExtensionApi as typeof ExtensionApi & {
+  registerWorkspaceProgressProvider(provider: {
+    getProgressData: () => { message: string; status: WorkspaceProgressStatus }
+    id: string
+  }): WorkspaceProgressHandle
+}
+const workspaceProgressState: {
+  data: { message: string; status: WorkspaceProgressStatus }
+  operationId: number | undefined
+  registration: WorkspaceProgressHandle | undefined
+} = {
+  data: { message: '', status: 'idle' },
+  operationId: undefined,
+  registration: undefined,
+}
 
 export const registerWorkspaceProgress = (): void => {
-  workspaceProgressRegistration = registerWorkspaceProgressProvider({
-    getProgressData: () => workspaceProgressData,
-    id: 'remote-ssh.connection',
-  })
+  workspaceProgressState.registration =
+    workspaceProgressApi.registerWorkspaceProgressProvider({
+      getProgressData: () => workspaceProgressState.data,
+      id: 'remote-ssh.connection',
+    })
 }
 
 export const disposeWorkspaceProgress = async (): Promise<void> => {
-  workspaceProgressOperationId = undefined
-  workspaceProgressData = { message: '', status: 'idle' }
-  await workspaceProgressRegistration?.dispose()
-  workspaceProgressRegistration = undefined
+  workspaceProgressState.operationId = undefined
+  workspaceProgressState.data = { message: '', status: 'idle' }
+  await workspaceProgressState.registration?.dispose()
+  workspaceProgressState.registration = undefined
 }
 
 interface WorkspaceBackend {
@@ -109,9 +111,11 @@ const isProgressCancelled: IsProgressCancelled = async (id) => {
 const startWorkspaceProgress: StartWorkspaceProgress = async (message) => {
   try {
     const id = await executeCommand('Workspace.startProgress', message)
-    workspaceProgressOperationId = typeof id === 'number' ? id : undefined
-    workspaceProgressData = { message, status: 'in-progress' }
-    await workspaceProgressRegistration?.refresh(workspaceProgressOperationId)
+    workspaceProgressState.operationId = typeof id === 'number' ? id : undefined
+    workspaceProgressState.data = { message, status: 'in-progress' }
+    await workspaceProgressState.registration?.refresh(
+      workspaceProgressState.operationId,
+    )
     return typeof id === 'number' ? id : undefined
   } catch {
     return undefined
@@ -120,10 +124,10 @@ const startWorkspaceProgress: StartWorkspaceProgress = async (message) => {
 
 const endWorkspaceProgress: EndWorkspaceProgress = async (id) => {
   try {
-    if (workspaceProgressOperationId === id) {
-      workspaceProgressOperationId = undefined
-      workspaceProgressData = { message: '', status: 'idle' }
-      await workspaceProgressRegistration?.refresh(id)
+    if (workspaceProgressState.operationId === id) {
+      workspaceProgressState.operationId = undefined
+      workspaceProgressState.data = { message: '', status: 'idle' }
+      await workspaceProgressState.registration?.refresh(id)
     }
     await executeCommand('Workspace.endProgress', id)
   } catch {
@@ -136,9 +140,9 @@ const updateWorkspaceProgress: UpdateWorkspaceProgress = async (
   message,
 ) => {
   try {
-    if (workspaceProgressOperationId === id) {
-      workspaceProgressData = { message, status: 'in-progress' }
-      await workspaceProgressRegistration?.refresh(id)
+    if (workspaceProgressState.operationId === id) {
+      workspaceProgressState.data = { message, status: 'in-progress' }
+      await workspaceProgressState.registration?.refresh(id)
     }
   } catch {
     // Progress is optional and must not hide the connection result.
