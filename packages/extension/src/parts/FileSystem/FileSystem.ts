@@ -1,4 +1,9 @@
-import type { FileSystemDirent, FileSystemProvider } from '@lvce-editor/api'
+import {
+  getPreference,
+  type FileSystemDirent,
+  type FileSystemProvider,
+} from '@lvce-editor/api'
+import * as OutputChannel from '../OutputChannel/OutputChannel.ts'
 import * as Rpc from '../Rpc/Rpc.ts'
 
 // cspell:ignore apng jfif
@@ -18,6 +23,53 @@ export interface RemoteFileSystem extends FileSystemProvider {
   readonly rename: (oldUri: string, newUri: string) => Promise<void>
   readonly stat: (uri: string) => Promise<number>
   readonly writeFile: (uri: string, content: string) => Promise<void>
+}
+
+export interface ReadLogDependencies {
+  readonly getLogLevel: () => Promise<unknown>
+  readonly log: (message: string) => Promise<void>
+  readonly now: () => number
+}
+
+const defaultReadLogDependencies: ReadLogDependencies = {
+  getLogLevel: () => getPreference('remote-ssh.logLevel'),
+  log: OutputChannel.log,
+  now: () => performance.now(),
+}
+
+const getPath = (uri: string): string => {
+  try {
+    return new URL(uri).pathname
+  } catch {
+    return uri
+  }
+}
+
+const readWithVerboseLog = async <T>(
+  kind: 'file' | 'folder',
+  uri: string,
+  read: () => Promise<T>,
+  dependencies: ReadLogDependencies,
+): Promise<T> => {
+  const start = dependencies.now()
+  let failed = false
+  try {
+    return await read()
+  } catch (error) {
+    failed = true
+    throw error
+  } finally {
+    try {
+      if ((await dependencies.getLogLevel()) === 'verbose') {
+        const elapsed = Math.max(0, dependencies.now() - start)
+        await dependencies.log(
+          `Read ${kind} ${getPath(uri)} ${failed ? 'failed' : 'completed'} in ${elapsed.toFixed(1)} ms`,
+        )
+      }
+    } catch {
+      // Configuration and output-channel errors must not affect file reads.
+    }
+  }
 }
 
 const decodeBase64 = (value: string): ArrayBuffer => {
@@ -67,6 +119,7 @@ const getMimeType = (uri: string): string => {
 
 export const createRemoteFileSystem = (
   invoke: Invoke = Rpc.invoke,
+  readLogDependencies: ReadLogDependencies = defaultReadLogDependencies,
 ): RemoteFileSystem => {
   return {
     id: 'remote-ssh',
@@ -75,17 +128,30 @@ export const createRemoteFileSystem = (
       await invoke('SshFileSystem.mkdir', uri)
     },
     readDirWithFileTypes: async (uri): Promise<readonly FileSystemDirent[]> => {
-      return (await invoke(
-        'SshFileSystem.readDirWithFileTypes',
+      return readWithVerboseLog(
+        'folder',
         uri,
-      )) as readonly FileSystemDirent[]
+        async () =>
+          (await invoke(
+            'SshFileSystem.readDirWithFileTypes',
+            uri,
+          )) as readonly FileSystemDirent[],
+        readLogDependencies,
+      )
     },
     readFile: async (uri): Promise<Blob> => {
-      const value = await invoke('SshFileSystem.readFile', uri)
-      if (typeof value !== 'string') {
-        throw new TypeError('Remote SSH read returned invalid content')
-      }
-      return new Blob([decodeBase64(value)], { type: getMimeType(uri) })
+      return readWithVerboseLog(
+        'file',
+        uri,
+        async () => {
+          const value = await invoke('SshFileSystem.readFile', uri)
+          if (typeof value !== 'string') {
+            throw new TypeError('Remote SSH read returned invalid content')
+          }
+          return new Blob([decodeBase64(value)], { type: getMimeType(uri) })
+        },
+        readLogDependencies,
+      )
     },
     remove: async (uri): Promise<void> => {
       await invoke('SshFileSystem.remove', uri)
