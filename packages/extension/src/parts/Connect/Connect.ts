@@ -296,7 +296,10 @@ export const restore = async (
       isCancelled,
     )
   } catch (error) {
-    if (isWorkspaceSetupCancelled(error)) {
+    if (
+      isWorkspaceSetupCancelled(error) ||
+      (progressId !== undefined && (await isCancelled(progressId)))
+    ) {
       return
     }
     await reportError(error, notify, log)
@@ -306,6 +309,37 @@ export const restore = async (
       await endProgress(progressId)
     }
   }
+}
+
+export const prepare = async (
+  workspaceUri: string,
+  connectRemote: ConnectToHost = connectToHost,
+  watchRemoteCli: WatchRemoteCli = RemoteCli.watch,
+  notify: ShowNotification = showNotification,
+  startProgress: StartWorkspaceProgress = startWorkspaceProgress,
+  endProgress: EndWorkspaceProgress = endWorkspaceProgress,
+  log: Log = OutputChannel.log,
+  updateProgress: UpdateWorkspaceProgress = updateWorkspaceProgress,
+  cancelRemote: CancelConnection = cancelConnection,
+  isCancelled: IsProgressCancelled = isProgressCancelled,
+): Promise<boolean> => {
+  let prepared = false
+  await restore(
+    workspaceUri,
+    async () => {
+      prepared = true
+    },
+    connectRemote,
+    watchRemoteCli,
+    notify,
+    startProgress,
+    endProgress,
+    log,
+    updateProgress,
+    cancelRemote,
+    isCancelled,
+  )
+  return prepared
 }
 
 const getConnectionTarget = async (
@@ -378,10 +412,13 @@ export const connect = async (
       await updateProgress(progressId, 'Opening Remote SSH workspace…')
     }
   } catch (error) {
+    const cancelled =
+      isWorkspaceSetupCancelled(error) ||
+      (progressId !== undefined && (await isCancelled(progressId)))
     if (progressId !== undefined) {
       await endProgress(progressId)
     }
-    if (isWorkspaceSetupCancelled(error)) {
+    if (cancelled) {
       return
     }
     await reportError(error, notify, log)

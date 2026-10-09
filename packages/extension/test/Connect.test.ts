@@ -3,6 +3,7 @@ import { beforeEach, expect, jest, test } from '@jest/globals'
 import {
   connect as connectWithLogging,
   placeholder,
+  prepare,
   restore as restoreWithLogging,
   setRemoteWorkspaceUri,
 } from '../src/parts/Connect/Connect.ts'
@@ -523,4 +524,57 @@ test('clears workspace progress when connection fails', async () => {
   ).rejects.toBe(error)
 
   expect(endProgress).toHaveBeenCalledWith(42)
+})
+
+test('prepares a remote URI without committing a workspace switch', async () => {
+  const ready = await prepare(
+    'remote-ssh://host/work',
+    async () => backend,
+    () => {},
+    undefined,
+    async () => undefined,
+    undefined,
+    log,
+  )
+  expect(ready).toBe(true)
+})
+
+test('cancelled preparation returns false and stops the owned connection', async () => {
+  const cancelRemote = jest.fn(async (_uri: string, _id: number) => {})
+  const notify = jest.fn(async () => {})
+  const ready = await prepare(
+    'remote-ssh://host/work',
+    async () => new Promise(() => {}),
+    () => {},
+    notify,
+    async () => 42,
+    async () => {},
+    log,
+    async () => {},
+    cancelRemote,
+    async () => true,
+  )
+  expect(ready).toBe(false)
+  expect(cancelRemote).toHaveBeenCalledWith('remote-ssh://host/work', 42)
+  expect(notify).not.toHaveBeenCalled()
+})
+
+test('transport rejection during cancelled preparation does not report a failure', async () => {
+  const notify = jest.fn(async () => {})
+  const ready = await prepare(
+    'remote-ssh://host/work',
+    async () => {
+      throw new Error('Transport aborted')
+    },
+    () => {},
+    notify,
+    async () => 42,
+    async () => {},
+    log,
+    async () => {},
+    async () => {},
+    async () => true,
+  )
+  expect(ready).toBe(false)
+  expect(notify).not.toHaveBeenCalled()
 })

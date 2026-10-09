@@ -59,6 +59,10 @@ export const activate = async (): Promise<void> => {
       id: 'remote-ssh.stopForwardPort',
     })
     registerCommand({
+      execute: (workspaceUri: string) => Connect.prepare(workspaceUri),
+      id: 'remote-ssh.prepareWorkspace',
+    })
+    registerCommand({
       execute: ProcessConnection.connect,
       id: 'remote-ssh.connectToProcess',
     })
