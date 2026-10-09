@@ -1,6 +1,18 @@
 import { createServer } from 'node:http'
-import { writeFile } from 'node:fs/promises'
+import { appendFile, stat, writeFile } from 'node:fs/promises'
+import { setTimeout } from 'node:timers/promises'
 import { WebSocketServer } from 'ws'
+
+const startupGate = process.env.LVCE_REMOTE_SSH_TEST_STARTUP_GATE
+if (startupGate) {
+  await appendFile(
+    `${startupGate}.started`,
+    `${JSON.stringify({ backendPid: process.pid, pid: process.ppid })}\n`,
+  )
+  while (await stat(startupGate).catch(() => undefined)) {
+    await setTimeout(10)
+  }
+}
 
 const portArgument = process.argv.find((value) => value.startsWith('--port='))
 if (!portArgument) {
