@@ -140,6 +140,8 @@ test('reports connection and workspace opening stages during restore', async () 
     async () => {},
     log,
     updateProgress,
+    async () => {},
+    async () => false,
   )
 
   expect(startProgress).toHaveBeenCalledWith(
@@ -149,6 +151,40 @@ test('reports connection and workspace opening stages during restore', async () 
     7,
     'Opening Remote SSH workspace…',
   )
+})
+
+test('closing workspace progress cancels setup without reporting a connection error', async () => {
+  const startProgress = jest.fn(async (_message: string) => 42)
+  const cancelRemote = jest.fn(async (_uri: string, _id: number) => {})
+  const updateProgress = jest.fn(async (_id: number, _message: string) => {})
+  const showNotification = jest.fn(
+    async (_type: NotificationType, _message: string) => {},
+  )
+  const setUri = jest.fn(async (_uri: string) => {})
+  const connectRemote = jest.fn(
+    async (_uri: string, _id?: number) => new Promise(() => {}),
+  )
+
+  await restoreWithLogging(
+    'remote-ssh://user@example.com/',
+    setUri,
+    connectRemote,
+    () => {},
+    showNotification,
+    startProgress,
+    async () => {},
+    log,
+    updateProgress,
+    cancelRemote,
+    async (id) => id === 42,
+  )
+
+  expect(cancelRemote).toHaveBeenCalledWith(
+    'remote-ssh://user@example.com/',
+    42,
+  )
+  expect(setUri).not.toHaveBeenCalled()
+  expect(showNotification).not.toHaveBeenCalled()
 })
 
 test('starts watching remote CLI requests before restoring the workspace', async () => {
@@ -447,6 +483,8 @@ test('keeps workspace progress active through the connection and workspace switc
     endProgress,
     log,
     updateProgress,
+    async () => {},
+    async () => false,
   )
 
   expect(startProgress).toHaveBeenCalledWith(
@@ -457,8 +495,8 @@ test('keeps workspace progress active through the connection and workspace switc
     42,
     'Opening Remote SSH workspace…',
   )
-  expect(setUri).toHaveBeenCalled()
   await new Promise((resolve) => setTimeout(resolve, 0))
+  expect(setUri).toHaveBeenCalled()
   expect(endProgress).toHaveBeenCalledWith(42)
 })
 

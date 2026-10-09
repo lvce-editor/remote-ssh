@@ -89,7 +89,15 @@ const sshExecutable =
     ? 'C:\\Windows\\System32\\OpenSSH\\ssh.exe'
     : '/usr/bin/ssh'
 
-const connections = new Map<string, Promise<Connection>>()
+interface ConnectionSetup {
+  readonly controller: AbortController
+  readonly operationId: number | undefined
+  promise: Promise<Connection>
+  settled: boolean
+  waiters: number
+}
+
+const connections = new Map<string, ConnectionSetup>()
 const connectionProgress = new Map<string, string>()
 const state = { nextConnectionId: 1 }
 
@@ -310,6 +318,8 @@ class RemoteConnection implements Connection {
   private readonly location: RemoteLocation
   private readonly onClose: () => void
   private readonly onProgress: (message: string) => void
+  private readonly signal: AbortSignal
+  private readonly handleAbort: () => void
   private readonly openRequests: OpenRequest[] = []
   private readonly openRequestWaiters: Array<{
     readonly reject: (error: Error) => void
@@ -337,6 +347,7 @@ class RemoteConnection implements Connection {
     localPort: number,
     onClose: () => void,
     onProgress: (message: string) => void,
+    signal: AbortSignal,
   ) {
     this.child = child
     this.location = location
@@ -344,6 +355,7 @@ class RemoteConnection implements Connection {
     this.localPort = localPort
     this.onClose = onClose
     this.onProgress = onProgress
+    this.signal = signal
     this.ready = new Promise((resolve, reject) => {
       this.readyResolve = resolve
       this.readyReject = reject
@@ -352,6 +364,15 @@ class RemoteConnection implements Connection {
       this.close(new Error('Remote SSH server handshake timed out'))
       child.kill()
     }, 30_000)
+    this.handleAbort = () => {
+      this.close(new Error('Remote SSH workspace setup was cancelled'))
+      child.kill('SIGTERM')
+    }
+    if (signal.aborted) {
+      this.handleAbort()
+    } else {
+      signal.addEventListener('abort', this.handleAbort, { once: true })
+    }
     child.stdout.on('data', (chunk: Buffer) => this.handleData(chunk))
     child.stderr.on('data', (chunk: Buffer) => {
       this.stderr.push(chunk)
@@ -387,6 +408,7 @@ class RemoteConnection implements Connection {
     }
     this.closeError = error
     clearTimeout(this.readyTimeout)
+    this.signal.removeEventListener('abort', this.handleAbort)
     this.readyReject(error)
     for (const rpc of this.backendRpcs.values()) {
       rpc.dispose()
@@ -711,7 +733,11 @@ class RemoteConnection implements Connection {
 const spawnConnection = async (
   location: RemoteLocation,
   onClose: () => void,
+  signal: AbortSignal,
 ): Promise<Connection> => {
+  if (signal.aborted) {
+    throw new Error('Remote SSH workspace setup was cancelled')
+  }
   const controlPath = getControlPath(location)
   await rm(controlPath, { force: true })
   const localPort = await getAvailablePort()
@@ -727,6 +753,7 @@ const spawnConnection = async (
     localPort,
     onClose,
     (message) => setConnectionProgress(location, message),
+    signal,
   )
   await connection.waitUntilReady()
   return connection
@@ -735,14 +762,19 @@ const spawnConnection = async (
 const createConnection = async (
   location: RemoteLocation,
   onClose: () => void,
+  signal: AbortSignal,
 ): Promise<Connection> => {
   setConnectionProgress(
     location,
     'Establishing connection to the Remote SSH host…',
   )
   try {
-    return await spawnConnection(location, onClose)
+    return await spawnConnection(location, onClose, signal)
   } catch (error) {
+    if (signal.aborted) {
+      connectionProgress.delete(location.identity)
+      throw new Error('Remote SSH workspace setup was cancelled')
+    }
     if (!(error instanceof InstallRequiredError)) {
       connectionProgress.delete(location.identity)
       throw error
@@ -752,9 +784,12 @@ const createConnection = async (
       'Installing the LVCE Editor server on the Remote SSH host…',
     )
     try {
-      await installServer(location)
+      await installServer(location, manifest, signal)
     } catch (error) {
       connectionProgress.delete(location.identity)
+      if (signal.aborted) {
+        throw new Error('Remote SSH workspace setup was cancelled')
+      }
       throw ConnectionError.create(
         location.target,
         'install',
@@ -766,29 +801,73 @@ const createConnection = async (
       location,
       'Starting the LVCE Editor server on the Remote SSH host…',
     )
-    return spawnConnection(location, onClose)
+    try {
+      return await spawnConnection(location, onClose, signal)
+    } catch (error) {
+      connectionProgress.delete(location.identity)
+      throw error
+    }
   }
 }
 
-const getConnection = (location: RemoteLocation): Promise<Connection> => {
-  const existing = connections.get(location.identity)
-  if (existing) {
-    return existing
-  }
-  const onClose = (): void => {
-    connectionProgress.delete(location.identity)
-    if (connections.get(location.identity) === connection) {
-      connections.delete(location.identity)
+const getConnection = async (
+  location: RemoteLocation,
+  operationId?: number,
+): Promise<Connection> => {
+  let setup = connections.get(location.identity)
+  if (!setup) {
+    const controller = new AbortController()
+    const onClose = (): void => {
+      connectionProgress.delete(location.identity)
+      if (connections.get(location.identity) === setup) {
+        connections.delete(location.identity)
+      }
     }
-  }
-  const connection = createConnection(location, onClose)
-  connections.set(location.identity, connection)
-  void connection.catch(() => {
-    if (connections.get(location.identity) === connection) {
-      connections.delete(location.identity)
+    const created: ConnectionSetup = {
+      controller,
+      operationId,
+      promise: undefined as never,
+      settled: false,
+      waiters: 0,
     }
-  })
-  return connection
+    setup = created
+    const connection = createConnection(location, onClose, controller.signal)
+    created.promise = connection
+    void connection.then(
+      () => {
+        created.settled = true
+      },
+      () => {
+        created.settled = true
+        if (connections.get(location.identity) === created) {
+          connections.delete(location.identity)
+        }
+      },
+    )
+    connections.set(location.identity, created)
+  }
+  setup.waiters++
+  try {
+    return await setup.promise
+  } finally {
+    setup.waiters--
+  }
+}
+
+export const cancelConnectionSetup = (
+  location: RemoteLocation,
+  operationId: number,
+): void => {
+  const setup = connections.get(location.identity)
+  if (
+    !setup ||
+    setup.settled ||
+    setup.operationId !== operationId ||
+    setup.waiters > 1
+  ) {
+    return
+  }
+  setup.controller.abort()
 }
 
 export const invokeWorkspaceBackend: InvokeBackend = async (
@@ -801,10 +880,22 @@ export const invokeWorkspaceBackend: InvokeBackend = async (
   return connection.invokeBackend(type, method, params)
 }
 
+export const invokeWorkspaceBackendForOperation = async (
+  location: RemoteLocation,
+  type: string,
+  method: string,
+  operationId: number,
+  ...params: readonly unknown[]
+): Promise<unknown> => {
+  const connection = await getConnection(location, operationId)
+  return connection.invokeBackend(type, method, params)
+}
+
 export const connectWorkspaceBackend = async (
   location: RemoteLocation,
+  operationId?: number,
 ): Promise<WorkspaceBackend> => {
-  const connection = await getConnection(location)
+  const connection = await getConnection(location, operationId)
   return connection.getWorkspaceBackend()
 }
 
@@ -826,7 +917,7 @@ export const stopForwardPort = async (
   if (!connection) {
     return
   }
-  const activeConnection = await connection
+  const activeConnection = await connection.promise
   await activeConnection.stopForwardPort(location.path, remotePort)
 }
 
@@ -837,7 +928,7 @@ export const getForwardedPorts = async (
   if (!connection) {
     return []
   }
-  const activeConnection = await connection
+  const activeConnection = await connection.promise
   return activeConnection.getForwardedPorts(location.path)
 }
 
@@ -851,4 +942,9 @@ export const waitForOpenRequest = async (
 export const _getSshArgs = getSshArgs
 export const _getRemoteCommand = getRemoteCommand
 export const _validatePort = validatePort
-export const _resetConnections = (): void => connections.clear()
+export const _resetConnections = (): void => {
+  for (const setup of connections.values()) {
+    setup.controller.abort()
+  }
+  connections.clear()
+}

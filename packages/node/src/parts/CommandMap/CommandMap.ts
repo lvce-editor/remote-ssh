@@ -7,6 +7,7 @@ export const commandMap = {
   'RemoteSsh.dispose': SshProcessRegistry.dispose,
   'SshConfigHosts.get': SshConfigHosts.getSshConfigHosts,
   'SshFileSystem.connect': SshFileSystem.connect,
+  'SshFileSystem.cancelConnect': SshFileSystem.cancelConnect,
   'SshFileSystem.getProgress': SshFileSystem.getProgress,
   'SshFileSystem.mkdir': SshFileSystem.mkdir,
   'SshFileSystem.readDirWithFileTypes': SshFileSystem.readDirWithFileTypes,

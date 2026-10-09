@@ -2,8 +2,10 @@ import path from 'node:path'
 import * as RemoteSshUri from '../RemoteSshUri/RemoteSshUri.ts'
 import {
   connectWorkspaceBackend,
+  cancelConnectionSetup,
   getConnectionProgress,
   invokeWorkspaceBackend,
+  invokeWorkspaceBackendForOperation,
   type InvokeBackend,
   type OpenRequest,
   type WorkspaceBackend,
@@ -47,16 +49,33 @@ const sortDirents = (value: unknown): readonly unknown[] => {
   )
 }
 
-export const connect = async (uri: string): Promise<WorkspaceBackend> => {
+export const connect = async (
+  uri: string,
+  operationId?: number,
+): Promise<WorkspaceBackend> => {
   const location = RemoteSshUri.parse(uri)
-  const type = await invoke('FileSystem.stat', uri)
+  const type =
+    typeof operationId === 'number'
+      ? await invokeWorkspaceBackendForOperation(
+          location,
+          'file-system-process',
+          'FileSystem.stat',
+          operationId,
+          toFileUri(location.path),
+        )
+      : await invoke('FileSystem.stat', uri)
   if (type !== 3) {
     throw new Error(`Not a directory: ${location.path}`)
   }
   return {
-    ...(await connectWorkspaceBackend(location)),
+    ...(await connectWorkspaceBackend(location, operationId)),
     workspacePath: location.path,
   }
+}
+
+export const cancelConnect = (uri: string, operationId: number): void => {
+  const location = RemoteSshUri.parse(uri)
+  cancelConnectionSetup(location, operationId)
 }
 
 export const getProgress = (uri: string): string => {
