@@ -119,7 +119,6 @@ const endWorkspaceProgress: EndWorkspaceProgress = async (id) => {
     if (workspaceProgressState.operationId === id) {
       workspaceProgressState.operationId = undefined
       workspaceProgressState.data = { message: '', status: 'idle' }
-      await workspaceProgressState.registration?.refresh(id)
     }
     await executeCommand('Workspace.endProgress', id)
   } catch {
