@@ -91,10 +91,9 @@ const sshExecutable =
 
 interface ConnectionSetup {
   readonly controller: AbortController
-  readonly operationId: number | undefined
+  readonly operationIds: Set<number>
   promise: Promise<Connection>
   settled: boolean
-  waiters: number
 }
 
 const connections = new Map<string, ConnectionSetup>()
@@ -825,10 +824,11 @@ const getConnection = async (
     }
     const created: ConnectionSetup = {
       controller,
-      operationId,
+      operationIds: new Set(
+        typeof operationId === 'number' ? [operationId] : [],
+      ),
       promise: undefined as never,
       settled: false,
-      waiters: 0,
     }
     setup = created
     const connection = createConnection(location, onClose, controller.signal)
@@ -845,13 +845,14 @@ const getConnection = async (
       },
     )
     connections.set(location.identity, created)
+  } else if (typeof operationId === 'number') {
+    // A workspace-open request can first reach the remote filesystem through
+    // an unscoped stat before the Remote SSH extension joins with its progress
+    // operation ID. Associate that ID with the shared setup so closing the
+    // progress dialog can still abort the in-flight SSH work.
+    setup.operationIds.add(operationId)
   }
-  setup.waiters++
-  try {
-    return await setup.promise
-  } finally {
-    setup.waiters--
-  }
+  return setup.promise
 }
 
 export const cancelConnectionSetup = (
@@ -862,8 +863,8 @@ export const cancelConnectionSetup = (
   if (
     !setup ||
     setup.settled ||
-    setup.operationId !== operationId ||
-    setup.waiters > 1
+    !setup.operationIds.delete(operationId) ||
+    setup.operationIds.size > 0
   ) {
     return
   }
