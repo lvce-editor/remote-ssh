@@ -46,12 +46,17 @@ const runSsh = (
   location: RemoteLocation,
   command: string,
   input: NodeJS.ReadableStream | string,
+  signal?: AbortSignal,
 ): Promise<{
   readonly code: number
   readonly stderr: string
   readonly stdout: string
 }> => {
   return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new Error('Remote SSH workspace setup was cancelled'))
+      return
+    }
     const child = SshProcessRegistry.register(
       spawn(sshExecutable, getSshArgs(location, command), {
         stdio: ['pipe', 'pipe', 'pipe'],
@@ -66,7 +71,16 @@ const runSsh = (
       stderr.push(chunk)
     })
     child.once('error', reject)
+    const handleAbort = (): void => {
+      child.kill('SIGTERM')
+    }
+    signal?.addEventListener('abort', handleAbort, { once: true })
     child.once('close', (code) => {
+      signal?.removeEventListener('abort', handleAbort)
+      if (signal?.aborted) {
+        reject(new Error('Remote SSH workspace setup was cancelled'))
+        return
+      }
       resolve({
         code: code ?? -1,
         stderr: Buffer.concat(stderr).toString('utf8').trim(),
@@ -286,8 +300,9 @@ printf '${installedMarker}%s\\n' "$SERVER_VERSION"
 const downloadFile = async (
   url: string,
   destination: string,
+  signal?: AbortSignal,
 ): Promise<void> => {
-  const response = await fetch(url)
+  const response = await fetch(url, { signal })
   if (!response.ok || !response.body) {
     throw new Error(`Failed to download ${url}: HTTP ${response.status}`)
   }
@@ -314,9 +329,15 @@ const transferFile = async (
   manifest: ServerManifest,
   localPath: string,
   fileName: string,
+  signal?: AbortSignal,
 ): Promise<void> => {
   const command = createTransferCommand(manifest.serverVersion, fileName)
-  const result = await runSsh(location, command, createReadStream(localPath))
+  const result = await runSsh(
+    location,
+    command,
+    createReadStream(localPath),
+    signal,
+  )
   if (result.code !== 0) {
     throw new Error(result.stderr || `Failed to transfer ${fileName}`)
   }
@@ -339,6 +360,7 @@ const transferArchives = async (
   location: RemoteLocation,
   manifest: ServerManifest,
   required: ReadonlySet<'node' | 'server'>,
+  signal?: AbortSignal,
 ): Promise<void> => {
   const directory = await mkdtemp(path.join(tmpdir(), 'lvce-remote-ssh-'))
   try {
@@ -361,9 +383,9 @@ const transferArchives = async (
         continue
       }
       const localPath = path.join(directory, archive.name)
-      await downloadFile(archive.url, localPath)
+      await downloadFile(archive.url, localPath, signal)
       await verifyFile(localPath, archive.sha256)
-      await transferFile(location, manifest, localPath, archive.name)
+      await transferFile(location, manifest, localPath, archive.name, signal)
     }
   } finally {
     await rm(directory, { force: true, recursive: true })
@@ -373,10 +395,11 @@ const transferArchives = async (
 export const installServer = async (
   location: RemoteLocation,
   manifest: ServerManifest = defaultManifest,
+  signal?: AbortSignal,
 ): Promise<void> => {
   const script = createInstallScript(manifest)
   for (let attempt = 0; attempt < 3; attempt++) {
-    const result = await runSsh(location, '/bin/sh -s', script)
+    const result = await runSsh(location, '/bin/sh -s', script, signal)
     if (result.code === 84 || result.stdout.includes(unsupportedMarker)) {
       throw new Error(
         `LVCE Remote SSH Server currently supports Linux x64 only: ${result.stdout.trim()}`,
@@ -393,7 +416,7 @@ export const installServer = async (
       if (result.stdout.includes(`${downloadRequiredMarker}server`)) {
         required.add('server')
       }
-      await transferArchives(location, manifest, required)
+      await transferArchives(location, manifest, required, signal)
       continue
     }
     throw new Error(
