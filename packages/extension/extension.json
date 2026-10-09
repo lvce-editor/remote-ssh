@@ -64,6 +64,14 @@
       "label": "Remote SSH"
     }
   ],
+  "configuration": {
+    "remote-ssh.logLevel": {
+      "type": "string",
+      "enum": ["default", "verbose"],
+      "default": "default",
+      "description": "Controls the amount of information written to the Remote SSH output channel."
+    }
+  },
   "workspaceTransport": {
     "scheme": "remote-ssh",
     "command": "remote-ssh.connectToProcess",

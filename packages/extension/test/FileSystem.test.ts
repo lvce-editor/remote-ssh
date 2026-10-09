@@ -84,3 +84,112 @@ test('preserves SSH stat errors', async () => {
     fileSystem.stat('remote-ssh://example.com/root/secret'),
   ).rejects.toBe(error)
 })
+
+test('logs verbose file and folder reads with elapsed time', async () => {
+  const messages: string[] = []
+  let time = 10
+  const fileSystem = createRemoteFileSystem(
+    async (method) => {
+      if (method === 'SshFileSystem.readDirWithFileTypes') {
+        return []
+      }
+      return 'aGVsbG8='
+    },
+    {
+      getLogLevel: async () => 'verbose',
+      log: async (message) => {
+        messages.push(message)
+      },
+      now: () => {
+        time += 2.5
+        return time
+      },
+    },
+  )
+
+  await fileSystem.readFile('remote-ssh://user@example.com/readme.txt')
+  await fileSystem.readDirWithFileTypes('remote-ssh://user@example.com/project')
+
+  expect(messages).toEqual([
+    'Read file /readme.txt completed in 2.5 ms',
+    'Read folder /project completed in 2.5 ms',
+  ])
+})
+
+test('keeps file read results and errors when verbose logging fails', async () => {
+  const fileSystem = createRemoteFileSystem(async () => 'aGVsbG8=', {
+    getLogLevel: async () => 'verbose',
+    log: async () => {
+      throw new Error('Output unavailable')
+    },
+    now: () => 0,
+  })
+  const blob = await fileSystem.readFile('remote-ssh://example.com/readme.txt')
+  await expect(blob.text()).resolves.toBe('hello')
+
+  const originalError = new Error('Permission denied')
+  const failingFileSystem = createRemoteFileSystem(
+    async () => {
+      throw originalError
+    },
+    {
+      getLogLevel: async () => 'verbose',
+      log: async () => {
+        throw new Error('Output unavailable')
+      },
+      now: () => 0,
+    },
+  )
+  await expect(
+    failingFileSystem.readFile('remote-ssh://example.com/secret'),
+  ).rejects.toBe(originalError)
+})
+
+test('does not log reads in default mode', async () => {
+  const log = jest.fn(async () => {})
+  const fileSystem = createRemoteFileSystem(async () => 'aGVsbG8=', {
+    getLogLevel: async () => 'default',
+    log,
+    now: () => 0,
+  })
+
+  await fileSystem.readFile('remote-ssh://example.com/readme.txt')
+
+  expect(log).not.toHaveBeenCalled()
+})
+
+test('measures overlapping reads independently', async () => {
+  const first = Promise.withResolvers<string>()
+  const second = Promise.withResolvers<string>()
+  const messages: string[] = []
+  const times = [0, 1, 12, 20]
+  let readCount = 0
+  const fileSystem = createRemoteFileSystem(
+    async () => {
+      readCount += 1
+      if (readCount === 1) {
+        return first.promise
+      }
+      return second.promise
+    },
+    {
+      getLogLevel: async () => 'verbose',
+      log: async (message) => {
+        messages.push(message)
+      },
+      now: () => times.shift() ?? 20,
+    },
+  )
+
+  const firstRead = fileSystem.readFile('remote-ssh://example.com/first.txt')
+  const secondRead = fileSystem.readFile('remote-ssh://example.com/second.txt')
+  first.resolve('aGVsbG8=')
+  await firstRead
+  second.resolve('aGVsbG8=')
+  await secondRead
+
+  expect(messages).toEqual([
+    'Read file /first.txt completed in 12.0 ms',
+    'Read file /second.txt completed in 19.0 ms',
+  ])
+})
