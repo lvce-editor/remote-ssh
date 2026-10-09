@@ -25,6 +25,7 @@
   "categories": ["Other"],
   "activation": [
     "onCommand:remote-ssh.connect",
+    "onCommand:remote-ssh.prepareWorkspace",
     "onCommand:remote-ssh.connectToProcess",
     "onFileSystem:remote-ssh",
     "onCommand:remote-ssh.request",
@@ -32,6 +33,10 @@
     "onOutput"
   ],
   "commands": [
+    {
+      "id": "remote-ssh.prepareWorkspace",
+      "internal": true
+    },
     {
       "id": "remote-ssh.connect",
       "label": "SSH: Connect"
