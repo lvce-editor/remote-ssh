@@ -4,6 +4,7 @@ import {
   showQuickInput,
   showQuickPick,
 } from '@lvce-editor/api'
+import * as ExtensionApi from '@lvce-editor/api'
 import * as OutputChannel from '../OutputChannel/OutputChannel.ts'
 import * as RemoteCli from '../RemoteCli/RemoteCli.ts'
 import * as Rpc from '../Rpc/Rpc.ts'
@@ -43,6 +44,40 @@ export type UpdateWorkspaceProgress = (
   message: string,
 ) => Promise<void>
 
+type WorkspaceProgressStatus = 'idle' | 'in-progress' | 'finished' | 'error'
+let workspaceProgressData: {
+  message: string
+  status: WorkspaceProgressStatus
+} = { message: '', status: 'idle' }
+let workspaceProgressOperationId: number | undefined
+type WorkspaceProgressHandle = {
+  dispose(): Promise<void>
+  refresh(operationId?: number): Promise<void>
+}
+const registerWorkspaceProgressProvider = (
+  ExtensionApi as typeof ExtensionApi & {
+    registerWorkspaceProgressProvider(provider: {
+      getProgressData: () => typeof workspaceProgressData
+      id: string
+    }): WorkspaceProgressHandle
+  }
+).registerWorkspaceProgressProvider
+let workspaceProgressRegistration: WorkspaceProgressHandle | undefined
+
+export const registerWorkspaceProgress = (): void => {
+  workspaceProgressRegistration = registerWorkspaceProgressProvider({
+    getProgressData: () => workspaceProgressData,
+    id: 'remote-ssh.connection',
+  })
+}
+
+export const disposeWorkspaceProgress = async (): Promise<void> => {
+  workspaceProgressOperationId = undefined
+  workspaceProgressData = { message: '', status: 'idle' }
+  await workspaceProgressRegistration?.dispose()
+  workspaceProgressRegistration = undefined
+}
+
 interface WorkspaceBackend {
   readonly token: string
   readonly url: string
@@ -74,6 +109,9 @@ const isProgressCancelled: IsProgressCancelled = async (id) => {
 const startWorkspaceProgress: StartWorkspaceProgress = async (message) => {
   try {
     const id = await executeCommand('Workspace.startProgress', message)
+    workspaceProgressOperationId = typeof id === 'number' ? id : undefined
+    workspaceProgressData = { message, status: 'in-progress' }
+    await workspaceProgressRegistration?.refresh(workspaceProgressOperationId)
     return typeof id === 'number' ? id : undefined
   } catch {
     return undefined
@@ -82,6 +120,11 @@ const startWorkspaceProgress: StartWorkspaceProgress = async (message) => {
 
 const endWorkspaceProgress: EndWorkspaceProgress = async (id) => {
   try {
+    if (workspaceProgressOperationId === id) {
+      workspaceProgressOperationId = undefined
+      workspaceProgressData = { message: '', status: 'idle' }
+      await workspaceProgressRegistration?.refresh(id)
+    }
     await executeCommand('Workspace.endProgress', id)
   } catch {
     // Progress is optional and must not hide the connection result.
@@ -93,7 +136,10 @@ const updateWorkspaceProgress: UpdateWorkspaceProgress = async (
   message,
 ) => {
   try {
-    await executeCommand('Workspace.updateProgress', id, message)
+    if (workspaceProgressOperationId === id) {
+      workspaceProgressData = { message, status: 'in-progress' }
+      await workspaceProgressRegistration?.refresh(id)
+    }
   } catch {
     // Progress is optional and must not hide the connection result.
   }

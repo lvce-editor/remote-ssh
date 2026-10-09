@@ -24,6 +24,7 @@ export const activate = async (): Promise<void> => {
   state.activated = true
   try {
     await activateExtensionApi()
+    Connect.registerWorkspaceProgress()
     registerFileSystemProvider(fileSystem)
     state.portProviderRegistration = registerPortProvider({
       async providePorts(workspaceUri) {
@@ -80,6 +81,7 @@ export const activate = async (): Promise<void> => {
     }
   } catch (error) {
     state.activated = false
+    await Connect.disposeWorkspaceProgress()
     state.portProviderRegistration?.dispose()
     state.portProviderRegistration = undefined
     WorkspaceConnection.reset()
@@ -89,6 +91,7 @@ export const activate = async (): Promise<void> => {
 
 export const deactivate = async (): Promise<void> => {
   state.activated = false
+  await Connect.disposeWorkspaceProgress()
   state.portProviderRegistration?.dispose()
   state.portProviderRegistration = undefined
   ProcessConnection.dispose()
