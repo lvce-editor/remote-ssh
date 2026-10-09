@@ -14,6 +14,8 @@ import {
 import { createServer, createConnection, type Socket } from 'node:net'
 import { homedir } from 'node:os'
 import path from 'node:path'
+import { PassThrough } from 'node:stream'
+import { setTimeout as delay } from 'node:timers/promises'
 import * as RemoteCli from './parts/RemoteCli/RemoteCli.ts'
 import { createRemoteWebGateway } from './RemoteWebGateway.ts'
 
@@ -142,9 +144,10 @@ const isCurrentState = (
   )
 }
 
-const waitForServer = async (): Promise<ServerState> => {
+const waitForServer = async (signal: AbortSignal): Promise<ServerState> => {
   const deadline = Date.now() + 10_000
   while (Date.now() < deadline) {
+    signal.throwIfAborted()
     const state = await readState()
     if (isCurrentState(state)) {
       try {
@@ -155,7 +158,7 @@ const waitForServer = async (): Promise<ServerState> => {
         // The state may have been written just before the socket was ready.
       }
     }
-    await new Promise((resolve) => setTimeout(resolve, 25))
+    await delay(25, undefined, { signal })
   }
   throw new Error(`Remote SSH server did not start; see ${logPath}`)
 }
@@ -259,6 +262,7 @@ const getBuiltinExtensionsPath = async (): Promise<string | undefined> => {
 const startWorkspaceBackend = async (
   log: number,
   cliBinDirectory: string,
+  signal: AbortSignal,
 ): Promise<{
   readonly child: ChildProcess
   readonly pid: number
@@ -268,6 +272,7 @@ const startWorkspaceBackend = async (
   const port = await getAvailablePort()
   const token = randomBytes(32).toString('hex')
   const builtinExtensionsPath = await getBuiltinExtensionsPath()
+  signal.throwIfAborted()
   const child = spawn(
     process.execPath,
     [
@@ -293,23 +298,36 @@ const startWorkspaceBackend = async (
     },
   )
   child.unref()
-  const deadline = Date.now() + 30_000
-  while (Date.now() < deadline) {
-    if (await canConnect(port)) {
-      return { child, pid: child.pid!, port, token }
+  const stop = (): void => stopWorkspaceBackend(child.pid!)
+  signal.addEventListener('abort', stop, { once: true })
+  try {
+    const deadline = Date.now() + 30_000
+    while (Date.now() < deadline) {
+      signal.throwIfAborted()
+      if (await canConnect(port)) {
+        signal.throwIfAborted()
+        return { child, pid: child.pid!, port, token }
+      }
+      if (child.exitCode !== null || child.signalCode !== null) break
+      await delay(25, undefined, { signal })
     }
-    if (child.exitCode !== null) {
-      break
-    }
-    await new Promise((resolve) => setTimeout(resolve, 25))
+    throw new Error(
+      `LVCE remote workspace backend did not start; see ${logPath}`,
+    )
+  } catch (error) {
+    stop()
+    throw error
+  } finally {
+    signal.removeEventListener('abort', stop)
   }
-  stopWorkspaceBackend(child.pid!)
-  throw new Error(`LVCE remote workspace backend did not start; see ${logPath}`)
 }
 
-const acquireLock = async (): Promise<() => Promise<void>> => {
+const acquireLock = async (
+  signal: AbortSignal,
+): Promise<() => Promise<void>> => {
   await mkdir(runDirectory, { recursive: true, mode: 0o700 })
   while (true) {
+    signal.throwIfAborted()
     try {
       await mkdir(lockPath, { mode: 0o700 })
       return async () => rm(lockPath, { force: true, recursive: true })
@@ -322,24 +340,18 @@ const acquireLock = async (): Promise<() => Promise<void>> => {
         await rm(lockPath, { force: true, recursive: true })
         continue
       }
-      await new Promise((resolve) => setTimeout(resolve, 50))
+      await delay(50, undefined, { signal })
     }
   }
 }
 
-const ensureServer = async (): Promise<ServerState> => {
-  const existing = await readState()
-  if (isCurrentState(existing)) {
-    try {
-      const socket = await connectSocket(existing)
-      socket.destroy()
-      return existing
-    } catch {
-      // Remove stale state while holding the startup lock below.
-    }
-  }
-  const release = await acquireLock()
+const ensureServer = async (
+  signal: AbortSignal = new AbortController().signal,
+): Promise<ServerState> => {
+  signal.throwIfAborted()
+  const release = await acquireLock(signal)
   try {
+    signal.throwIfAborted()
     const raced = await readState()
     if (isCurrentState(raced)) {
       try {
@@ -350,194 +362,290 @@ const ensureServer = async (): Promise<ServerState> => {
         await rm(statePath, { force: true })
       }
     }
+    signal.throwIfAborted()
     const log = openSync(logPath, 'a', 0o600)
-    const child = spawn(process.execPath, [process.argv[1], 'daemon'], {
-      detached: true,
-      env: process.env,
-      stdio: ['ignore', log, log],
-    })
+    const child = spawn(
+      process.execPath,
+      [process.argv[1], 'daemon', '--startup-owner'],
+      {
+        detached: true,
+        env: process.env,
+        stdio: ['ignore', log, log, 'ipc'],
+      },
+    )
     child.unref()
     closeSync(log)
-    await chmod(logPath, 0o600)
-    return await waitForServer()
+    const startupSettled = new Promise<void>((resolve) => {
+      child.once('exit', () => resolve())
+      child.once('message', () => resolve())
+    })
+    let startupCancelled = false
+    const cancelStartup = (): void => {
+      if (!child.connected) return
+      startupCancelled = true
+      // Keep this connector alive until the canceled daemon finishes cleanup.
+      child.ref()
+      child.send('cancel-startup', () => {
+        // The daemon may already have published readiness and disconnected.
+      })
+    }
+    signal.addEventListener('abort', cancelStartup, { once: true })
+    try {
+      await chmod(logPath, 0o600)
+      return await waitForServer(signal)
+    } catch (error) {
+      // Only this connector's unpublished startup is owned by the IPC channel.
+      // Wait for cleanup before allowing another connector to acquire the lock.
+      cancelStartup()
+      if (startupCancelled) await startupSettled
+      throw error
+    } finally {
+      signal.removeEventListener('abort', cancelStartup)
+      child.unref()
+    }
   } finally {
     await release()
   }
 }
 
 const connectOrStart = async (): Promise<void> => {
-  const state = await ensureServer()
-  const socket = await authenticate(state)
-  socket.pipe(process.stdout)
-  process.stdin.pipe(socket)
-  process.stdin.once('end', () => socket.end())
-  await new Promise<void>((resolve, reject) => {
-    socket.once('close', () => resolve())
-    socket.once('error', reject)
-  })
+  const controller = new AbortController()
+  const input = new PassThrough()
+  const cancel = (): void => controller.abort()
+  process.stdin.once('end', cancel)
+  process.once('SIGTERM', cancel)
+  process.once('SIGINT', cancel)
+  process.once('SIGHUP', cancel)
+  // Drain SSH stdin immediately to observe EOF during startup, while retaining
+  // any protocol bytes until the management socket is ready.
+  process.stdin.pipe(input)
+  try {
+    const state = await ensureServer(controller.signal)
+    controller.signal.throwIfAborted()
+    const socket = await authenticate(state)
+    const disconnect = (): void => {
+      socket.destroy()
+    }
+    controller.signal.addEventListener('abort', disconnect, { once: true })
+    const closed = new Promise<void>((resolve, reject) => {
+      socket.once('close', () => resolve())
+      socket.once('error', reject)
+    })
+    try {
+      if (controller.signal.aborted) disconnect()
+      socket.pipe(process.stdout)
+      input.pipe(socket)
+      await closed
+    } finally {
+      controller.signal.removeEventListener('abort', disconnect)
+      socket.destroy()
+    }
+  } finally {
+    process.stdin.off('end', cancel)
+    process.off('SIGTERM', cancel)
+    process.off('SIGINT', cancel)
+    process.off('SIGHUP', cancel)
+    process.stdin.unpipe(input)
+    process.stdin.pause()
+    input.destroy()
+  }
 }
 
 const runDaemon = async (): Promise<void> => {
-  await mkdir(runDirectory, { recursive: true, mode: 0o700 })
-  await chmod(runDirectory, 0o700)
-  await rm(socketPath, { force: true })
-  const token = randomBytes(32).toString('hex')
-  const cliBinDirectory = await RemoteCli.prepare(
-    root,
-    process.execPath,
-    process.argv[1],
-    serverVersion,
-  )
-  const log = openSync(logPath, 'a', 0o600)
-  let backend: Awaited<ReturnType<typeof startWorkspaceBackend>>
-  try {
-    backend = await startWorkspaceBackend(log, cliBinDirectory)
-  } catch (error) {
-    closeSync(log)
-    throw error
+  const controller = new AbortController()
+  const cancelStartup = (): void => controller.abort()
+  const cancelMessage = (message: unknown): void => {
+    if (message === 'cancel-startup') cancelStartup()
   }
-  closeSync(log)
-  const cliClients = new Set<Socket>()
-  let cliServer: Awaited<ReturnType<typeof RemoteCli.listen>>
-  try {
-    cliServer = await RemoteCli.listen(root, serverVersion, (request) => {
-      const client = [...cliClients].findLast(
-        (socket) => socket.writable && !socket.destroyed,
-      )
-      if (!client) {
-        return false
-      }
-      writeJson(client, request)
-      return true
-    })
-  } catch (error) {
-    stopWorkspaceBackend(backend.pid)
-    throw error
+  if (process.argv[3] === '--startup-owner') {
+    process.once('disconnect', cancelStartup)
+    process.on('message', cancelMessage)
+    if (!process.connected) cancelStartup()
   }
+  let backend: Awaited<ReturnType<typeof startWorkspaceBackend>> | undefined
+  let cliServer: Awaited<ReturnType<typeof RemoteCli.listen>> | undefined
+  let server: ReturnType<typeof createServer> | undefined
   const sockets = new Set<Socket>()
-  let connectionCount = 0
-  let idleTimer: NodeJS.Timeout | undefined
-  const server = createServer((socket) => {
-    sockets.add(socket)
-    let authenticated = false
-    let stopReading = () => {}
-    connectionCount++
-    socket.on('error', () => {
-      // Authentication and transport errors close only this client socket.
-    })
-    if (idleTimer) {
-      clearTimeout(idleTimer)
-      idleTimer = undefined
-    }
-    stopReading = createLineReader(socket, (line) => {
-      if (!authenticated) {
-        try {
-          const value = JSON.parse(line) as {
-            readonly clientVersion?: string
-            readonly token?: string
-            readonly type?: string
-          }
-          if (
-            value.type !== 'authenticate' ||
-            value.token !== token ||
-            typeof value.clientVersion !== 'string'
-          ) {
-            socket.destroy(new Error('Authentication failed'))
-            return
-          }
-          authenticated = true
-          cliClients.add(socket)
-          writeJson(socket, {
-            arch: process.arch,
-            backend: {
-              port: state.backendPort,
-              token: state.backendToken,
-            },
-            capabilities: [
-              'extensionHostHelperProcess',
-              'fileSystemProcess',
-              'processExplorer',
-              'remoteCli',
-              'searchProcess',
-              'terminalProcess',
-              'workspaceBackend',
-            ],
-            clientVersion: value.clientVersion,
-            platform: process.platform,
-            protocolVersion,
-            type: 'ready',
-            version: serverVersion,
-          })
-        } catch {
-          socket.destroy(new Error('Invalid authentication request'))
-        }
-        return
-      }
-      socket.destroy(new Error('Unexpected management protocol message'))
-    })
-    socket.once('close', () => {
-      sockets.delete(socket)
-      cliClients.delete(socket)
-      stopReading()
-      connectionCount--
-      if (connectionCount === 0) {
-        idleTimer = setTimeout(() => server.close(), idleTimeout)
-        idleTimer.unref()
-      }
-    })
-  })
-  await new Promise<void>((resolve, reject) => {
-    server.once('error', reject)
-    server.listen(socketPath, () => resolve())
-  })
-  await chmod(socketPath, 0o600)
-  const state: ServerState = {
-    backendPid: backend.pid,
-    backendPort: backend.port,
-    backendToken: backend.token,
-    pid: process.pid,
-    protocolVersion,
-    socketPath,
-    token,
-    version: serverVersion,
-  }
-  const temporaryStatePath = `${statePath}.${process.pid}.tmp`
-  await writeFile(temporaryStatePath, JSON.stringify(state), { mode: 0o600 })
-  await rename(temporaryStatePath, statePath)
-  const cleanup = async (): Promise<void> => {
-    const current = await readState()
-    if (current?.pid === process.pid) {
-      await rm(statePath, { force: true })
-    }
+  try {
+    controller.signal.throwIfAborted()
+
+    await mkdir(runDirectory, { recursive: true, mode: 0o700 })
+    await chmod(runDirectory, 0o700)
     await rm(socketPath, { force: true })
-    await RemoteCli.close(cliServer, root, serverVersion)
-    stopWorkspaceBackend(backend.pid)
-  }
-  const shutdown = (): void => {
-    if (idleTimer) {
-      clearTimeout(idleTimer)
-    }
-    server.close()
-    for (const socket of sockets) {
-      socket.destroy()
-    }
-  }
-  const closed = new Promise<void>((resolve) =>
-    server.once('close', () => resolve()),
-  )
-  backend.child.once('exit', (code, signal) => {
-    process.stderr.write(
-      `LVCE remote workspace backend exited (code ${code}, signal ${signal}); disconnecting clients so they can reconnect.\n`,
+    const token = randomBytes(32).toString('hex')
+    const cliBinDirectory = await RemoteCli.prepare(
+      root,
+      process.execPath,
+      process.argv[1],
+      serverVersion,
     )
-    shutdown()
-  })
-  process.once('SIGTERM', shutdown)
-  process.once('SIGINT', shutdown)
-  if (backend.child.exitCode !== null || backend.child.signalCode !== null) {
-    shutdown()
+    const log = openSync(logPath, 'a', 0o600)
+    try {
+      backend = await startWorkspaceBackend(
+        log,
+        cliBinDirectory,
+        controller.signal,
+      )
+    } catch (error) {
+      closeSync(log)
+      throw error
+    }
+    closeSync(log)
+    const cliClients = new Set<Socket>()
+    try {
+      cliServer = await RemoteCli.listen(root, serverVersion, (request) => {
+        const client = [...cliClients].findLast(
+          (socket) => socket.writable && !socket.destroyed,
+        )
+        if (!client) {
+          return false
+        }
+        writeJson(client, request)
+        return true
+      })
+    } catch (error) {
+      stopWorkspaceBackend(backend.pid)
+      throw error
+    }
+    let connectionCount = 0
+    let idleTimer: NodeJS.Timeout | undefined
+    server = createServer((socket) => {
+      sockets.add(socket)
+      let authenticated = false
+      let stopReading = () => {}
+      connectionCount++
+      socket.on('error', () => {
+        // Authentication and transport errors close only this client socket.
+      })
+      if (idleTimer) {
+        clearTimeout(idleTimer)
+        idleTimer = undefined
+      }
+      stopReading = createLineReader(socket, (line) => {
+        if (!authenticated) {
+          try {
+            const value = JSON.parse(line) as {
+              readonly clientVersion?: string
+              readonly token?: string
+              readonly type?: string
+            }
+            if (
+              value.type !== 'authenticate' ||
+              value.token !== token ||
+              typeof value.clientVersion !== 'string'
+            ) {
+              socket.destroy(new Error('Authentication failed'))
+              return
+            }
+            authenticated = true
+            cliClients.add(socket)
+            writeJson(socket, {
+              arch: process.arch,
+              backend: {
+                port: state.backendPort,
+                token: state.backendToken,
+              },
+              capabilities: [
+                'extensionHostHelperProcess',
+                'fileSystemProcess',
+                'processExplorer',
+                'remoteCli',
+                'searchProcess',
+                'terminalProcess',
+                'workspaceBackend',
+              ],
+              clientVersion: value.clientVersion,
+              platform: process.platform,
+              protocolVersion,
+              type: 'ready',
+              version: serverVersion,
+            })
+          } catch {
+            socket.destroy(new Error('Invalid authentication request'))
+          }
+          return
+        }
+        socket.destroy(new Error('Unexpected management protocol message'))
+      })
+      socket.once('close', () => {
+        sockets.delete(socket)
+        cliClients.delete(socket)
+        stopReading()
+        connectionCount--
+        if (connectionCount === 0) {
+          idleTimer = setTimeout(() => managementServer.close(), idleTimeout)
+          idleTimer.unref()
+        }
+      })
+    })
+    const managementServer = server
+    await new Promise<void>((resolve, reject) => {
+      managementServer.once('error', reject)
+      managementServer.listen(socketPath, () => resolve())
+    })
+    await chmod(socketPath, 0o600)
+    const state: ServerState = {
+      backendPid: backend.pid,
+      backendPort: backend.port,
+      backendToken: backend.token,
+      pid: process.pid,
+      protocolVersion,
+      socketPath,
+      token,
+      version: serverVersion,
+    }
+    const temporaryStatePath = `${statePath}.${process.pid}.tmp`
+    await writeFile(temporaryStatePath, JSON.stringify(state), { mode: 0o600 })
+    controller.signal.throwIfAborted()
+    await rename(temporaryStatePath, statePath)
+    controller.signal.throwIfAborted()
+    // Publishing readiness transfers ownership to the shared daemon. A later
+    // connector disconnect cannot tear down another client's backend.
+    process.off('disconnect', cancelStartup)
+    process.off('message', cancelMessage)
+    if (process.connected) {
+      process.send?.('startup-ready', () => {
+        if (process.connected) process.disconnect?.()
+      })
+    }
+    const shutdown = (): void => {
+      if (idleTimer) {
+        clearTimeout(idleTimer)
+      }
+      managementServer.close()
+      for (const socket of sockets) {
+        socket.destroy()
+      }
+    }
+    const closed = new Promise<void>((resolve) =>
+      managementServer.once('close', () => resolve()),
+    )
+    backend.child.once('exit', (code, signal) => {
+      process.stderr.write(
+        `LVCE remote workspace backend exited (code ${code}, signal ${signal}); disconnecting clients so they can reconnect.\n`,
+      )
+      shutdown()
+    })
+    process.once('SIGTERM', shutdown)
+    process.once('SIGINT', shutdown)
+    if (backend.child.exitCode !== null || backend.child.signalCode !== null) {
+      shutdown()
+    }
+    await closed
+  } finally {
+    process.off('disconnect', cancelStartup)
+    process.off('message', cancelMessage)
+    if (backend) stopWorkspaceBackend(backend.pid)
+    if (process.connected) process.disconnect?.()
+    for (const socket of sockets) socket.destroy()
+    if (server?.listening)
+      await new Promise<void>((resolve) => server!.close(() => resolve()))
+    const current = await readState()
+    if (current?.pid === process.pid) await rm(statePath, { force: true })
+    await rm(`${statePath}.${process.pid}.tmp`, { force: true })
+    if (server) await rm(socketPath, { force: true })
+    if (cliServer) await RemoteCli.close(cliServer, root, serverVersion)
   }
-  await closed
-  await cleanup()
 }
 
 const getOption = (name: string): string => {

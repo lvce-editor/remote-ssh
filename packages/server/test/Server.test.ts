@@ -4,6 +4,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { test } from 'node:test'
+import { setTimeout as delay } from 'node:timers/promises'
 
 interface ServerState {
   readonly backendPid: number
@@ -46,10 +47,11 @@ const readLine = (child: ChildProcessWithoutNullStreams): Promise<string> => {
   })
 }
 
-const connect = async (
+const startConnector = (
   root: string,
-): Promise<ChildProcessWithoutNullStreams> => {
-  const child = spawn(process.execPath, [entry, 'connect-or-start'], {
+  environment: NodeJS.ProcessEnv = {},
+): ChildProcessWithoutNullStreams => {
+  return spawn(process.execPath, [entry, 'connect-or-start'], {
     env: {
       ...process.env,
       LVCE_REMOTE_SSH_IDLE_TIMEOUT: '2000',
@@ -59,9 +61,16 @@ const connect = async (
         root,
         'open-request.json',
       ),
+      ...environment,
     },
     stdio: ['pipe', 'pipe', 'pipe'],
   })
+}
+
+const connect = async (
+  root: string,
+): Promise<ChildProcessWithoutNullStreams> => {
+  const child = startConnector(root)
   const ready = JSON.parse(await readLine(child)) as {
     readonly backend: { readonly port: number; readonly token: string }
     readonly capabilities: readonly string[]
@@ -261,3 +270,135 @@ void test(
     await stopConnector(second)
   },
 )
+
+const waitFor = async (predicate: () => Promise<boolean>): Promise<void> => {
+  const deadline = Date.now() + 2000
+  while (!(await predicate())) {
+    if (Date.now() > deadline) {
+      throw new Error('Timed out waiting for startup cancellation')
+    }
+    await delay(10)
+  }
+}
+
+const isRunning = (pid: number): boolean => {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch {
+    return false
+  }
+}
+
+for (const cancellation of ['stdin', 'SIGTERM', 'SIGKILL'] as const) {
+  void test(
+    `cancels an unpublished daemon on ${cancellation}`,
+    { skip: process.platform === 'win32', timeout: 8000 },
+    async (context) => {
+      const root = await mkdtemp(path.join(tmpdir(), 'lvce-server-cancel-'))
+      const gate = path.join(root, 'startup-gate')
+      const statePath = path.join(root, 'run', 'server-dev.json')
+      const connectors: ChildProcessWithoutNullStreams[] = []
+      const readStarted = async (): Promise<ServerState[]> => {
+        const text = await readFile(`${gate}.started`, 'utf8').catch(() => '')
+        return text.trim()
+          ? text
+              .trim()
+              .split('\n')
+              .map((line) => JSON.parse(line) as ServerState)
+          : []
+      }
+      context.after(async () => {
+        for (const connector of connectors) connector.kill('SIGKILL')
+        for (const state of await readStarted()) stopState(state)
+        await rm(root, { force: true, recursive: true })
+      })
+      await writeFile(gate, '')
+      const first = startConnector(root, {
+        LVCE_REMOTE_SSH_TEST_STARTUP_GATE: gate,
+      })
+      connectors.push(first)
+      await waitFor(async () => (await readStarted()).length === 1)
+      const [started] = await readStarted()
+      if (cancellation === 'stdin') first.stdin.end()
+      else first.kill(cancellation)
+      await waitFor(async () => !isRunning(started.backendPid))
+      await waitFor(
+        async () => first.exitCode !== null || first.signalCode !== null,
+      )
+      // Releasing the gate must not let the canceled backend publish readiness.
+      await rm(gate)
+      strictEqual(await readFile(statePath).catch(() => undefined), undefined)
+      // SIGKILL leaves the existing stale-lock recovery policy in effect.
+      if (cancellation === 'SIGKILL') return
+      const retry = await connect(root)
+      connectors.push(retry)
+      const state = JSON.parse(await readFile(statePath, 'utf8')) as ServerState
+      strictEqual(state.backendPid === started.backendPid, false)
+      await stopConnector(retry)
+      stopState(state)
+    },
+  )
+}
+
+for (const cancelOwner of [false, true]) {
+  void test(
+    `preserves a concurrent connector when the ${cancelOwner ? 'startup owner' : 'waiter'} cancels`,
+    { skip: process.platform === 'win32', timeout: 8000 },
+    async (context) => {
+      const root = await mkdtemp(path.join(tmpdir(), 'lvce-server-concurrent-'))
+      const gate = path.join(root, 'startup-gate')
+      const statePath = path.join(root, 'run', 'server-dev.json')
+      const connectors: ChildProcessWithoutNullStreams[] = []
+      const readStarted = async (): Promise<ServerState[]> => {
+        const text = await readFile(`${gate}.started`, 'utf8').catch(() => '')
+        return text.trim()
+          ? text
+              .trim()
+              .split('\n')
+              .map((line) => JSON.parse(line) as ServerState)
+          : []
+      }
+      context.after(async () => {
+        for (const connector of connectors) connector.kill('SIGKILL')
+        for (const state of await readStarted()) stopState(state)
+        await rm(root, { force: true, recursive: true })
+      })
+      await writeFile(gate, '')
+      const first = startConnector(root, {
+        LVCE_REMOTE_SSH_TEST_STARTUP_GATE: gate,
+      })
+      connectors.push(first)
+      await waitFor(async () => (await readStarted()).length === 1)
+      const [original] = await readStarted()
+      const second = startConnector(root, {
+        LVCE_REMOTE_SSH_TEST_STARTUP_GATE: gate,
+      })
+      connectors.push(second)
+      const canceled = cancelOwner ? first : second
+      const survivor = cancelOwner ? second : first
+      const ready = readLine(survivor)
+      canceled.stdin.end()
+      await waitFor(
+        async () => canceled.exitCode !== null || canceled.signalCode !== null,
+      )
+      if (cancelOwner) {
+        await waitFor(async () => (await readStarted()).length === 2)
+        strictEqual(isRunning(original.backendPid), false)
+      } else {
+        strictEqual(isRunning(original.backendPid), true)
+        strictEqual((await readStarted()).length, 1)
+      }
+      await rm(gate)
+      strictEqual((JSON.parse(await ready) as { type: string }).type, 'ready')
+      const state = JSON.parse(await readFile(statePath, 'utf8')) as ServerState
+      strictEqual(state.backendPid === original.backendPid, !cancelOwner)
+      const third = await connect(root)
+      connectors.push(third)
+      await stopConnector(survivor)
+      strictEqual(isRunning(state.backendPid), true)
+      strictEqual(third.exitCode, null)
+      await stopConnector(third)
+    },
+  )
+}
