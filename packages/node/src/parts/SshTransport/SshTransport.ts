@@ -364,7 +364,7 @@ class RemoteConnection implements Connection {
       this.close(new Error('Remote SSH server handshake timed out'))
       child.kill()
     }, 30_000)
-    this.handleAbort = () => {
+    this.handleAbort = (): void => {
       this.close(new Error('Remote SSH workspace setup was cancelled'))
       child.kill('SIGTERM')
     }

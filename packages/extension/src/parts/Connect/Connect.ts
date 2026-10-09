@@ -116,16 +116,18 @@ const connectWithProgress = async (
   }
   let active = true
   let lastMessage = ''
-  let rejectCancellation: (error: Error) => void = () => {}
-  const cancellation = new Promise<never>((_resolve, reject) => {
-    rejectCancellation = reject
-  })
+  const { promise: cancellation, reject: rejectCancellation } =
+    Promise.withResolvers<never>()
   const pollProgress = async (): Promise<void> => {
     while (active) {
       try {
         if (await isCancelled(progressId)) {
           active = false
-          await cancelRemote(uri, progressId).catch(() => {})
+          try {
+            await cancelRemote(uri, progressId)
+          } catch {
+            // Cancellation state still prevents opening the workspace.
+          }
           rejectCancellation(new WorkspaceSetupCancelledError())
           return
         }
@@ -149,7 +151,11 @@ const connectWithProgress = async (
       cancellation,
     ])
     if (await isCancelled(progressId)) {
-      await cancelRemote(uri, progressId).catch(() => {})
+      try {
+        await cancelRemote(uri, progressId)
+      } catch {
+        // Cancellation state still prevents opening the workspace.
+      }
       throw new WorkspaceSetupCancelledError()
     }
     return value
