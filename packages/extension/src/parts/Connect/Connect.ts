@@ -1,10 +1,14 @@
+import type {
+  WorkspaceProgressData,
+  WorkspaceProgressProviderHandle,
+} from '@lvce-editor/api'
 import {
   executeCommand,
+  registerWorkspaceProgressProvider,
   showNotification,
   showQuickInput,
   showQuickPick,
 } from '@lvce-editor/api'
-import * as ExtensionApi from '@lvce-editor/api'
 import * as OutputChannel from '../OutputChannel/OutputChannel.ts'
 import * as RemoteCli from '../RemoteCli/RemoteCli.ts'
 import * as Rpc from '../Rpc/Rpc.ts'
@@ -44,21 +48,10 @@ export type UpdateWorkspaceProgress = (
   message: string,
 ) => Promise<void>
 
-type WorkspaceProgressStatus = 'idle' | 'in-progress' | 'finished' | 'error'
-type WorkspaceProgressHandle = {
-  dispose(): Promise<void>
-  refresh(operationId?: number): Promise<void>
-}
-const workspaceProgressApi = ExtensionApi as typeof ExtensionApi & {
-  registerWorkspaceProgressProvider(provider: {
-    getProgressData: () => { message: string; status: WorkspaceProgressStatus }
-    id: string
-  }): WorkspaceProgressHandle
-}
 const workspaceProgressState: {
-  data: { message: string; status: WorkspaceProgressStatus }
+  data: WorkspaceProgressData
   operationId: number | undefined
-  registration: WorkspaceProgressHandle | undefined
+  registration: WorkspaceProgressProviderHandle | undefined
 } = {
   data: { message: '', status: 'idle' },
   operationId: undefined,
@@ -66,11 +59,10 @@ const workspaceProgressState: {
 }
 
 export const registerWorkspaceProgress = (): void => {
-  workspaceProgressState.registration =
-    workspaceProgressApi.registerWorkspaceProgressProvider({
-      getProgressData: () => workspaceProgressState.data,
-      id: 'remote-ssh.connection',
-    })
+  workspaceProgressState.registration = registerWorkspaceProgressProvider({
+    getProgressData: () => workspaceProgressState.data,
+    id: 'remote-ssh.connection',
+  })
 }
 
 export const disposeWorkspaceProgress = async (): Promise<void> => {
