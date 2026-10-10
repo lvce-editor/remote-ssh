@@ -48,7 +48,7 @@ jobs:
         if: startsWith(matrix.os, 'ubuntu')
         run: npm run e2e:cleanup --workspace=packages/e2e
       - name: Run headless test
-        if: !startsWith(matrix.os, 'windows')
+        if: ${{ !startsWith(matrix.os, 'windows') }}
         run: npm run e2e:headless
         env:
           PLAYWRIGHT_BROWSERS_PATH: 0
