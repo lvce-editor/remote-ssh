@@ -55,8 +55,14 @@ jobs:
         if: startsWith(matrix.os, 'ubuntu')
         run: npm run e2e:cleanup --workspace=packages/e2e
       - name: Run headless test
-        if: ${{ !startsWith(matrix.os, 'windows') }}
+        if: ${{ runner.os != 'Windows' && matrix.os != 'ubuntu-24.04-arm' }}
         run: npm run e2e:headless
         env:
           PLAYWRIGHT_BROWSERS_PATH: 0
           LVCE_REMOTE_SSH_LVCE_SERVER_VERSION: 0.120.9
+      - name: Explain Ubuntu ARM headless test exclusion
+        if: matrix.os == 'ubuntu-24.04-arm'
+        run: echo "The SSH headless fixture uses the runner as its mock remote host; the installer supports Linux x64 remote hosts only."
+      - name: Explain Windows ARM headless test exclusion
+        if: matrix.os == 'windows-11-arm'
+        run: echo "The headless test remains excluded on Windows as it is on the existing windows-2025 runner; native ARM build, unit, type and lint checks still run."
