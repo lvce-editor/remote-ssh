@@ -19,7 +19,7 @@ jobs:
             windows-11-arm,
           ]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 15
+    timeout-minutes: ${{ matrix.os == 'windows-11-arm' && 30 || 15 }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v6
