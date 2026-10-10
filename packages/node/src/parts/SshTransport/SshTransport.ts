@@ -1,3 +1,4 @@
+// cspell:ignore Instaling
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { rm } from 'node:fs/promises'
@@ -453,9 +454,7 @@ class RemoteConnection implements Connection {
       return
     }
     if (line === installRequiredMarker) {
-      this.onProgress(
-        'Installing the LVCE Editor server on the Remote SSH host…',
-      )
+      this.onProgress('Instaling Lvce Editor Server')
       this.close(new InstallRequiredError(installRequiredMarker))
       return
     }
@@ -778,10 +777,7 @@ const createConnection = async (
       connectionProgress.delete(location.identity)
       throw error
     }
-    setConnectionProgress(
-      location,
-      'Installing the LVCE Editor server on the Remote SSH host…',
-    )
+    setConnectionProgress(location, 'Instaling Lvce Editor Server')
     try {
       await installServer(location, manifest, signal)
     } catch (error) {
