@@ -9,9 +9,16 @@ jobs:
   ci:
     strategy:
       matrix:
-        os: [ubuntu-24.04, macos-14, windows-2025]
+        os:
+          [
+            ubuntu-24.04,
+            ubuntu-24.04-arm,
+            macos-14,
+            windows-2025,
+            windows-11-arm,
+          ]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 15
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v6
@@ -25,7 +32,7 @@ jobs:
         id: npm-cache
         with:
           path: '**/node_modules'
-          key: ${{ runner.os }}-cacheNodeModules-${{ steps.nodeModulesCacheKey.outputs.value }}
+          key: ${{ runner.os }}-${{ runner.arch }}-cacheNodeModules-${{ steps.nodeModulesCacheKey.outputs.value }}
       - name: npm ci
         run: npm ci
         if: steps.npm-cache.outputs.cache-hit != 'true'
@@ -41,16 +48,22 @@ jobs:
         env:
           PLAYWRIGHT_BROWSERS_PATH: 0
       - name: Install OpenSSH server
-        if: matrix.os == 'ubuntu-24.04'
+        if: startsWith(matrix.os, 'ubuntu')
         run: sudo apt-get update && sudo apt-get install --yes openssh-server
       - name: Check SSH process cleanup
-        if: matrix.os == 'ubuntu-24.04'
+        if: startsWith(matrix.os, 'ubuntu')
         run: npm run e2e:cleanup --workspace=packages/e2e
       - name: Run headless test
-        if: matrix.os != 'windows-2025'
+        if: ${{ runner.os != 'Windows' && matrix.os != 'ubuntu-24.04-arm' }}
         run: npm run e2e:headless
         env:
           PLAYWRIGHT_BROWSERS_PATH: 0
+      - name: Explain Ubuntu ARM headless test exclusion
+        if: matrix.os == 'ubuntu-24.04-arm'
+        run: echo "The SSH headless fixture uses the runner as its mock remote host; the installer supports Linux x64 remote hosts only."
+      - name: Explain Windows ARM headless test exclusion
+        if: matrix.os == 'windows-11-arm'
+        run: echo "The headless test remains excluded on Windows as it is on the existing windows-2025 runner; native ARM build, unit, type and lint checks still run."
       - name: Upload artifact
         if: matrix.os == 'ubuntu-24.04'
         uses: actions/upload-artifact@v7
