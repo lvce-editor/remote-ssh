@@ -454,7 +454,7 @@ class RemoteConnection implements Connection {
     }
     if (line === installRequiredMarker) {
       this.onProgress(
-        'Installing the LVCE Editor server on the Remote SSH host…',
+        'Instaling Lvce Editor Server',
       )
       this.close(new InstallRequiredError(installRequiredMarker))
       return
@@ -780,7 +780,7 @@ const createConnection = async (
     }
     setConnectionProgress(
       location,
-      'Installing the LVCE Editor server on the Remote SSH host…',
+      'Instaling Lvce Editor Server',
     )
     try {
       await installServer(location, manifest, signal)
