@@ -43,6 +43,7 @@ export type StartWorkspaceProgress = (
   message: string,
 ) => Promise<number | undefined>
 export type EndWorkspaceProgress = (id: number) => Promise<void>
+type EndWorkspaceProgressOnce = () => Promise<void>
 export type UpdateWorkspaceProgress = (
   id: number,
   message: string,
@@ -105,9 +106,6 @@ const startWorkspaceProgress: StartWorkspaceProgress = async (message) => {
     const id = await executeCommand('Workspace.startProgress', message)
     workspaceProgressState.operationId = typeof id === 'number' ? id : undefined
     workspaceProgressState.data = { message, status: 'in-progress' }
-    await workspaceProgressState.registration?.refresh(
-      workspaceProgressState.operationId,
-    )
     return typeof id === 'number' ? id : undefined
   } catch {
     return undefined
@@ -125,6 +123,22 @@ const endWorkspaceProgress: EndWorkspaceProgress = async (id) => {
     // Progress is optional and must not hide the connection result.
   }
 }
+
+const createEndWorkspaceProgressOnce = (
+  id: number | undefined,
+  endProgress: EndWorkspaceProgress,
+): EndWorkspaceProgressOnce => {
+  let ended = false
+  return async () => {
+    if (id === undefined || ended) {
+      return
+    }
+    ended = true
+    await endProgress(id)
+  }
+}
+
+const endWorkspaceProgressNoop: EndWorkspaceProgressOnce = async () => {}
 
 const updateWorkspaceProgress: UpdateWorkspaceProgress = async (
   id,
@@ -278,6 +292,7 @@ const openWorkspace = async (
   log: Log,
   progressId?: number,
   isCancelled: IsProgressCancelled = isProgressCancelled,
+  endProgress: EndWorkspaceProgressOnce = endWorkspaceProgressNoop,
 ): Promise<void> => {
   await log(`Opening SSH workspace ${workspaceUri}`)
   if (progressId !== undefined && (await isCancelled(progressId))) {
@@ -288,6 +303,10 @@ const openWorkspace = async (
   if (progressId !== undefined && (await isCancelled(progressId))) {
     return
   }
+  // Workspace.setUri can dispose this extension host as it switches the
+  // active workspace, so clear the progress overlay while this command can
+  // still reach the renderer.
+  await endProgress()
   await setUri(workspaceUri, backend)
   const elapsed = Math.round(performance.now() - startedAt)
   await log(`Connected to SSH workspace ${workspaceUri} in ${elapsed} ms`)
@@ -307,10 +326,12 @@ export const restore = async (
   isCancelled: IsProgressCancelled = isProgressCancelled,
 ): Promise<void> => {
   let progressId: number | undefined
+  let endProgressOnce = endWorkspaceProgressNoop
   try {
     progressId = await startProgress(
       'Establishing connection to the Remote SSH host…',
     )
+    endProgressOnce = createEndWorkspaceProgressOnce(progressId, endProgress)
     const startedAt = performance.now()
     await log(`Restoring SSH connection to ${workspaceUri}`)
     const backend = getWorkspaceBackend(
@@ -335,6 +356,7 @@ export const restore = async (
       log,
       progressId,
       isCancelled,
+      endProgressOnce,
     )
   } catch (error) {
     if (
@@ -347,7 +369,7 @@ export const restore = async (
     throw error
   } finally {
     if (progressId !== undefined) {
-      await endProgress(progressId)
+      await endProgressOnce()
     }
   }
 }
@@ -433,11 +455,13 @@ export const connect = async (
   let workspaceUri: string
   let backend: WorkspaceBackend
   let progressId: number | undefined
+  let endProgressOnce = endWorkspaceProgressNoop
   try {
     workspaceUri = SshTarget.toRemoteSshUri(value)
     progressId = await startProgress(
       'Establishing connection to the Remote SSH host…',
     )
+    endProgressOnce = createEndWorkspaceProgressOnce(progressId, endProgress)
     await log(`Connecting to SSH host ${workspaceUri}`)
     backend = getWorkspaceBackend(
       await connectWithProgress(
@@ -457,7 +481,7 @@ export const connect = async (
       isWorkspaceSetupCancelled(error) ||
       (progressId !== undefined && (await isCancelled(progressId)))
     if (progressId !== undefined) {
-      await endProgress(progressId)
+      await endProgressOnce()
     }
     if (cancelled) {
       return
@@ -475,6 +499,7 @@ export const connect = async (
       log,
       progressId,
       isCancelled,
+      endProgressOnce,
     )
       .catch((error) => {
         if (!isWorkspaceSetupCancelled(error)) {
@@ -483,7 +508,7 @@ export const connect = async (
       })
       .finally(() => {
         if (progressId !== undefined) {
-          return endProgress(progressId)
+          return endProgressOnce()
         }
       })
   })
