@@ -96,6 +96,7 @@ test('connects and switches to the remote backend', async () => {
   )
 
   expect(connectRemote).toHaveBeenCalledWith('remote-ssh://user@example.com/')
+  await new Promise((resolve) => setTimeout(resolve, 0))
   expect(setUri.mock.calls).toContainEqual([
     'remote-ssh://user@example.com/',
     backend,
@@ -318,6 +319,7 @@ test('shows SSH config hosts and accepts a selected host', async () => {
     ],
     placeholder,
   })
+  await new Promise((resolve) => setTimeout(resolve, 0))
   expect(connectRemote).toHaveBeenCalledWith('remote-ssh://staging/')
   expect(setUri.mock.calls).toContainEqual(['remote-ssh://staging/', backend])
 })
@@ -464,7 +466,7 @@ test('logs elapsed time only after the workspace is open', async () => {
   }
 })
 
-test('keeps workspace progress active through the connection and workspace switch', async () => {
+test('ends workspace progress before switching workspaces', async () => {
   const startProgress = jest.fn(async (_message: string) => 42)
   const endProgress = jest.fn(async (_id: number) => {})
   const connectRemote = jest.fn(async (_uri: string) => backend)
@@ -499,6 +501,9 @@ test('keeps workspace progress active through the connection and workspace switc
   await new Promise((resolve) => setTimeout(resolve, 0))
   expect(setUri).toHaveBeenCalled()
   expect(endProgress).toHaveBeenCalledWith(42)
+  expect(endProgress.mock.invocationCallOrder[0]).toBeLessThan(
+    setUri.mock.invocationCallOrder[0],
+  )
 })
 
 test('clears workspace progress when connection fails', async () => {
