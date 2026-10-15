@@ -147,7 +147,11 @@ const updateWorkspaceProgress: UpdateWorkspaceProgress = async (
   try {
     if (workspaceProgressState.operationId === id) {
       workspaceProgressState.data = { message, status: 'in-progress' }
-      await workspaceProgressState.registration?.refresh(id)
+      try {
+        await workspaceProgressState.registration?.refresh(id)
+      } catch {
+        await executeCommand('Workspace.updateProgress', id, message)
+      }
     }
   } catch {
     // Progress is optional and must not hide the connection result.

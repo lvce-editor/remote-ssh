@@ -66,7 +66,10 @@ const runProcessChecked = async (command, args) => {
   return promise
 }
 
-const createRemoteServerArtifacts = async (runtimeRoot) => {
+const createRemoteServerArtifacts = async (
+  runtimeRoot,
+  { serverArchiveDelayMs = 0 } = {},
+) => {
   const artifactsRoot = join(runtimeRoot, 'artifacts')
   const nodeRoot = join(artifactsRoot, 'node-test', 'bin')
   const nodeArchiveName = 'node-test-linux-x64.tar.gz'
@@ -117,6 +120,9 @@ const createRemoteServerArtifacts = async (runtimeRoot) => {
       return
     }
     requestCount++
+    if (request.url === `/${serverArchiveName}` && serverArchiveDelayMs > 0) {
+      await sleep(serverArchiveDelayMs)
+    }
     response.end(await readFile(archivePath))
   })
   const { promise, reject, resolve } = Promise.withResolvers()
@@ -689,7 +695,9 @@ const runRealSshTest = async () => {
   try {
     const prepared = await prepareExtensions(runtimeRoot)
     installationVersion = prepared.installationVersion
-    const remoteArtifacts = await createRemoteServerArtifacts(runtimeRoot)
+    const remoteArtifacts = await createRemoteServerArtifacts(runtimeRoot, {
+      serverArchiveDelayMs: 3_000,
+    })
     artifactServer = remoteArtifacts.artifactServer
     getArtifactRequestCount = remoteArtifacts.getRequestCount
     remoteRoot = remoteArtifacts.remoteRoot
