@@ -1,6 +1,7 @@
 import { match, strictEqual, throws } from 'node:assert/strict'
 import { test } from 'node:test'
 import {
+  _getInstallProgressMessage,
   _getRemoteCommand,
   _getSshArgs,
   _validatePort,
@@ -67,4 +68,17 @@ void test('selects a separate installation and handshake for each frontend versi
   match(older, /servers\/dev-editor-0\.120\.9\//)
   match(newer, /servers\/dev-editor-0\.120\.10\//)
   match(newer, /LVCE_REMOTE_SSH_CLIENT_VERSION='dev-editor-0\.120\.10'/)
+})
+
+void test('shows the selected server version while installing', async () => {
+  const { manifest, selectFrontendVersion } =
+    await import('../src/parts/ServerManifest/ServerManifest.ts')
+  strictEqual(
+    _getInstallProgressMessage(manifest),
+    'Installing LVCE Editor Server dev',
+  )
+  strictEqual(
+    _getInstallProgressMessage(selectFrontendVersion(manifest, '0.120.10')),
+    'Installing LVCE Editor Server dev-editor-0.120.10',
+  )
 })
