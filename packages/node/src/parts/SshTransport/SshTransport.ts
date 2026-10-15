@@ -1,4 +1,3 @@
-// cspell:ignore Instaling
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { rm } from 'node:fs/promises'
@@ -113,6 +112,12 @@ export const getConnectionProgress = (location: RemoteLocation): string => {
 }
 
 class InstallRequiredError extends Error {}
+
+const getInstallProgressMessage = (
+  selectedManifest: ServerManifest,
+): string => {
+  return `Installing LVCE Editor Server ${selectedManifest.serverVersion}`
+}
 
 const escapeShell = (value: string): string => {
   return "'" + value.replaceAll("'", "'\\''") + "'"
@@ -454,7 +459,7 @@ class RemoteConnection implements Connection {
       return
     }
     if (line === installRequiredMarker) {
-      this.onProgress('Instaling Lvce Editor Server')
+      this.onProgress(getInstallProgressMessage(manifest))
       this.close(new InstallRequiredError(installRequiredMarker))
       return
     }
@@ -777,7 +782,7 @@ const createConnection = async (
       connectionProgress.delete(location.identity)
       throw error
     }
-    setConnectionProgress(location, 'Instaling Lvce Editor Server')
+    setConnectionProgress(location, getInstallProgressMessage(manifest))
     try {
       await installServer(location, manifest, signal)
     } catch (error) {
@@ -938,6 +943,7 @@ export const waitForOpenRequest = async (
 
 export const _getSshArgs = getSshArgs
 export const _getRemoteCommand = getRemoteCommand
+export const _getInstallProgressMessage = getInstallProgressMessage
 export const _validatePort = validatePort
 export const _resetConnections = (): void => {
   for (const setup of connections.values()) {

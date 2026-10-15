@@ -797,6 +797,13 @@ const runRealSshTest = async () => {
     await quickInput.fill(sshServer.fixture.target)
     await page.keyboard.press('Enter')
 
+    const workspaceProgress = page.locator('.WorkspaceProgressDialog')
+    await expect(workspaceProgress).toBeVisible()
+    await expect(page.locator('.WorkspaceProgressStage')).toHaveText(
+      `Installing LVCE Editor Server ${prepared.installationVersion}`,
+      { timeout: 30_000 },
+    )
+
     const remoteFile = page.locator('.TreeItem[aria-label="file.txt"]')
     await expect(remoteFile).toBeVisible({ timeout: 30_000 })
     const connectionCount = sshServer.getConnectionCount()
