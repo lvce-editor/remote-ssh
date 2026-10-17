@@ -1,13 +1,49 @@
-import { deepStrictEqual, strictEqual, throws } from 'node:assert/strict'
+import {
+  deepStrictEqual,
+  rejects,
+  strictEqual,
+  throws,
+} from 'node:assert/strict'
 import { test } from 'node:test'
+import type { RemoteSshError } from '../src/parts/RemoteSshError/RemoteSshError.ts'
 import {
   _invoke,
+  _getWorkspaceType,
   _sortDirents,
   _toFileUri,
   mkdir,
   remove,
   waitForOpenRequest,
 } from '../src/parts/SshFileSystem/SshFileSystem.ts'
+
+void test('reports a missing remote workspace folder with a readable error', async () => {
+  const cause = Object.assign(new Error('stat /work: no such file'), {
+    code: 'ENOENT',
+  })
+  await rejects(
+    _getWorkspaceType('/work', async () => {
+      throw cause
+    }),
+    (error: RemoteSshError) => {
+      strictEqual(error.message, 'Remote SSH folder not found: /work')
+      strictEqual(error.code, 'E_REMOTE_FOLDER_NOT_FOUND')
+      strictEqual(error.cause, cause)
+      return true
+    },
+  )
+})
+
+void test('preserves non-missing workspace stat failures', async () => {
+  const error = Object.assign(new Error('permission denied'), {
+    code: 'EACCES',
+  })
+  await rejects(
+    _getWorkspaceType('/work', async () => {
+      throw error
+    }),
+    (actual: Error) => actual === error,
+  )
+})
 
 void test('converts remote POSIX paths to encoded file URIs', () => {
   strictEqual(

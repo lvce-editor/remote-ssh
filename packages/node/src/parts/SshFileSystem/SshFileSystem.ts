@@ -1,4 +1,5 @@
 import path from 'node:path'
+import { RemoteSshError } from '../RemoteSshError/RemoteSshError.ts'
 import * as RemoteSshUri from '../RemoteSshUri/RemoteSshUri.ts'
 import {
   connectWorkspaceBackend,
@@ -49,21 +50,40 @@ const sortDirents = (value: unknown): readonly unknown[] => {
   )
 }
 
+const getWorkspaceType = async (
+  filePath: string,
+  stat: () => Promise<unknown>,
+): Promise<unknown> => {
+  try {
+    return await stat()
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+      throw error
+    }
+    throw new RemoteSshError(
+      `Remote SSH folder not found: ${filePath}`,
+      'E_REMOTE_FOLDER_NOT_FOUND',
+      error,
+    )
+  }
+}
+
 export const connect = async (
   uri: string,
   operationId?: number,
 ): Promise<WorkspaceBackend> => {
   const location = RemoteSshUri.parse(uri)
-  const type =
+  const type = await getWorkspaceType(location.path, () =>
     typeof operationId === 'number'
-      ? await invokeWorkspaceBackendForOperation(
+      ? invokeWorkspaceBackendForOperation(
           location,
           'file-system-process',
           'FileSystem.stat',
           operationId,
           toFileUri(location.path),
         )
-      : await invoke('FileSystem.stat', uri)
+      : invoke('FileSystem.stat', uri),
+  )
   if (type !== 3) {
     throw new Error(`Not a directory: ${location.path}`)
   }
@@ -183,5 +203,6 @@ export const rename = async (
 }
 
 export const _invoke = invoke
+export const _getWorkspaceType = getWorkspaceType
 export const _sortDirents = sortDirents
 export const _toFileUri = toFileUri
