@@ -793,8 +793,11 @@ const runRealSshTest = async () => {
     await rm(remoteRoot, { force: true, recursive: true })
     await openPromptScenario(page, port)
     await page.keyboard.press('Escape')
-    await page.keyboard.press('Control+Shift+P')
     const quickInput = page.locator('.QuickPick input')
+    await expect(quickInput).toHaveCount(0)
+    await page.keyboard.press('Control+Shift+P')
+    await expect(quickInput).toHaveValue('>')
+    await expect(page.locator('.QuickPickItemLabel').first()).toBeVisible()
     await quickInput.fill('>SSH: Connect')
     await page
       .locator('.QuickPickItemLabel')
@@ -1001,6 +1004,11 @@ const runRealSshTest = async () => {
     await page.reload()
     const reconnectInput = page.locator('.QuickPick input')
     await expect(reconnectInput).toBeVisible({ timeout: 30_000 })
+    await expect(reconnectInput).toHaveAttribute(
+      'placeholder',
+      promptPlaceholder,
+    )
+    await expectConfiguredHosts(page, ['work', 'staging'])
     const reconnectTarget = new URL(toRemoteSshUri(sshServer.fixture.target))
     reconnectTarget.protocol = 'ssh:'
     reconnectTarget.pathname = cliWorkspacePath
