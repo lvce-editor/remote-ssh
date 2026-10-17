@@ -404,6 +404,38 @@ test('reports a failed restore with its diagnostic code', async () => {
   )
 })
 
+test('reports a missing Remote SSH folder without exposing its errno details', async () => {
+  const error = Object.assign(
+    new Error('Remote SSH folder not found: /home/user/project'),
+    { code: 'E_REMOTE_FOLDER_NOT_FOUND' },
+  )
+  const notify = jest.fn(
+    async (_type: NotificationType, _message: string) => {},
+  )
+  const setUri = jest.fn(async (_uri: string) => {})
+  const endProgress = jest.fn(async (_id: number) => {})
+  await expect(
+    restore(
+      'remote-ssh://host/home/user/project',
+      setUri,
+      async () => {
+        throw error
+      },
+      undefined,
+      notify,
+      async () => 1,
+      endProgress,
+    ),
+  ).rejects.toBe(error)
+  expect(notify).toHaveBeenCalledWith(
+    'error',
+    'Failed to connect to SSH target: Remote SSH folder not found: /home/user/project (E_REMOTE_FOLDER_NOT_FOUND)',
+  )
+  expect(notify.mock.calls[0]?.[1]).not.toContain('ENOENT')
+  expect(setUri).not.toHaveBeenCalled()
+  expect(endProgress).toHaveBeenCalledWith(1)
+})
+
 test('reports failure while switching to an already connected workspace', async () => {
   const notify = jest.fn(
     async (_type: NotificationType, _message: string) => {},
