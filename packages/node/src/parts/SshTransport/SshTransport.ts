@@ -116,7 +116,7 @@ class InstallRequiredError extends Error {}
 const getInstallProgressMessage = (
   selectedManifest: ServerManifest,
 ): string => {
-  return `Installing LVCE Editor Server ${selectedManifest.serverVersion}`
+  return `Installing the LVCE Editor server… (${selectedManifest.serverVersion})`
 }
 
 const escapeShell = (value: string): string => {

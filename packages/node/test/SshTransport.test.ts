@@ -75,10 +75,10 @@ void test('shows the selected server version while installing', async () => {
     await import('../src/parts/ServerManifest/ServerManifest.ts')
   strictEqual(
     _getInstallProgressMessage(manifest),
-    'Installing LVCE Editor Server dev',
+    'Installing the LVCE Editor server… (dev)',
   )
   strictEqual(
     _getInstallProgressMessage(selectFrontendVersion(manifest, '0.120.10')),
-    'Installing LVCE Editor Server dev-editor-0.120.10',
+    'Installing the LVCE Editor server… (dev-editor-0.120.10)',
   )
 })
