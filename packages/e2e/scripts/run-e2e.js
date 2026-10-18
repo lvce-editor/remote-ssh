@@ -811,7 +811,7 @@ const runRealSshTest = async () => {
     const workspaceProgress = page.locator('.WorkspaceProgressDialog')
     await expect(workspaceProgress).toBeVisible()
     await expect(page.locator('.WorkspaceProgressStage')).toHaveText(
-      `Installing LVCE Editor Server ${prepared.installationVersion}`,
+      `Installing the LVCE Editor server… (${prepared.installationVersion})`,
       { timeout: 30_000 },
     )
 
