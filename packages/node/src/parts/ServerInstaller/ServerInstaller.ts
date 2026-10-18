@@ -148,10 +148,37 @@ mkdir -p "$INCOMING" "$ROOT/runtimes" "$ROOT/servers" "$ROOT/run"
 chmod 700 "$ROOT" "$ROOT/incoming" "$INCOMING" "$ROOT/runtimes" "$ROOT/servers" "$ROOT/run"
 
 LOCK="$ROOT/install-$SERVER_VERSION.lock"
+CLEANUP_LOCK="$ROOT/cleanup.lock"
+CLEANUP_LOCK_HELD=0
 RUNTIME_TMP=""
 SERVER_TMP=""
 LOCK_TRIES=0
-while ! mkdir "$LOCK" 2>/dev/null; do
+acquireCleanupLock() {
+  CLEANUP_LOCK_TRIES=0
+  while ! mkdir "$CLEANUP_LOCK" 2>/dev/null; do
+    CLEANUP_LOCK_PID="$(cat "$CLEANUP_LOCK/pid" 2>/dev/null || true)"
+    case "$CLEANUP_LOCK_PID" in
+      ''|*[!0-9]*)
+        if [ "$CLEANUP_LOCK_TRIES" -gt 10 ]; then rm -rf "$CLEANUP_LOCK"; continue; fi
+        ;;
+      *) if ! kill -0 "$CLEANUP_LOCK_PID" 2>/dev/null; then rm -rf "$CLEANUP_LOCK"; continue; fi ;;
+    esac
+    CLEANUP_LOCK_TRIES=$((CLEANUP_LOCK_TRIES + 1))
+    sleep 0.1 2>/dev/null || sleep 1
+  done
+  CLEANUP_LOCK_HELD=1
+  printf '%s\\n' "$$" > "$CLEANUP_LOCK/pid"
+}
+releaseCleanupLock() {
+  if [ "$CLEANUP_LOCK_HELD" = 1 ]; then rm -rf "$CLEANUP_LOCK"; CLEANUP_LOCK_HELD=0; fi
+}
+while :; do
+  acquireCleanupLock
+  if mkdir "$LOCK" 2>/dev/null; then
+    releaseCleanupLock
+    break
+  fi
+  releaseCleanupLock
   if [ -x "$RUNTIME/bin/node" ] && [ -f "$SERVER/lvce-remote-ssh-server.mjs" ]; then
     printf '${installedMarker}%s\\n' "$SERVER_VERSION"
     exit 0
@@ -183,6 +210,7 @@ cleanup() {
   [ -z "$RUNTIME_TMP" ] || rm -rf "$RUNTIME_TMP"
   [ -z "$SERVER_TMP" ] || rm -rf "$SERVER_TMP"
   rm -rf "$LOCK"
+  releaseCleanupLock
 }
 trap cleanup EXIT
 trap 'exit 1' HUP INT TERM
@@ -292,7 +320,55 @@ fi
 
 rm -f "$NODE_ARCHIVE" "$SERVER_ARCHIVE"
 
-# Keep older version directories available to older clients that reconnect later.
+# Remove old installations only after this version has passed validation and
+# has been promoted into place. A cleanup error must not invalidate the install.
+acquireCleanupLock
+"$RUNTIME/bin/node" -e '
+const fs = require("fs");
+const path = require("path");
+const root = process.argv[1];
+const selectedVersion = process.argv[2];
+const cutoff = Date.now() - 14 * 24 * 60 * 60 * 1000;
+const servers = path.join(root, "servers");
+const run = path.join(root, "run");
+const isActive = (version) => {
+  try {
+    const state = JSON.parse(fs.readFileSync(path.join(run, "server-" + version + ".json"), "utf8"));
+    if (!Number.isInteger(state.pid) || state.pid < 1) return true;
+    try { process.kill(state.pid, 0); return true; }
+    catch (error) { return error.code === "EPERM"; }
+  } catch (error) { return error.code !== "ENOENT"; }
+};
+const exists = (file) => {
+  try { fs.lstatSync(file); return true; }
+  catch (error) { return error.code !== "ENOENT"; }
+};
+const newestModification = (directory) => {
+  let newest = fs.lstatSync(directory).mtimeMs;
+  const visit = (current) => {
+    for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
+      const child = path.join(current, entry.name);
+      const stat = fs.lstatSync(child);
+      newest = Math.max(newest, stat.mtimeMs);
+      if (stat.isDirectory()) visit(child);
+    }
+  };
+  visit(directory);
+  return newest;
+};
+try {
+  for (const entry of fs.readdirSync(servers, { withFileTypes: true })) {
+    if (!entry.isDirectory() || entry.name === selectedVersion) continue;
+    const directory = path.join(servers, entry.name);
+    try {
+      if (!fs.lstatSync(path.join(directory, "lvce-remote-ssh-server.mjs")).isFile()) continue;
+      if (exists(path.join(root, "install-" + entry.name + ".lock")) || exists(path.join(run, "server-" + entry.name + ".lock")) || isActive(entry.name)) continue;
+      if (newestModification(directory) <= cutoff) fs.rmSync(directory, { recursive: true });
+    } catch {}
+  }
+} catch {}
+' "$ROOT" "$SERVER_VERSION" || true
+
 printf '${installedMarker}%s\\n' "$SERVER_VERSION"
 `
 }

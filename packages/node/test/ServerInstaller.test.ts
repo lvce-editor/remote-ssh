@@ -4,11 +4,14 @@ import { createHash } from 'node:crypto'
 import {
   chmod,
   copyFile,
+  lutimes,
   mkdir,
   mkdtemp,
   readdir,
   readFile,
   rm,
+  symlink,
+  utimes,
   writeFile,
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -30,6 +33,17 @@ const sha256 = async (filePath: string): Promise<string> => {
   return createHash('sha256')
     .update(await readFile(filePath))
     .digest('hex')
+}
+
+const setTreeMtime = async (directory: string, mtime: Date): Promise<void> => {
+  await utimes(directory, mtime, mtime)
+  const entries = await readdir(directory, { withFileTypes: true })
+  for (const entry of entries) {
+    const child = path.join(directory, entry.name)
+    if (entry.isDirectory()) await setTreeMtime(child, mtime)
+    else if (entry.isSymbolicLink()) await lutimes(child, mtime, mtime)
+    else await utimes(child, mtime, mtime)
+  }
 }
 
 const runShell = (
@@ -144,12 +158,54 @@ void test(
         },
       )
     }
-    const installedServers = await readdir(
-      path.join(home, '.lvce-server', 'servers'),
+    const serverRoot = path.join(home, '.lvce-server', 'servers')
+    const old = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000 - 60_000)
+    const recent = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000 + 60_000)
+    await setTreeMtime(path.join(serverRoot, 'test-server'), old)
+    await setTreeMtime(path.join(serverRoot, 'test-server-2'), old)
+    await utimes(
+      path.join(serverRoot, 'test-server-2', 'lvce-remote-ssh-server.mjs'),
+      new Date(),
+      new Date(),
     )
-    strictEqual(installedServers.length, 8)
-    strictEqual(installedServers.includes('test-server'), true)
+    await setTreeMtime(path.join(serverRoot, 'test-server-3'), old)
+    await mkdir(path.join(home, '.lvce-server', 'install-test-server-3.lock'))
+    await setTreeMtime(path.join(serverRoot, 'test-server-4'), old)
+    await mkdir(path.join(home, '.lvce-server', 'run'), { recursive: true })
+    await writeFile(
+      path.join(home, '.lvce-server', 'run', 'server-test-server-4.json'),
+      JSON.stringify({ pid: process.pid }),
+    )
+    const symlinkTarget = path.join(directory, 'outside-target')
+    await writeFile(symlinkTarget, 'keep')
+    await symlink(
+      symlinkTarget,
+      path.join(serverRoot, 'test-server-5', 'outside'),
+    )
+    await setTreeMtime(path.join(serverRoot, 'test-server-5'), old)
+    await symlink(symlinkTarget, path.join(serverRoot, 'server-link'))
+    await mkdir(path.join(serverRoot, 'unrelated-directory'))
+    await setTreeMtime(path.join(serverRoot, 'unrelated-directory'), old)
+    await setTreeMtime(path.join(serverRoot, 'test-server-6'), old)
+    await setTreeMtime(path.join(serverRoot, 'test-server-7'), recent)
+
+    await runShell(
+      createInstallScript({ ...manifest, serverVersion: 'test-server-9' }),
+      { ...process.env, HOME: home },
+    )
+    const installedServers = await readdir(serverRoot)
+    strictEqual(installedServers.includes('test-server'), false)
+    strictEqual(installedServers.includes('test-server-2'), true)
+    strictEqual(installedServers.includes('test-server-3'), true)
+    strictEqual(installedServers.includes('test-server-4'), true)
+    strictEqual(installedServers.includes('test-server-5'), false)
+    strictEqual(installedServers.includes('test-server-6'), false)
+    strictEqual(installedServers.includes('test-server-7'), true)
     strictEqual(installedServers.includes('test-server-8'), true)
+    strictEqual(installedServers.includes('test-server-9'), true)
+    strictEqual(installedServers.includes('server-link'), true)
+    strictEqual(installedServers.includes('unrelated-directory'), true)
+    strictEqual(await readFile(symlinkTarget, 'utf8'), 'keep')
     const reconnect = await runShell(createInstallScript(manifest), {
       ...process.env,
       HOME: home,
