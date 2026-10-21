@@ -2,6 +2,8 @@ import { match, strictEqual } from 'node:assert/strict'
 import { test } from 'node:test'
 import { create } from '../src/parts/ConnectionError/ConnectionError.ts'
 
+// cspell:ignore ETARGET notarget
+
 for (const [detail, code] of [
   [
     'ssh: connect to host example.com port 22: Connection timed out',

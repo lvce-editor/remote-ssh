@@ -1,7 +1,14 @@
 import { RemoteSshError } from '../RemoteSshError/RemoteSshError.ts'
 
+// cspell:ignore ETARGET notarget
+
 export type Stage =
-  'connect' | 'install' | 'start' | 'forward' | 'backend' | 'session'
+  | 'connect'
+  | 'install'
+  | 'start'
+  | 'forward'
+  | 'backend'
+  | 'session'
 
 const stages: Record<Stage, readonly [string, string]> = {
   backend: [
@@ -38,7 +45,9 @@ export const create = (
 ): RemoteSshError => {
   const originalDetail = cause instanceof Error ? cause.message : String(cause)
   const detail = originalDetail
-    .replace(/^\s*#+\s*(?:\d+(?:\.\d+)?%)?\s*$/gm, '')
+    .split('\n')
+    .filter((line) => !/^#{4,}(?:\s+\d+(?:\.\d+)?%)?$/.test(line.trim()))
+    .join('\n')
     .trim()
   let [code, message] = stages[stage]
   let shownDetail = detail
@@ -92,7 +101,7 @@ export const create = (
     ? ` (${logPath})`
     : ''
   return new RemoteSshError(
-    `${target}: ${message}${log}${shownDetail ? `. Details: ${shownDetail}` : ''}`,
+    `${target}: ${message}${log}${shownDetail ? '. Details: ' + shownDetail : ''}`,
     code,
     cause,
   )
