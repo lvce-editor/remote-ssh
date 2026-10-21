@@ -1,12 +1,7 @@
 import { RemoteSshError } from '../RemoteSshError/RemoteSshError.ts'
 
 export type Stage =
-  | 'connect'
-  | 'install'
-  | 'start'
-  | 'forward'
-  | 'backend'
-  | 'session'
+  'connect' | 'install' | 'start' | 'forward' | 'backend' | 'session'
 
 const stages: Record<Stage, readonly [string, string]> = {
   backend: [
@@ -41,9 +36,24 @@ export const create = (
   cause: unknown,
   logPath: string,
 ): RemoteSshError => {
-  const detail = cause instanceof Error ? cause.message : String(cause)
+  const originalDetail = cause instanceof Error ? cause.message : String(cause)
+  const detail = originalDetail
+    .replace(/^\s*#+\s*(?:\d+(?:\.\d+)?%)?\s*$/gm, '')
+    .trim()
   let [code, message] = stages[stage]
-  if (stage === 'connect') {
+  let shownDetail = detail
+  if (
+    stage === 'install' &&
+    /(?:npm ERR!|npm error) code ETARGET/i.test(originalDetail) &&
+    /(?:npm ERR!|npm error) notarget No matching version found for @lvce-editor\/server@/i.test(
+      originalDetail,
+    )
+  ) {
+    code = 'E_SSH_SERVER_VERSION_NOT_FOUND'
+    message =
+      'SSH connected, but the requested LVCE remote server version is not available on npm yet. It may still be going through publication checks; try again in a few minutes'
+    shownDetail = ''
+  } else if (stage === 'connect') {
     if (
       /Permission denied \([^)]*\)|Authentication failed|Too many authentication failures/i.test(
         detail,
@@ -82,7 +92,7 @@ export const create = (
     ? ` (${logPath})`
     : ''
   return new RemoteSshError(
-    `${target}: ${message}${log}. Details: ${detail}`,
+    `${target}: ${message}${log}${shownDetail ? `. Details: ${shownDetail}` : ''}`,
     code,
     cause,
   )

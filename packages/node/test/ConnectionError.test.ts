@@ -35,6 +35,47 @@ void test('does not mistake server permission errors for rejected SSH authentica
   match(error.message, /SSH connected/)
 })
 
+void test('explains when the requested LVCE server version is not available on npm', () => {
+  const cause = new Error(
+    [
+      'npm error code ETARGET',
+      'npm error notarget No matching version found for @lvce-editor/server@0.125.0.',
+    ].join('\n'),
+  )
+  const error = create('host', 'install', cause, '/server.log')
+  strictEqual(error.code, 'E_SSH_SERVER_VERSION_NOT_FOUND')
+  strictEqual(error.cause, cause)
+  match(error.message, /may still be going through publication checks/)
+  match(error.message, /try again in a few minutes/)
+  strictEqual(error.message.includes('ETARGET'), false)
+  strictEqual(error.message.includes('disk space'), false)
+  strictEqual(error.message.includes('permissions'), false)
+})
+
+void test('does not classify a missing unrelated npm package as a server version error', () => {
+  const error = create(
+    'host',
+    'install',
+    new Error(
+      'npm error code ETARGET\nnpm error notarget No matching version found for unrelated-package@1.0.0.',
+    ),
+    '/server.log',
+  )
+  strictEqual(error.code, 'E_SSH_INSTALL_FAILED')
+  match(error.message, /disk space/)
+})
+
+void test('removes npm progress bars from displayed installation details', () => {
+  const error = create(
+    'host',
+    'install',
+    new Error('#####\n################ 100.0%\nnpm error code ECONNRESET'),
+    '/server.log',
+  )
+  strictEqual(error.message.includes('#'), false)
+  match(error.message, /npm error code ECONNRESET/)
+})
+
 void test('identifies startup and backend failures with the remote log path', () => {
   for (const stage of ['start', 'backend'] as const) {
     const error = create(
