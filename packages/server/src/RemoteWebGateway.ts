@@ -11,7 +11,7 @@ const pairingTtl = 10 * 60 * 1000
 const sessionTtl = 24 * 60 * 60 * 1000
 const ticketTtl = 60 * 1000
 const maxConnections = 32
-const maxBufferedBytes = 1024 * 1024
+const maxBufferedBytes = 8 * 1024 * 1024
 const allowedProcesses = new Set([
   'extension-node-process',
   'file-system-process',
@@ -84,7 +84,9 @@ const writeJson = (
 }
 
 const rejectUpgrade = (socket: Duplex, status: string): void => {
-  socket.end(`HTTP/1.1 ${status}\r\nConnection: close\r\n\r\n`)
+  socket.end(`HTTP/1.1 ${status}\r\nConnection: close\r\n\r\n`, () =>
+    socket.destroy(),
+  )
 }
 
 const validatePublicUrl = (url: URL, option = '--public-url'): void => {

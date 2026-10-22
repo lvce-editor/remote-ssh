@@ -54,8 +54,13 @@ jobs:
       - name: Check SSH process cleanup
         if: startsWith(matrix.os, 'ubuntu')
         run: npm run e2e:cleanup --workspace=packages/e2e
-      - name: Run headless test
+      - name: Run headless test against the bundled runtime
         if: ${{ runner.os != 'Windows' && matrix.os != 'ubuntu-24.04-arm' }}
+        run: npm run e2e:headless
+        env:
+          PLAYWRIGHT_BROWSERS_PATH: 0
+      - name: Check desktop SSH against the legacy backend
+        if: matrix.os == 'ubuntu-24.04'
         run: npm run e2e:headless
         env:
           PLAYWRIGHT_BROWSERS_PATH: 0
@@ -66,3 +71,32 @@ jobs:
       - name: Explain Windows ARM headless test exclusion
         if: matrix.os == 'windows-11-arm'
         run: echo "The headless test remains excluded on Windows as it is on the existing windows-2025 runner; native ARM build, unit, type and lint checks still run."
+  remote-web:
+    name: remote-web (${{ matrix.browser }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        browser: [chromium, firefox, webkit]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: '.nvmrc'
+      - run: npm ci
+      - name: Install browser and system dependencies
+        working-directory: packages/e2e
+        run: npx playwright install --with-deps ${{ matrix.browser }}
+      - name: Export the static frontend under a Pages project prefix
+        run: npm run build:static
+        env:
+          PATH_PREFIX: /lvce-editor
+      - name: Check packaged gateway commands against the real backend
+        if: matrix.browser == 'chromium'
+        run: node packages/e2e/scripts/run-remote-web-cli.js
+      - name: Exercise authenticated remote development over separate HTTPS origins
+        run: npm run e2e:web
+        env:
+          LVCE_REMOTE_WEB_BROWSER: ${{ matrix.browser }}
+          LVCE_REMOTE_WEB_PATH_PREFIX: /lvce-editor

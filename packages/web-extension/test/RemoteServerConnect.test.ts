@@ -168,3 +168,39 @@ afterEach(async () => {
     await import('../src/parts/RemoteServerConnection/RemoteServerConnection.ts')
   await connection.dispose()
 })
+
+test('disconnect during pairing prevents the late response from opening a workspace', async () => {
+  const connection =
+    await import('../src/parts/RemoteServerConnection/RemoteServerConnection.ts')
+  const { promise, resolve } = Promise.withResolvers<typeof pairingResult>()
+  const setUri = jest.fn<RemoteServerConnect.SetWorkspaceUri>(async () => {})
+  const pending = RemoteServerConnect.connectWithPairingUrl(
+    'https://remote.example.com/#token=pair',
+    setUri,
+    () => promise,
+  )
+  void pending.catch(() => {})
+  await connection.dispose()
+  resolve(pairingResult)
+  await expect(pending).rejects.toThrow('changed while pairing')
+  expect(setUri).not.toHaveBeenCalled()
+  expect(connection.getOptions()).toBeUndefined()
+})
+
+test('a cancelled old workspace switch cannot restore its session over a newer connection', async () => {
+  const connection =
+    await import('../src/parts/RemoteServerConnection/RemoteServerConnection.ts')
+  const { promise, reject } = Promise.withResolvers<void>()
+  const pending = RemoteServerConnect.connectWithPairingUrl(
+    'https://remote.example.com/#token=pair',
+    () => promise,
+    async () => pairingResult,
+  )
+  void pending.catch(() => {})
+  await Promise.resolve()
+  const newer = { sessionToken: 'new', websocketUrl: 'wss://new.example.com/' }
+  connection.set(newer)
+  reject(new Error('cancelled'))
+  await expect(pending).rejects.toThrow('cancelled')
+  expect(connection.getOptions()).toBe(newer)
+})

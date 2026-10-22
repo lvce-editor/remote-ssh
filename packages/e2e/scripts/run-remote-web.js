@@ -145,7 +145,7 @@ if (process.argv.includes('--serve')) {
     await terminal.click()
     await expect(terminalInput).toBeFocused()
     await terminalInput.pressSequentially(
-      "pwd; printf 'created remotely\\n' > terminal-created.txt; printf 'REMOTE_%s_OK\\n' BROWSER",
+      "pwd; printf 'created remotely\\n' > terminal-created.txt; printf 'REMOTE_%s_OK\\n' BROWSER; printf 'SHELL_PID_%s_END\\n' \"$$\"",
       {
         delay: 15,
       },
@@ -154,6 +154,10 @@ if (process.argv.includes('--serve')) {
     await expect(terminal).toContainText('REMOTE_BROWSER_OK', {
       timeout: 30_000,
     })
+    await expect(terminal).toContainText(/SHELL_PID_\d+_END/)
+    const shellPid = Number(
+      (await terminal.textContent()).match(/SHELL_PID_(\d+)_END/)[1],
+    )
     expect(
       await readFile(join(fixture.workspace, 'terminal-created.txt'), 'utf8'),
     ).toContain('created remotely')
@@ -204,11 +208,17 @@ if (process.argv.includes('--serve')) {
       timeout: 30_000,
     })
     expect(socketPaths).toContain('/websocket/extension-node-process')
+    let languagePid
     if (fixture.injectedLanguage) {
       await command('Remote Language Test: Validate TypeScript')
       await expect(page.locator('.NotificationMessage').last()).toContainText(
         '2322:',
         { timeout: 30_000 },
+      )
+      languagePid = Number(
+        (await page.locator('.NotificationMessage').last().textContent()).match(
+          /pid (\d+)/,
+        )[1],
       )
     }
     await page.locator('.EditorInput textarea').focus()
@@ -218,6 +228,21 @@ if (process.argv.includes('--serve')) {
     await expect(page.locator('.Editor')).toContainText(
       'Unsaved text must survive disconnect',
     )
+    for (const pid of [shellPid, languagePid].filter(Boolean)) {
+      await expect
+        .poll(
+          () => {
+            try {
+              process.kill(pid, 0)
+              return true
+            } catch {
+              return false
+            }
+          },
+          { timeout: 10000 },
+        )
+        .toBe(false)
+    }
     await command('Remote Server: Connection Status')
     await expect(page.locator('.NotificationMessage').last()).toContainText(
       'Disconnected',

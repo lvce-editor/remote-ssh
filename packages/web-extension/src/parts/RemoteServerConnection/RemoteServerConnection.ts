@@ -36,11 +36,13 @@ interface Rpc {
 }
 
 const state: {
+  authorizationController: AbortController
   expiryTimer: ReturnType<typeof setTimeout> | undefined
   generation: number
   options: ConnectionOptions | undefined
   rpcs: Map<string, Promise<Rpc>>
 } = {
+  authorizationController: new AbortController(),
   expiryTimer: undefined,
   generation: 0,
   options: undefined,
@@ -131,7 +133,10 @@ const getTicket = async (
       headers: { authorization: `Bearer ${options.sessionToken}` },
       method: 'POST',
       redirect: 'error',
-      signal: AbortSignal.timeout(15_000),
+      signal: AbortSignal.any([
+        state.authorizationController.signal,
+        AbortSignal.timeout(15_000),
+      ]),
     })
   } catch (error) {
     const detail = getErrorDetail(error)
@@ -328,6 +333,8 @@ const createRpc = async (
 const connections = new Set<() => void>()
 
 export const set = (options: ConnectionOptions): void => {
+  state.authorizationController.abort()
+  state.authorizationController = new AbortController()
   clearTimeout(state.expiryTimer)
   if (options.expiresAt)
     state.expiryTimer = setTimeout(
@@ -343,6 +350,7 @@ export const set = (options: ConnectionOptions): void => {
 }
 
 export const dispose = async (): Promise<void> => {
+  state.authorizationController.abort()
   clearTimeout(state.expiryTimer)
   state.expiryTimer = undefined
   state.generation++
@@ -442,3 +450,5 @@ export const getOptions = (): ConnectionOptions | undefined => state.options
 export const releaseWorkspace = async (uri: string): Promise<void> => {
   if (state.options?.workspaceUri === uri) await revoke()
 }
+
+export const getGeneration = (): number => state.generation

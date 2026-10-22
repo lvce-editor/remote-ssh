@@ -236,7 +236,7 @@ test('reports a coded unpaired server error', async () => {
 
 test('does not create a WebSocket after disposal while ticket authorization is pending', async () => {
   const { promise, resolve } = Promise.withResolvers<Response>()
-  jest.spyOn(globalThis, 'fetch').mockReturnValue(promise)
+  const fetchSpy = jest.spyOn(globalThis, 'fetch').mockReturnValue(promise)
   const createSocket = jest.spyOn(globalThis, 'WebSocket')
   RemoteServerConnection.set({
     sessionToken: 'old-session',
@@ -244,6 +244,7 @@ test('does not create a WebSocket after disposal while ticket authorization is p
   })
   const pending = RemoteServerConnection.getWebSocketUrl('terminal-process')
   await RemoteServerConnection.dispose()
+  expect(fetchSpy.mock.calls[0]?.[1]?.signal?.aborted).toBe(true)
   resolve({
     json: async () => ({ ticket: 'late-ticket' }),
     ok: true,

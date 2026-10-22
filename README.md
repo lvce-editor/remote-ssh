@@ -167,7 +167,8 @@ name, valid certificate, and proxy upgrade support. Private-network deployments
 may also require the browser's local-network permission.
 
 The gateway limits each session to 32 workspace connections, 64 outstanding
-tickets, 120 HTTP/upgrade attempts per minute, and bounded WebSocket queues.
+tickets, 120 HTTP/upgrade attempts per minute, and 8 MiB WebSocket payloads and
+queues. The payload limit includes JSON and base64 encoding overhead.
 
 ### Browser acceptance tests
 

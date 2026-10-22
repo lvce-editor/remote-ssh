@@ -383,3 +383,48 @@ void test('malformed HTTP and upgrade URLs cannot crash the gateway', async (con
   }
   await f.pair()
 })
+
+void test('expired pairing secrets and expired tickets cannot authorize a connection', async (context) => {
+  context.mock.timers.enable({ apis: ['Date'], now: Date.now() })
+  const f = await fixture(context)
+  const token = new URLSearchParams(
+    new URL(f.gateway.pairingUrl).hash.slice(1),
+  ).get('token')!
+  context.mock.timers.tick(10 * 60 * 1000 + 1)
+  strictEqual(
+    (await post(f.gateway.localPort, '/auth/pair', token)).status,
+    401,
+  )
+  const session = await f.pair(f.gateway.pair())
+  const expired = await f.ticket(session, 'file-system-process')
+  context.mock.timers.tick(60_001)
+  strictEqual(
+    await expectRejectedWebSocket(
+      f.socketUrl('file-system-process', expired),
+      allowedOrigin,
+    ),
+    401,
+  )
+  const fresh = await f.ticket(session, 'file-system-process')
+  const client = new WebSocket(f.socketUrl('file-system-process', fresh), {
+    origin: allowedOrigin,
+  })
+  context.after(() => client.terminate())
+  await once(client, 'open')
+})
+
+void test('forwards a file-sized payload larger than one MiB within the gateway limits', async (context) => {
+  const f = await fixture(context)
+  const session = await f.pair()
+  const ticket = await f.ticket(session, 'file-system-process')
+  const client = new WebSocket(f.socketUrl('file-system-process', ticket), {
+    origin: allowedOrigin,
+  })
+  context.after(() => client.terminate())
+  await once(client, 'open')
+  const payload = Buffer.alloc(1280 * 1024, 'a')
+  const reply = once(client, 'message')
+  client.send(payload)
+  const [data] = await reply
+  strictEqual(Buffer.compare(data as Buffer, payload), 0)
+})

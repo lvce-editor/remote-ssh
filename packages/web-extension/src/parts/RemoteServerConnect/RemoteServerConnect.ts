@@ -148,20 +148,32 @@ export const connect = async (
   await connectWithPairingUrl(value, setUri, pairServer)
 }
 
+const state = { pairingAttempt: 0 }
+
 export const connectWithPairingUrl = async (
   value: string,
   setUri: SetWorkspaceUri = setWorkspaceUri,
   pairServer: (value: string) => Promise<PairingResult> = pair,
 ): Promise<void> => {
+  const attempt = ++state.pairingAttempt
+  const generation = RemoteServerConnection.getGeneration()
   const result = await pairServer(value)
+  if (
+    attempt !== state.pairingAttempt ||
+    generation !== RemoteServerConnection.getGeneration()
+  )
+    throw new Error(
+      'Remote workspace changed while pairing; connect with a new pairing URL',
+    )
   const workspaceUri = toWorkspaceUri(result.websocketUrl, result.workspacePath)
   const previous = RemoteServerConnection.getOptions()
-  RemoteServerConnection.set({
+  const options = {
     expiresAt: Date.parse(result.sessionExpiresAt),
     sessionToken: result.sessionToken,
     websocketUrl: result.websocketUrl,
     workspaceUri,
-  })
+  }
+  RemoteServerConnection.set(options)
   try {
     await setUri(workspaceUri, '/', {
       command: RemoteServerConnection.commandId,
@@ -169,8 +181,10 @@ export const connectWithPairingUrl = async (
       workspacePath: result.workspacePath,
     })
   } catch (error) {
-    if (previous) RemoteServerConnection.set(previous)
-    else await RemoteServerConnection.dispose()
+    if (RemoteServerConnection.getOptions() === options) {
+      if (previous) RemoteServerConnection.set(previous)
+      else await RemoteServerConnection.dispose()
+    }
     throw error
   }
 }
