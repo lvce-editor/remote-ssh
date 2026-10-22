@@ -97,7 +97,33 @@ release supports a single user and active browser session on Linux x64.
 
 Install the versioned remote server archive and its matching Node runtime from
 this repository's release manifest, verifying both SHA-256 checksums. Keep the
-matching `builtin.remote-server` connector in the static editor build.
+matching `builtin.remote-server` connector in the static editor build. On a
+Linux x64 host with `curl`, `jq`, `tar`, and `sha256sum`, install as your ordinary
+development user:
+
+```sh
+set -eu
+umask 077
+release_tag=v0.19.0
+install_dir="$HOME/.local/share/lvce-web/$release_tag"
+mkdir -p "$install_dir"
+cd "$install_dir"
+curl --fail --location \
+  "https://github.com/lvce-editor/remote-ssh/releases/download/$release_tag/lvce-remote-ssh-server-manifest-$release_tag.json" \
+  --output manifest.json
+for artifact in node server; do
+  url=$(jq -er ".platforms[\"linux-x64\"].$artifact.url" manifest.json)
+  digest=$(jq -er ".platforms[\"linux-x64\"].$artifact.sha256" manifest.json)
+  curl --fail --location "$url" --output "$artifact.tar.gz" || exit 1
+  printf '%s  %s\n' "$digest" "$artifact.tar.gz" | sha256sum --check - || exit 1
+done
+mkdir -p node server
+tar -xzf node.tar.gz --strip-components=1 -C node
+tar -xzf server.tar.gz -C server
+```
+
+The private Node runtime is independent of any system Node installation. Keep
+this installation directory as the working directory for the commands below.
 
 Use a dedicated DNS name pointing at your remote host, with TCP ports 80/443
 reachable for Caddy certificate issuance and HTTPS. Install Caddy, then use:
@@ -116,7 +142,7 @@ credential in a reverse-proxy URL, access log, or screenshot.
 Start the gateway as your ordinary development user:
 
 ```sh
-node lvce-remote-ssh-server.mjs serve-web \
+./node/bin/node ./server/lvce-remote-ssh-server.mjs serve-web \
   --port=3774 \
   --public-url=https://lvce.example.com \
   --allowed-origin=https://lvce-editor.github.io \
@@ -132,8 +158,8 @@ Disconnect** to revoke the session and close its transports.
 Generate a new link or revoke browser access over an existing SSH session:
 
 ```sh
-node lvce-remote-ssh-server.mjs pair-web --port=3774
-node lvce-remote-ssh-server.mjs revoke-web --port=3774
+./node/bin/node ./server/lvce-remote-ssh-server.mjs pair-web --port=3774
+./node/bin/node ./server/lvce-remote-ssh-server.mjs revoke-web --port=3774
 ```
 
 These commands use an owner-only Unix socket in the server's private runtime
@@ -143,6 +169,8 @@ sessions expire after 24 hours; process-specific tickets expire after one
 minute and work once. Revocation and expiry close live connections, including
 remote extension processes. Restarting the gateway forgets all credentials.
 Reload the browser and pair again; credentials are held only in memory.
+If the backend stops, the gateway exits too. Start `serve-web` again and use its
+fresh pairing link.
 
 Origin checks accept an exact origin, without a path. All projects under the
 same GitHub Pages hostname share that origin. Use a dedicated frontend origin
