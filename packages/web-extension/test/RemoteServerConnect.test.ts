@@ -1,8 +1,17 @@
-import { expect, jest, test } from '@jest/globals'
+import { afterEach, expect, jest, test } from '@jest/globals'
 import * as RemoteServerConnect from '../src/parts/RemoteServerConnect/RemoteServerConnect.ts'
 
 const pairingResult = {
   authentication: 'websocket-ticket' as const,
+  capabilities: [
+    'file-system-process',
+    'terminal-process',
+    'search-process',
+    'shared-process',
+    'extension-node-process',
+  ],
+  protocolVersion: 1 as const,
+  sessionExpiresAt: new Date(Date.now() + 3_600_000).toISOString(),
   sessionToken: 'session-secret',
   websocketUrl: 'wss://remote.example.com/',
   workspacePath: '/home/test/project with spaces',
@@ -27,6 +36,7 @@ test('opens the paired remote workspace', async () => {
     '/',
     {
       command: 'remote-server.getWebSocketUrl',
+      disposeCommand: 'remote-server.releaseWorkspace',
       workspacePath: '/home/test/project with spaces',
     },
   )
@@ -52,6 +62,7 @@ test('opens a supplied pairing URL without prompting', async () => {
     '/',
     {
       command: 'remote-server.getWebSocketUrl',
+      disposeCommand: 'remote-server.releaseWorkspace',
       workspacePath: '/home/test/project with spaces',
     },
   )
@@ -71,8 +82,10 @@ test('exchanges only the URL fragment pairing token', async () => {
   expect(fetchSpy).toHaveBeenCalledWith(
     new URL('https://remote.example.com/auth/pair'),
     {
-      headers: { authorization: 'Bearer pair-secret' },
+      headers: { authorization: 'Bearer pair-secret', 'x-lvce-protocol': '1' },
       method: 'POST',
+      redirect: 'error',
+      signal: expect.any(AbortSignal),
     },
   )
   fetchSpy.mockRestore()
@@ -100,4 +113,54 @@ test('rejects an insecure public pairing URL', async () => {
     // eslint-disable-next-line unicorn/prefer-https
     RemoteServerConnect.pair('http://remote.example.com/#token=pair-secret'),
   ).rejects.toThrow(/HTTPS/)
+})
+
+test.each([
+  { protocolVersion: 2 },
+  { capabilities: ['file-system-process'] },
+  { websocketUrl: 'wss://other.example.com/' },
+  { websocketUrl: 'wss://user:secret@remote.example.com/' },
+])(
+  'rejects incompatible or redirected pairing responses: %j',
+  async (override) => {
+    const fetchSpy = jest.spyOn(globalThis, 'fetch').mockResolvedValue({
+      json: async () => ({ ...pairingResult, ...override }),
+      ok: true,
+    } as Response)
+    try {
+      await expect(
+        RemoteServerConnect.pair('https://remote.example.com/#token=pair'),
+      ).rejects.toThrow('invalid pairing response')
+    } finally {
+      fetchSpy.mockRestore()
+    }
+  },
+)
+
+test('restores the prior connection when workspace switching is cancelled', async () => {
+  const connection =
+    await import('../src/parts/RemoteServerConnection/RemoteServerConnection.ts')
+  const previous = {
+    sessionToken: 'previous',
+    websocketUrl: 'wss://previous.example.com/',
+  }
+  connection.set(previous)
+  const setUri = jest.fn<RemoteServerConnect.SetWorkspaceUri>(async () => {
+    throw new Error('cancelled')
+  })
+  await expect(
+    RemoteServerConnect.connectWithPairingUrl(
+      'https://remote.example.com/#token=pair',
+      setUri,
+      async () => pairingResult,
+    ),
+  ).rejects.toThrow('cancelled')
+  expect(connection.getOptions()).toBe(previous)
+  await connection.dispose()
+})
+
+afterEach(async () => {
+  const connection =
+    await import('../src/parts/RemoteServerConnection/RemoteServerConnection.ts')
+  await connection.dispose()
 })

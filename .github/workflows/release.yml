@@ -55,6 +55,12 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: gh release upload "${{ needs.create-release.outputs.version }}" "remote-ssh-${{ needs.create-release.outputs.version }}.tar.br"
+      - name: Upload browser connector and checksum
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          node packages/build/src/prepareWebRelease.ts "${{ needs.create-release.outputs.version }}"
+          gh release upload "${{ needs.create-release.outputs.version }}" remote-server-v*.tar.br remote-server-v*.sha256
       - name: Upload remote server archive
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

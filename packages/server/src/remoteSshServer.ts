@@ -16,6 +16,7 @@ import { homedir } from 'node:os'
 import path from 'node:path'
 import { PassThrough } from 'node:stream'
 import { setTimeout as delay } from 'node:timers/promises'
+import * as RemoteWebControl from './RemoteWebControl.ts'
 import * as RemoteCli from './parts/RemoteCli/RemoteCli.ts'
 import { createRemoteWebGateway } from './RemoteWebGateway.ts'
 
@@ -681,19 +682,28 @@ const runRemoteWebServer = async (): Promise<void> => {
     publicUrl,
     workspacePath,
   })
-  process.stdout.write(
-    `${JSON.stringify({
-      localUrl: `http://127.0.0.1:${gateway.localPort}`,
-      pairingUrl: gateway.pairingUrl,
-      type: 'remote-web-ready',
-    })}\n`,
-  )
-  await new Promise<void>((resolve) => {
-    process.once('SIGINT', resolve)
-    process.once('SIGTERM', resolve)
-  })
-  managementSocket.end()
-  await gateway.close()
+  let closeControl: (() => Promise<void>) | undefined
+  try {
+    closeControl = await RemoteWebControl.listen(
+      path.join(runDirectory, `web-${gateway.localPort}.sock`),
+      gateway,
+    )
+    process.stdout.write(
+      `${JSON.stringify({
+        localUrl: `http://127.0.0.1:${gateway.localPort}`,
+        pairingUrl: gateway.pairingUrl,
+        type: 'remote-web-ready',
+      })}\n`,
+    )
+    await new Promise<void>((resolve) => {
+      process.once('SIGINT', resolve)
+      process.once('SIGTERM', resolve)
+    })
+  } finally {
+    managementSocket.end()
+    await closeControl?.()
+    await gateway.close()
+  }
 }
 
 const main = async (): Promise<void> => {
@@ -708,6 +718,19 @@ const main = async (): Promise<void> => {
     case 'daemon':
       await runDaemon()
       return
+    case 'pair-web':
+    case 'revoke-web': {
+      const port = Number(getOption('--port'))
+      if (!Number.isInteger(port) || port < 1 || port > 65535)
+        throw new Error('Invalid web gateway port')
+      process.stdout.write(
+        await RemoteWebControl.request(
+          path.join(runDirectory, `web-${port}.sock`),
+          mode === 'pair-web' ? 'pair' : 'revoke',
+        ),
+      )
+      return
+    }
     case 'serve-web':
       await runRemoteWebServer()
       return

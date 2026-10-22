@@ -9,12 +9,16 @@ import { WebSocket, WebSocketServer } from 'ws'
 
 const pairingTtl = 10 * 60 * 1000
 const sessionTtl = 24 * 60 * 60 * 1000
-const ticketTtl = 5 * 60 * 1000
+const ticketTtl = 60 * 1000
+const maxConnections = 32
+const maxBufferedBytes = 1024 * 1024
 const allowedProcesses = new Set([
   'extension-node-process',
   'file-system-process',
+  'file-watcher-explorer',
   'process-explorer',
   'search-process',
+  'shared-process',
   'terminal-process',
 ])
 
@@ -25,17 +29,28 @@ interface GatewayOptions {
   readonly port: number
   readonly publicUrl: string
   readonly workspacePath: string
+  /** Shorter lifetimes can be used by deterministic integration tests. */
+  readonly sessionTtl?: number
+}
+
+interface Session {
+  readonly expiresAt: number
+  readonly clients: Set<WebSocket>
+  readonly timer: ReturnType<typeof setTimeout>
+}
+
+interface Ticket {
+  readonly sessionToken: string
+  readonly expiresAt: number
+  readonly target: string
 }
 
 export interface RemoteWebGateway {
   readonly close: () => Promise<void>
   readonly localPort: number
   readonly pairingUrl: string
-}
-
-const getBearerToken = (request: IncomingMessage): string => {
-  const value = request.headers.authorization || ''
-  return value.startsWith('Bearer ') ? value.slice('Bearer '.length) : ''
+  readonly pair: () => string
+  readonly revoke: () => void
 }
 
 const tokensEqual = (actual: string, expected: string): boolean => {
@@ -47,6 +62,11 @@ const tokensEqual = (actual: string, expected: string): boolean => {
   )
 }
 
+const getBearerToken = (request: IncomingMessage): string => {
+  const value = request.headers.authorization || ''
+  return value.startsWith('Bearer ') ? value.slice(7) : ''
+}
+
 const writeJson = (
   response: ServerResponse,
   statusCode: number,
@@ -54,8 +74,11 @@ const writeJson = (
 ): void => {
   const body = JSON.stringify(value)
   response.writeHead(statusCode, {
+    'cache-control': 'no-store',
     'content-length': Buffer.byteLength(body),
     'content-type': 'application/json',
+    'referrer-policy': 'no-referrer',
+    'x-content-type-options': 'nosniff',
   })
   response.end(body)
 }
@@ -64,76 +87,40 @@ const rejectUpgrade = (socket: Duplex, status: string): void => {
   socket.end(`HTTP/1.1 ${status}\r\nConnection: close\r\n\r\n`)
 }
 
-const isLoopback = (url: URL): boolean => {
-  return (
-    url.hostname === '127.0.0.1' ||
-    url.hostname === 'localhost' ||
-    url.hostname === '[::1]'
-  )
-}
-
 const validatePublicUrl = (url: URL, option = '--public-url'): void => {
-  if (
-    url.protocol !== 'https:' &&
-    !(url.protocol === 'http:' && isLoopback(url))
-  ) {
+  const loopback = ['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname)
+  if (url.protocol !== 'https:' && !(url.protocol === 'http:' && loopback)) {
     throw new TypeError(
       `${option} must use https (or loopback http for development)`,
     )
   }
-}
-
-const pruneExpired = (values: Map<string, number>): void => {
-  const now = Date.now()
-  for (const [token, expiresAt] of values) {
-    if (now >= expiresAt) {
-      values.delete(token)
-    }
+  if (
+    url.username ||
+    url.password ||
+    url.search ||
+    url.hash ||
+    url.pathname !== '/'
+  ) {
+    throw new TypeError(
+      `${option} must be an origin without credentials, path, query, or fragment`,
+    )
   }
 }
 
-const toWebSocketUrl = (value: string): string => {
-  const url = new URL(value)
-  validatePublicUrl(url)
-  url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
-  url.hash = ''
-  url.pathname = '/'
-  url.search = ''
-  return url.href
-}
-
-const getBackendUrl = (options: GatewayOptions, processType: string): URL => {
-  const url = new URL(
-    `/websocket/${encodeURIComponent(processType)}`,
-    `ws://127.0.0.1:${options.backendPort}`,
-  )
-  url.searchParams.set('token', options.backendToken)
-  return url
-}
-
-const waitForOpen = (webSocket: WebSocket): Promise<void> => {
-  return new Promise((resolve, reject) => {
-    const cleanup = (): void => {
-      webSocket.off('close', onClose)
-      webSocket.off('error', onError)
-      webSocket.off('open', onOpen)
+/** Only these parameters reach the backend, and all are bound into the ticket. */
+const getTarget = (type: string, parameters: URLSearchParams): string => {
+  if (!allowedProcesses.has(type))
+    throw new TypeError('Unsupported workspace process')
+  const target = new URL(`/websocket/${type}`, 'http://localhost')
+  if (type === 'extension-node-process') {
+    for (const name of ['extensionId', 'rpcId']) {
+      const value = parameters.get(name)
+      if (!value || value.length > 256)
+        throw new TypeError('Missing extension process identity')
+      target.searchParams.set(name, value)
     }
-    const onClose = (): void => {
-      cleanup()
-      reject(new Error('LVCE workspace backend closed before opening'))
-    }
-    const onError = (error: Error): void => {
-      cleanup()
-      reject(error)
-    }
-    const onOpen = (): void => {
-      cleanup()
-      resolve()
-    }
-    webSocket.once('close', onClose)
-    webSocket.once('error', onError)
-    webSocket.once('open', onOpen)
-  })
+  }
+  return target.pathname + target.search
 }
 
 export const createRemoteWebGateway = async (
@@ -144,188 +131,305 @@ export const createRemoteWebGateway = async (
   const allowedOrigin = allowedOriginUrl.origin
   const publicUrl = new URL(options.publicUrl)
   validatePublicUrl(publicUrl)
-  const pairingToken = randomBytes(32).toString('hex')
-  const pairingExpires = Date.now() + pairingTtl
-  const sessions = new Map<string, number>()
-  const tickets = new Map<string, number>()
-  let pairingAvailable = true
+  const websocketUrl = new URL(publicUrl)
+  websocketUrl.protocol = publicUrl.protocol === 'https:' ? 'wss:' : 'ws:'
+  const sessions = new Map<string, Session>()
+  const tickets = new Map<string, Ticket>()
+  const clients = new Set<WebSocket>()
+  let pairingToken = ''
+  let pairingExpires = 0
+  let attempts = 0
+  let attemptWindow = Date.now()
 
-  const setCors = (
-    request: IncomingMessage,
-    response: ServerResponse,
-  ): boolean => {
-    if (request.headers.origin !== allowedOrigin) {
-      writeJson(response, 403, { error: 'Origin is not allowed' })
-      return false
-    }
-    response.setHeader('access-control-allow-origin', allowedOrigin)
-    response.setHeader('vary', 'origin')
-    return true
+  const pair = (): string => {
+    pairingToken = randomBytes(32).toString('hex')
+    pairingExpires = Date.now() + pairingTtl
+    const url = new URL(publicUrl)
+    url.hash = new URLSearchParams({ token: pairingToken }).toString()
+    return url.href
   }
-
-  const server = createServer((request, response) => {
-    if (!setCors(request, response)) {
-      return
+  const revokeSession = (token: string): void => {
+    const session = sessions.get(token)
+    if (!session) return
+    clearTimeout(session.timer)
+    sessions.delete(token)
+    for (const [ticket, value] of tickets) {
+      if (value.sessionToken === token) tickets.delete(ticket)
     }
-    if (request.method === 'OPTIONS') {
-      response.writeHead(204, {
-        'access-control-allow-headers': 'authorization, content-type',
-        'access-control-allow-methods': 'POST, OPTIONS',
-        'access-control-max-age': '600',
-      })
-      response.end()
-      return
+    for (const client of session.clients) client.terminate()
+  }
+  const revoke = (): void => {
+    pairingToken = ''
+    for (const token of sessions.keys()) revokeSession(token)
+  }
+  const allowAttempt = (): boolean => {
+    if (Date.now() - attemptWindow >= 60_000) {
+      attemptWindow = Date.now()
+      attempts = 0
     }
-    if (request.method !== 'POST') {
-      writeJson(response, 404, { error: 'Not found' })
-      return
+    return ++attempts <= 120
+  }
+  const getSession = (token: string): Session | undefined => {
+    const session = sessions.get(token)
+    if (session && Date.now() >= session.expiresAt) {
+      revokeSession(token)
+      return undefined
     }
-    if (request.url === '/auth/pair') {
-      const token = getBearerToken(request)
+    return session
+  }
+  const server = createServer(
+    { maxHeaderSize: 8192, requestTimeout: 10_000, headersTimeout: 10_000 },
+    (request, response) => {
+      if (request.headers.origin !== allowedOrigin) {
+        writeJson(response, 403, { error: 'Origin is not allowed' })
+        return
+      }
+      response.setHeader('access-control-allow-origin', allowedOrigin)
+      response.setHeader('vary', 'origin')
+      if (!allowAttempt()) {
+        writeJson(response, 429, {
+          error: 'Too many requests; try again in one minute',
+        })
+        return
+      }
       if (
-        !pairingAvailable ||
-        Date.now() >= pairingExpires ||
-        !tokensEqual(token, pairingToken)
+        request.headers['transfer-encoding'] ||
+        Number(request.headers['content-length'] || 0) !== 0
       ) {
-        writeJson(response, 401, { error: 'Invalid or expired pairing token' })
+        response.setHeader('connection', 'close')
+        writeJson(response, 413, { error: 'Request bodies are not accepted' })
         return
       }
-      pairingAvailable = false
-      const sessionToken = randomBytes(32).toString('hex')
-      const sessionExpiresAt = Date.now() + sessionTtl
-      sessions.set(sessionToken, sessionExpiresAt)
-      writeJson(response, 200, {
-        authentication: 'websocket-ticket',
-        sessionExpiresAt: new Date(sessionExpiresAt).toISOString(),
-        sessionToken,
-        websocketUrl: toWebSocketUrl(options.publicUrl),
-        workspacePath: options.workspacePath,
-      })
-      return
-    }
-    if (request.url === '/auth/websocket-ticket') {
-      pruneExpired(sessions)
-      pruneExpired(tickets)
-      const sessionToken = getBearerToken(request)
-      const sessionExpiresAt = sessions.get(sessionToken)
-      if (!sessionExpiresAt || Date.now() >= sessionExpiresAt) {
-        sessions.delete(sessionToken)
-        writeJson(response, 401, { error: 'Invalid session' })
+      if (request.method === 'OPTIONS') {
+        response.writeHead(204, {
+          'access-control-allow-headers': 'authorization, x-lvce-protocol',
+          'access-control-allow-methods': 'POST, OPTIONS',
+          'access-control-max-age': '600',
+        })
+        response.end()
         return
       }
-      const ticket = randomBytes(32).toString('hex')
-      const expiresAt = Date.now() + ticketTtl
-      tickets.set(ticket, expiresAt)
-      writeJson(response, 200, {
-        expiresAt: new Date(expiresAt).toISOString(),
-        ticket,
-      })
-      return
-    }
-    writeJson(response, 404, { error: 'Not found' })
-  })
+      if (request.method !== 'POST') {
+        writeJson(response, 404, { error: 'Not found' })
+        return
+      }
+      const url = new URL(request.url || '/', publicUrl)
+      const token = getBearerToken(request)
+      if (url.pathname === '/auth/pair') {
+        if (request.headers['x-lvce-protocol'] !== '1') {
+          writeJson(response, 426, {
+            error:
+              'Update the LVCE browser connector and remote server (protocol 1 required)',
+          })
+          return
+        }
+        if (
+          !pairingToken ||
+          Date.now() >= pairingExpires ||
+          !tokensEqual(token, pairingToken)
+        ) {
+          writeJson(response, 401, {
+            error:
+              'Invalid or expired pairing token; generate a new pairing URL',
+          })
+          return
+        }
+        pairingToken = ''
+        // One active browser session per gateway. Pairing again revokes the previous client.
+        for (const previous of sessions.keys()) revokeSession(previous)
+        const sessionToken = randomBytes(32).toString('hex')
+        const lifetime = options.sessionTtl ?? sessionTtl
+        const expiresAt = Date.now() + lifetime
+        const timer = setTimeout(() => revokeSession(sessionToken), lifetime)
+        timer.unref()
+        sessions.set(sessionToken, { clients: new Set(), expiresAt, timer })
+        writeJson(response, 200, {
+          authentication: 'websocket-ticket',
+          capabilities: [...allowedProcesses],
+          protocolVersion: 1,
+          sessionExpiresAt: new Date(expiresAt).toISOString(),
+          sessionToken,
+          websocketUrl: websocketUrl.href,
+          workspacePath: options.workspacePath,
+        })
+        return
+      }
+      const session = getSession(token)
+      if (!session) {
+        writeJson(response, 401, {
+          error: 'Session expired or revoked; pair again',
+        })
+        return
+      }
+      if (url.pathname === '/auth/revoke') {
+        revokeSession(token)
+        writeJson(response, 200, { ok: true })
+        return
+      }
+      if (url.pathname === '/auth/websocket-ticket') {
+        for (const [ticket, value] of tickets) {
+          if (Date.now() >= value.expiresAt) tickets.delete(ticket)
+        }
+        if (tickets.size >= 64 || session.clients.size >= maxConnections * 2) {
+          writeJson(response, 429, { error: 'Too many workspace connections' })
+          return
+        }
+        let target: string
+        try {
+          target = getTarget(
+            url.searchParams.get('process') || '',
+            url.searchParams,
+          )
+        } catch {
+          writeJson(response, 400, { error: 'Invalid workspace process' })
+          return
+        }
+        const ticket = randomBytes(32).toString('hex')
+        const expiresAt = Math.min(Date.now() + ticketTtl, session.expiresAt)
+        tickets.set(ticket, { expiresAt, sessionToken: token, target })
+        writeJson(response, 200, {
+          expiresAt: new Date(expiresAt).toISOString(),
+          ticket,
+        })
+        return
+      }
+      writeJson(response, 404, { error: 'Not found' })
+    },
+  )
+  server.maxConnections = 128
+  server.keepAliveTimeout = 5000
   const webSocketServer = new WebSocketServer({
-    maxPayload: 64 * 1024 * 1024,
+    maxPayload: 8 * 1024 * 1024,
     noServer: true,
   })
-  const clients = new Set<WebSocket>()
-  const backendKeepAlive = new WebSocket(
-    getBackendUrl(options, 'file-system-process'),
-  )
-  await waitForOpen(backendKeepAlive)
-  clients.add(backendKeepAlive)
-  backendKeepAlive.once('close', () => clients.delete(backendKeepAlive))
   server.on('upgrade', (request, socket, head) => {
     if (request.headers.origin !== allowedOrigin) {
       rejectUpgrade(socket, '403 Forbidden')
       return
     }
-    const url = new URL(request.url || '/', 'http://127.0.0.1')
-    const match = /^\/websocket\/([^/]+)$/.exec(url.pathname)
-    let processType = ''
-    try {
-      processType = match ? decodeURIComponent(match[1]) : ''
-    } catch {
-      rejectUpgrade(socket, '400 Bad Request')
+    if (!allowAttempt()) {
+      rejectUpgrade(socket, '429 Too Many Requests')
       return
     }
-    const ticket = url.searchParams.get('ticket') || ''
-    const expiresAt = tickets.get(ticket)
-    tickets.delete(ticket)
+    const url = new URL(request.url || '/', publicUrl)
+    const ticketKey = url.searchParams.get('ticket') || ''
+    const ticket = tickets.get(ticketKey)
+    tickets.delete(ticketKey)
+    const session = ticket && getSession(ticket.sessionToken)
+    let target = ''
+    try {
+      const match = /^\/websocket\/([a-z-]+)$/.exec(url.pathname)
+      if (match) target = getTarget(match[1], url.searchParams)
+    } catch {
+      // Malformed process identities cannot authorize a connection.
+    }
     if (
-      !allowedProcesses.has(processType) ||
-      !expiresAt ||
-      Date.now() >= expiresAt
+      !ticket ||
+      !session ||
+      Date.now() >= ticket.expiresAt ||
+      ticket.target !== target
     ) {
       rejectUpgrade(socket, '401 Unauthorized')
       return
     }
+    if (session.clients.size >= maxConnections * 2) {
+      rejectUpgrade(socket, '429 Too Many Requests')
+      return
+    }
     webSocketServer.handleUpgrade(request, socket, head, (client) => {
-      clients.add(client)
-      const backend = new WebSocket(getBackendUrl(options, processType))
-      clients.add(backend)
+      const backendUrl = new URL(
+        target,
+        `ws://127.0.0.1:${options.backendPort}`,
+      )
+      backendUrl.searchParams.set('token', options.backendToken)
+      const backend = new WebSocket(backendUrl, {
+        handshakeTimeout: 10_000,
+        maxPayload: 8 * 1024 * 1024,
+      })
+      for (const connection of [client, backend]) {
+        clients.add(connection)
+        session.clients.add(connection)
+      }
+      let disposed = false
       const pending: Array<{
         readonly data: Buffer
         readonly isBinary: boolean
       }> = []
       let pendingBytes = 0
+      const closeBoth = (): void => {
+        if (disposed) return
+        disposed = true
+        clearTimeout(openTimeout)
+        pending.length = 0
+        for (const connection of [client, backend]) {
+          clients.delete(connection)
+          session.clients.delete(connection)
+          connection.terminate()
+        }
+      }
+      const openTimeout = setTimeout(closeBoth, 10_000)
+      const send = (
+        destination: WebSocket,
+        data: Buffer,
+        binary: boolean,
+      ): void => {
+        if (destination.bufferedAmount + data.byteLength > maxBufferedBytes) {
+          closeBoth()
+          return
+        }
+        destination.send(data, { binary }, (error) => {
+          if (error) closeBoth()
+        })
+      }
       client.on('message', (data, isBinary) => {
         const value = Buffer.from(data as ArrayBuffer)
         if (backend.readyState === WebSocket.OPEN) {
-          backend.send(value, { binary: isBinary })
-        } else {
+          send(backend, value, isBinary)
+        } else if (pendingBytes + value.byteLength <= maxBufferedBytes) {
           pendingBytes += value.byteLength
-          if (pendingBytes > 1024 * 1024) {
-            client.close(1009, 'Backend is not ready')
-            return
-          }
           pending.push({ data: value, isBinary })
+        } else {
+          closeBoth()
         }
       })
       backend.on('open', () => {
+        clearTimeout(openTimeout)
         for (const message of pending) {
-          backend.send(message.data, { binary: message.isBinary })
+          if (disposed) break
+          send(backend, message.data, message.isBinary)
         }
         pending.length = 0
         pendingBytes = 0
       })
       backend.on('message', (data, isBinary) => {
-        if (client.readyState === WebSocket.OPEN) {
-          client.send(data, { binary: isBinary })
-        }
+        if (client.readyState === WebSocket.OPEN)
+          send(client, Buffer.from(data as ArrayBuffer), isBinary)
       })
-      const closeBoth = (): void => {
-        client.close()
-        backend.close()
-      }
       client.on('close', closeBoth)
       backend.on('close', closeBoth)
       client.on('error', closeBoth)
       backend.on('error', closeBoth)
-      client.once('close', () => clients.delete(client))
-      backend.once('close', () => clients.delete(backend))
     })
   })
-
   await new Promise<void>((resolve, reject) => {
     server.once('error', reject)
     server.listen(options.port, '127.0.0.1', resolve)
   })
   const address = server.address()
-  if (!address || typeof address === 'string') {
+  if (!address || typeof address === 'string')
     throw new Error('Failed to determine remote web gateway port')
-  }
-  publicUrl.hash = new URLSearchParams({ token: pairingToken }).toString()
   return {
     close: async () => {
-      for (const client of clients) {
-        client.terminate()
-      }
+      revoke()
+      for (const client of clients) client.terminate()
       await new Promise<void>((resolve, reject) =>
         server.close((error) => (error ? reject(error) : resolve())),
       )
+      webSocketServer.close()
     },
     localPort: address.port,
-    pairingUrl: publicUrl.href,
+    pair,
+    pairingUrl: pair(),
+    revoke,
   }
 }

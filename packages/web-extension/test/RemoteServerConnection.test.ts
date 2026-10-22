@@ -43,10 +43,14 @@ test('exchanges the session for a process-specific WebSocket ticket', async () =
     'wss://remote.example.com/websocket/terminal-process?ticket=short-lived-ticket',
   )
   expect(fetchSpy).toHaveBeenCalledWith(
-    new URL('https://remote.example.com/auth/websocket-ticket'),
+    new URL(
+      'https://remote.example.com/auth/websocket-ticket?process=terminal-process',
+    ),
     {
       headers: { authorization: 'Bearer session-secret' },
       method: 'POST',
+      redirect: 'error',
+      signal: expect.any(AbortSignal),
     },
   )
 })
@@ -67,10 +71,14 @@ test('uses HTTP only for an authenticated loopback WebSocket', async () => {
     'ws://127.0.0.1:3774/websocket/terminal-process?ticket=short-lived-ticket',
   )
   expect(fetchSpy).toHaveBeenCalledWith(
-    new URL('http://127.0.0.1:3774/auth/websocket-ticket'),
+    new URL(
+      'http://127.0.0.1:3774/auth/websocket-ticket?process=terminal-process',
+    ),
     {
       headers: { authorization: 'Bearer session-secret' },
       method: 'POST',
+      redirect: 'error',
+      signal: expect.any(AbortSignal),
     },
   )
 })
@@ -223,4 +231,43 @@ test('reports a coded unpaired server error', async () => {
   ).rejects.toMatchObject({
     code: 'E_REMOTE_SERVER_NOT_PAIRED',
   })
+})
+
+test('does not create a WebSocket after disposal while ticket authorization is pending', async () => {
+  const { promise, resolve } = Promise.withResolvers<Response>()
+  jest.spyOn(globalThis, 'fetch').mockReturnValue(promise)
+  const createSocket = jest.spyOn(globalThis, 'WebSocket')
+  RemoteServerConnection.set({
+    sessionToken: 'old-session',
+    websocketUrl: 'wss://remote.example.com/',
+  })
+  const pending = RemoteServerConnection.getWebSocketUrl('terminal-process')
+  await RemoteServerConnection.dispose()
+  resolve({
+    json: async () => ({ ticket: 'late-ticket' }),
+    ok: true,
+  } as Response)
+  await expect(pending).rejects.toThrow('changed while authorizing')
+  expect(createSocket).not.toHaveBeenCalled()
+})
+
+test('binds extension process parameters when issuing the ticket', async () => {
+  const fetchSpy = jest.spyOn(globalThis, 'fetch').mockResolvedValue({
+    json: async () => ({ ticket: 'extension-ticket' }),
+    ok: true,
+  } as Response)
+  RemoteServerConnection.set({
+    sessionToken: 'session',
+    websocketUrl: 'wss://remote.example.com/',
+  })
+  const url = await RemoteServerConnection.getWebSocketUrl(
+    'extension-node-process',
+    { extensionId: 'builtin.git', rpcId: 'git-client' },
+  )
+  expect(new URL(url).searchParams.get('rpcId')).toBe('git-client')
+  expect(fetchSpy.mock.calls[0]?.[0]).toEqual(
+    new URL(
+      'https://remote.example.com/auth/websocket-ticket?process=extension-node-process&extensionId=builtin.git&rpcId=git-client',
+    ),
+  )
 })

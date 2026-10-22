@@ -6,46 +6,14 @@ Select **Remote SSH** in the **Output** panel to see timestamped connection
 progress and errors. Connections and restored workspaces include their elapsed time in milliseconds,
 measured from the start of the connection attempt until the workspace opens.
 
-## Authenticated remote web experiment
+## Authenticated remote web workspaces
 
-The remote server can expose an LVCE workspace to the hosted web editor without
-requiring Electron, a local Node.js bridge, or browser raw-socket access. The
-workspace backend still runs on the remote machine, while the browser connects
-to it through an authenticated HTTPS/WebSocket gateway. The browser connector
-is packaged separately as the web-compatible `builtin.remote-server` extension;
-the existing `builtin.remote-ssh` extension remains Node-hosted so its SSH
-transport keeps working unchanged in desktop and remote extension hosts.
-
-The gateway deliberately listens only on `127.0.0.1`. Put it behind a trusted
-HTTPS reverse proxy, private-network ingress, or outbound tunnel that provides
-the public URL. Do not publish the plain local port directly to the internet.
-For local development only, loopback `http://` public URLs are also accepted
-and produce loopback `ws://` connections.
-
-Start the experiment on the remote machine with:
-
-```sh
-node lvce-remote-ssh-server.mjs serve-web \
-  --port=3774 \
-  --public-url=https://lvce.example.com \
-  --allowed-origin=https://lvce-editor.github.io \
-  --workspace=/home/user/project
-```
-
-The command prints a pairing URL. In the hosted editor, run
-`Remote Server: Connect with Pairing URL` and paste it. The secret stays in the
-URL fragment, is exchanged once for an in-memory session, and is never sent to
-the hosted page server. Each workspace WebSocket then uses a separate,
-single-use ticket that expires after five minutes. The gateway also validates
-the browser `Origin` before proxying an approved workspace process to the
-loopback-only LVCE backend. Sessions expire after 24 hours or immediately when
-the gateway restarts.
-
-This is a single-user prototype. Sessions and pairing state are intentionally
-lost when the gateway restarts; persistent device enrollment, revocation UI,
-rate limiting, audit logs, and an opinionated tunnel deployment remain future
-work. A paired session can use terminals and edit files as the remote server
-user, so it must be treated like shell access.
+The separate web-compatible `builtin.remote-server` connector connects the
+static editor to a loopback LVCE gateway behind HTTPS/WSS ingress. Files,
+terminals, search, and supported remote Node extension processes execute on the
+remote machine. The desktop `builtin.remote-ssh` extension keeps its existing
+SSH transport. See [Remote browser development (HTTPS)](#remote-browser-development-https)
+for deployment, pairing, revocation, and connection limits.
 
 Run `SSH: Connect`, enter an SSH destination, and LVCE opens the remote root as
 `remote-ssh://host/`. You can also enter `host:/absolute/path`, an `ssh://` URI,
@@ -120,3 +88,83 @@ npm test
 Set `LVCE_REMOTE_SSH_TEST_GIT_EXTENSION_PATH` to an absolute path to a built Git extension before `npm run build`. The test server archive and the browser test then use that build on both machines. Leave it unset to use the pinned Git release.
 
 An optional `LVCE_REMOTE_SSH_TEST_GIT_SCENARIO` absolute module path can export `test({ page, expect, sshServer, port, socketUrls, sockets })`. The real SSH test invokes it after connecting, editing and saving a remote file, and checking the Git source control view. The harness owns server, browser, and fixture cleanup.
+
+## Remote browser development (HTTPS)
+
+The browser connector uses HTTPS and WSS; SSH is used only to install and start
+LVCE on the remote host. Browser devices need no native helper. The first
+release supports a single user and active browser session on Linux.
+
+Install the versioned remote server archive and its matching Node runtime from
+this repository's release manifest, verifying both SHA-256 checksums. Keep the
+matching `builtin.remote-server` connector in the static editor build.
+
+Use a dedicated DNS name pointing at your remote host, with TCP ports 80/443
+reachable for Caddy certificate issuance and HTTPS. Install Caddy, then use:
+
+```caddyfile
+lvce.example.com {
+    reverse_proxy 127.0.0.1:3774
+}
+```
+
+Leave Caddy access logging disabled: WebSocket URLs contain short-lived tickets.
+If a deployment requires access logging, remove query strings and Authorization
+headers before recording requests. Never put the pairing secret or session
+credential in a reverse-proxy URL, access log, or screenshot.
+
+Start the gateway as your ordinary development user:
+
+```sh
+node lvce-remote-ssh-server.mjs serve-web \
+  --port=3774 \
+  --public-url=https://lvce.example.com \
+  --allowed-origin=https://lvce-editor.github.io \
+  --workspace=/home/user/project
+```
+
+The backend and gateway bind to loopback. Only Caddy faces the network. In the
+GitHub Pages editor, run **Remote Server: Connect with Pairing URL**, then paste
+the printed URL into the editor prompt. Do not navigate to the pairing URL.
+Use **Remote Server: Connection Status** to inspect pairing and **Remote Server:
+Disconnect** to revoke the session and close its transports.
+
+Generate a new link or revoke browser access over an existing SSH session:
+
+```sh
+node lvce-remote-ssh-server.mjs pair-web --port=3774
+node lvce-remote-ssh-server.mjs revoke-web --port=3774
+```
+
+These commands use an owner-only Unix socket in the server's private runtime
+directory. New links invalidate earlier unused links; redeeming a new link
+revokes the previous browser session. Pairing links expire after ten minutes;
+sessions expire after 24 hours; process-specific tickets expire after one
+minute and work once. Revocation and expiry close live connections, including
+remote extension processes. Restarting the gateway forgets all credentials.
+Reload the browser and pair again; credentials are held only in memory.
+
+Origin checks accept an exact origin, without a path. All projects under the
+same GitHub Pages hostname share that origin. Use a dedicated frontend origin
+when other projects on that hostname should not share this trust boundary.
+Pairing grants filesystem and terminal access as the server's OS user; the
+selected folder is not a sandbox. Run under a separate OS account or container
+when isolation is required.
+
+For machines behind NAT, an externally operated outbound HTTPS tunnel can
+replace Caddy ingress. Forward it only to the loopback gateway, preserve Origin
+and WebSocket upgrades, and retain LVCE pairing. The tunnel operator terminates
+TLS unless the chosen product provides a separately verified end-to-end mode;
+choose an operator you trust with workspace traffic. An LVCE-managed relay is
+not required by this deployment.
+
+Connection failures do not replay filesystem writes or terminal input. Preserve
+unsaved buffers, reconnect, and verify the remote file before saving again.
+Protocol mismatches require updating the connector and server together. A 401
+requires a fresh pairing link; a 429 requires waiting one minute. For CORS
+failures, verify `--allowed-origin`; for TLS/WebSocket failures, verify the DNS
+name, valid certificate, and proxy upgrade support. Private-network deployments
+may also require the browser's local-network permission.
+
+The gateway limits each session to 32 workspace connections, 64 outstanding
+tickets, 120 HTTP/upgrade attempts per minute, and bounded WebSocket queues.
