@@ -30,11 +30,7 @@ const environment = {
 }
 let child
 let socket
-try {
-  await writeFile(
-    join(directory, 'hello.txt'),
-    'Bundled gateway and real backend\n',
-  )
+const startGateway = async () => {
   child = spawn(
     process.execPath,
     [
@@ -52,7 +48,7 @@ try {
     output = (output + String(data)).slice(-65536)
   })
   const lines = createInterface({ input: child.stdout })
-  const ready = await new Promise((resolve, reject) => {
+  return new Promise((resolve, reject) => {
     const timeout = setTimeout(
       () => reject(new Error(`Bundled gateway did not start: ${output}`)),
       30000,
@@ -77,6 +73,13 @@ try {
       reject(new Error(`Bundled gateway exited: ${output}`))
     })
   })
+}
+try {
+  await writeFile(
+    join(directory, 'hello.txt'),
+    'Bundled gateway and real backend\n',
+  )
+  let ready = await startGateway()
   const port = new URL(ready.localUrl).port
   const pair = async (pairingUrl) => {
     const response = await fetch(`${ready.localUrl}/auth/pair`, {
@@ -158,8 +161,35 @@ try {
     env: environment,
   })
   await closed
+  const beforeRestart = await execute(
+    process.execPath,
+    [entry, 'pair-web', `--port=${port}`],
+    { env: environment },
+  )
+  const liveSession = await pair(JSON.parse(beforeRestart.stdout).pairingUrl)
+  // Restart the real backend, not only a mocked browser connection. Its exit
+  // must stop the old gateway, and its credentials must not survive restart.
+  const runtime = join(directory, 'runtime', 'run')
+  const stateNames = (await readdir(runtime)).filter((name) =>
+    /^server-.*\.json$/.test(name),
+  )
+  strictEqual(stateNames.length, 1)
+  const state = JSON.parse(await readFile(join(runtime, stateNames[0]), 'utf8'))
+  const exited = once(child, 'exit', { signal: AbortSignal.timeout(10000) })
+  process.kill(state.backendPid, 'SIGTERM')
+  await exited
+  ready = await startGateway()
+  const oldAuthorization = await fetch(
+    `${ready.localUrl}/auth/websocket-ticket?process=file-system-process`,
+    {
+      method: 'POST',
+      headers: { origin, authorization: `Bearer ${liveSession.sessionToken}` },
+    },
+  )
+  strictEqual(oldAuthorization.status, 401)
+  await pair(ready.pairingUrl)
   console.log(
-    'PASS packaged serve-web, pair-web, real remote filesystem RPC, and revoke-web',
+    'PASS packaged gateway, remote filesystem RPC, revocation, startup cleanup, and backend restart with fresh pairing',
   )
 } finally {
   socket?.terminate()

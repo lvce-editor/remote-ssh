@@ -702,6 +702,9 @@ const runRemoteWebServer = async (): Promise<void> => {
       managementSocket.once('error', () => resolve())
       process.once('SIGINT', resolve)
       process.once('SIGTERM', resolve)
+      // Drain management messages so a backend shutdown also delivers EOF.
+      // An unread readiness response otherwise keeps this socket paused.
+      managementSocket.resume()
     })
   } finally {
     managementSocket.end()
