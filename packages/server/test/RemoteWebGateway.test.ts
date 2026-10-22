@@ -1,5 +1,6 @@
 import { deepStrictEqual, rejects, strictEqual } from 'node:assert/strict'
 import { once } from 'node:events'
+import { request } from 'node:http'
 import { test } from 'node:test'
 import { WebSocket, WebSocketServer } from 'ws'
 import { createRemoteWebGateway } from '../src/RemoteWebGateway.ts'
@@ -353,4 +354,32 @@ void test('checks protocol before consuming pairing, rejects request bodies, and
   for (let i = 0; i < 121; i++)
     response = await post(f.gateway.localPort, '/auth/pair', 'invalid')
   strictEqual(response?.status, 429)
+})
+
+void test('malformed HTTP and upgrade URLs cannot crash the gateway', async (context) => {
+  const f = await fixture(context)
+  for (const upgrade of [false, true]) {
+    const status = await new Promise<number | undefined>((resolve, reject) => {
+      const incoming = request(
+        {
+          hostname: '127.0.0.1',
+          port: f.gateway.localPort,
+          path: 'http://[',
+          method: 'POST',
+          headers: {
+            origin: allowedOrigin,
+            ...(upgrade ? { connection: 'Upgrade', upgrade: 'websocket' } : {}),
+          },
+        },
+        (response) => {
+          response.resume()
+          resolve(response.statusCode)
+        },
+      )
+      incoming.on('error', reject)
+      incoming.end()
+    })
+    strictEqual(status, 400)
+  }
+  await f.pair()
 })

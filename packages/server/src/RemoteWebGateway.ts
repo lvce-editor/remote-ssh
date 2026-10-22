@@ -213,7 +213,13 @@ export const createRemoteWebGateway = async (
         writeJson(response, 404, { error: 'Not found' })
         return
       }
-      const url = new URL(request.url || '/', publicUrl)
+      let url: URL
+      try {
+        url = new URL(request.url || '/', publicUrl)
+      } catch {
+        writeJson(response, 400, { error: 'Invalid request URL' })
+        return
+      }
       const token = getBearerToken(request)
       if (url.pathname === '/auth/pair') {
         if (request.headers['x-lvce-protocol'] !== '1') {
@@ -311,7 +317,13 @@ export const createRemoteWebGateway = async (
       rejectUpgrade(socket, '429 Too Many Requests')
       return
     }
-    const url = new URL(request.url || '/', publicUrl)
+    let url: URL
+    try {
+      url = new URL(request.url || '/', publicUrl)
+    } catch {
+      rejectUpgrade(socket, '400 Bad Request')
+      return
+    }
     const ticketKey = url.searchParams.get('ticket') || ''
     const ticket = tickets.get(ticketKey)
     tickets.delete(ticketKey)
