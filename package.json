@@ -16,7 +16,8 @@
     "format": "prettier --write .",
     "lint": "eslint . && prettier --check .",
     "test": "npm run build:extension && npm test --workspaces --if-present",
-    "type-check": "tsc -b"
+    "type-check": "tsc -b",
+    "e2e:web": "npm run e2e:web --workspace=packages/e2e"
   },
   "author": "Lvce Editor",
   "license": "MIT",

@@ -7,8 +7,9 @@ class MockWebSocket {
   onmessage: ((event: any) => void) | null = null
   onopen: ((event: any) => void) | null = null
 
-  close(): void {}
-  send(): void {}
+  bufferedAmount = 0
+  close = jest.fn()
+  send = jest.fn<(data: string) => void>()
 }
 
 const waitForWebSocket = async (
@@ -270,4 +271,89 @@ test('binds extension process parameters when issuing the ticket', async () => {
       'https://remote.example.com/auth/websocket-ticket?process=extension-node-process&extensionId=builtin.git&rpcId=git-client',
     ),
   )
+})
+
+const flush = async (): Promise<void> => {
+  for (let i = 0; i < 20; i++) await Promise.resolve()
+}
+
+const mockConnections = (): MockWebSocket[] => {
+  jest.spyOn(globalThis, 'fetch').mockResolvedValue({
+    json: async () => ({ ticket: 'fresh-ticket' }),
+    ok: true,
+  } as Response)
+  const sockets: MockWebSocket[] = []
+  jest.spyOn(globalThis, 'WebSocket').mockImplementation(() => {
+    const socket = new MockWebSocket()
+    sockets.push(socket)
+    return socket as unknown as WebSocket
+  })
+  RemoteServerConnection.set({
+    sessionToken: 'session-secret',
+    websocketUrl: 'wss://remote.example.com/',
+  })
+  return sockets
+}
+
+test('rejects an uncertain write on disconnect and opens a fresh socket without replaying it', async () => {
+  const sockets = mockConnections()
+  const write = RemoteServerConnection.invoke(
+    'FileSystem.writeFile',
+    '/tmp/file',
+    'text',
+  )
+  const rejected = expect(write).rejects.toMatchObject({
+    code: 'E_REMOTE_SERVER_WEBSOCKET_CLOSED',
+  })
+  await waitForWebSocket(sockets)
+  sockets[0].onopen?.({})
+  await flush()
+  expect(sockets[0].send).toHaveBeenCalledTimes(1)
+  sockets[0].onclose?.({ code: 1006, reason: '' })
+  await rejected
+
+  const read = RemoteServerConnection.invoke('FileSystem.stat', '/tmp/file')
+  await flush()
+  expect(sockets).toHaveLength(2)
+  sockets[1].onopen?.({})
+  await flush()
+  const request = JSON.parse(sockets[1].send.mock.calls[0][0])
+  expect(request.method).toBe('FileSystem.stat')
+  expect(sockets[1].send).toHaveBeenCalledTimes(1)
+  sockets[1].onmessage?.({
+    data: JSON.stringify({ id: request.id, result: { size: 4 } }),
+  })
+  await expect(read).resolves.toEqual({ size: 4 })
+})
+
+test('switching workspace closes sockets and rejects outstanding requests from the old generation', async () => {
+  const sockets = mockConnections()
+  const read = RemoteServerConnection.invoke('FileSystem.stat', '/old')
+  const rejected = expect(read).rejects.toMatchObject({
+    code: 'E_REMOTE_SERVER_CONNECTION_CLOSED',
+  })
+  await waitForWebSocket(sockets)
+  sockets[0].onopen?.({})
+  await flush()
+  const disposeBridge = jest.fn()
+  RemoteServerConnection.trackConnection(disposeBridge)
+  RemoteServerConnection.set({
+    sessionToken: 'new-session',
+    websocketUrl: 'wss://another.example.com/',
+  })
+  await rejected
+  expect(sockets[0].close).toHaveBeenCalled()
+  expect(disposeBridge).toHaveBeenCalledTimes(1)
+  expect(RemoteServerConnection.getStatus()).toContain('another.example.com')
+})
+
+test('expired or revoked authorization clears the in-memory session', async () => {
+  mockConnections()
+  jest
+    .spyOn(globalThis, 'fetch')
+    .mockResolvedValue({ ok: false, status: 401 } as Response)
+  await expect(
+    RemoteServerConnection.getWebSocketUrl('terminal-process'),
+  ).rejects.toThrow('expired or revoked')
+  expect(RemoteServerConnection.getOptions()).toBeUndefined()
 })

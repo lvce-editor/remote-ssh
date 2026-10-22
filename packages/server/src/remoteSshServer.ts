@@ -668,7 +668,7 @@ const runRemoteWebServer = async (): Promise<void> => {
   if (!path.isAbsolute(workspacePath)) {
     throw new TypeError('--workspace must be an absolute path')
   }
-  const port = Number.parseInt(getOption('--port'), 10)
+  const port = Number(getOption('--port'))
   if (!Number.isSafeInteger(port) || port < 0 || port > 65_535) {
     throw new RangeError('--port must be between 0 and 65535')
   }
@@ -696,6 +696,8 @@ const runRemoteWebServer = async (): Promise<void> => {
       })}\n`,
     )
     await new Promise<void>((resolve) => {
+      managementSocket.once('close', resolve)
+      managementSocket.once('error', () => resolve())
       process.once('SIGINT', resolve)
       process.once('SIGTERM', resolve)
     })

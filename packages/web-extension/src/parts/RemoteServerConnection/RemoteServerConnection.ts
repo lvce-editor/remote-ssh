@@ -382,6 +382,7 @@ export const revoke = async (): Promise<void> => {
   const response = await fetch(url, {
     headers: { authorization: `Bearer ${options.sessionToken}` },
     method: 'POST',
+    redirect: 'error',
     signal: AbortSignal.timeout(10_000),
   })
   if (!response.ok && response.status !== 401)
