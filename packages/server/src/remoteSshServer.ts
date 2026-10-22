@@ -674,16 +674,18 @@ const runRemoteWebServer = async (): Promise<void> => {
   }
   const state = await ensureServer()
   const managementSocket = await authenticate(state)
-  const gateway = await createRemoteWebGateway({
-    allowedOrigin,
-    backendPort: state.backendPort,
-    backendToken: state.backendToken,
-    port,
-    publicUrl,
-    workspacePath,
-  })
+  let closeGateway: (() => Promise<void>) | undefined
   let closeControl: (() => Promise<void>) | undefined
   try {
+    const gateway = await createRemoteWebGateway({
+      allowedOrigin,
+      backendPort: state.backendPort,
+      backendToken: state.backendToken,
+      port,
+      publicUrl,
+      workspacePath,
+    })
+    closeGateway = gateway.close
     closeControl = await RemoteWebControl.listen(
       path.join(runDirectory, `web-${gateway.localPort}.sock`),
       gateway,
@@ -703,8 +705,11 @@ const runRemoteWebServer = async (): Promise<void> => {
     })
   } finally {
     managementSocket.end()
-    await closeControl?.()
-    await gateway.close()
+    try {
+      await closeControl?.()
+    } finally {
+      await closeGateway?.()
+    }
   }
 }
 

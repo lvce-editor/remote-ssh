@@ -1,4 +1,4 @@
-import { strictEqual } from 'node:assert/strict'
+import { rejects, strictEqual } from 'node:assert/strict'
 import { spawn, execFile } from 'node:child_process'
 import { once } from 'node:events'
 import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
@@ -134,6 +134,25 @@ try {
     }),
   )
   strictEqual((await response).result, 'Bundled gateway and real backend\n')
+  for (const options of [
+    ['--port=0', `--allowed-origin=${origin}/lvce-editor`],
+    [`--port=${port}`, `--allowed-origin=${origin}`],
+  ]) {
+    await rejects(
+      execute(
+        process.execPath,
+        [
+          entry,
+          'serve-web',
+          ...options,
+          '--public-url=https://remote.example.com',
+          `--workspace=${directory}`,
+        ],
+        { env: environment, timeout: 5000 },
+      ),
+      (error) => error.code === 1 && !error.killed,
+    )
+  }
   const closed = once(socket, 'close')
   await execute(process.execPath, [entry, 'revoke-web', `--port=${port}`], {
     env: environment,
