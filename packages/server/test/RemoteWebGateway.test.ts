@@ -72,6 +72,8 @@ void test('pairs once and proxies an origin-authenticated ticket', async (contex
   let backendRequestUrl = ''
   backend.on('connection', (webSocket, request) => {
     backendRequestUrl = request.url || ''
+    webSocket.send(JSON.stringify('ready'))
+    webSocket.send(Buffer.from(JSON.stringify('ready')))
     webSocket.on('message', (message) => webSocket.send(message))
   })
 

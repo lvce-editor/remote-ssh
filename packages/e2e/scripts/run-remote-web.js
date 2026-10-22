@@ -56,6 +56,10 @@ if (process.argv.includes('--serve')) {
       socket.on('framereceived', (event) => {
         try {
           const message = JSON.parse(String(event.payload))
+          if (message === 'ready')
+            diagnostics.push({
+              unexpectedReadiness: new URL(socket.url()).pathname,
+            })
           if (
             new URL(socket.url()).pathname !==
               '/websocket/file-system-process' ||
@@ -221,6 +225,7 @@ if (process.argv.includes('--serve')) {
         )[1],
       )
     }
+    expect(diagnostics.filter((item) => typeof item === 'string')).toEqual([])
     await page.locator('.EditorInput textarea').focus()
     await page.keyboard.press('Control+End')
     await page.keyboard.type('Unsaved text must survive disconnect')

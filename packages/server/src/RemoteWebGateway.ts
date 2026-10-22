@@ -416,8 +416,11 @@ export const createRemoteWebGateway = async (
         pendingBytes = 0
       })
       backend.on('message', (data, isBinary) => {
-        if (client.readyState === WebSocket.OPEN)
-          send(client, Buffer.from(data as ArrayBuffer), isBinary)
+        const value = Buffer.from(data as ArrayBuffer)
+        // Native backends announce readiness outside JSON-RPC. Browser RPC
+        // clients start at the WebSocket handshake and accept RPC objects only.
+        if (value.byteLength === 7 && value.toString() === '"ready"') return
+        if (client.readyState === WebSocket.OPEN) send(client, value, isBinary)
       })
       client.on('close', closeBoth)
       backend.on('close', closeBoth)
