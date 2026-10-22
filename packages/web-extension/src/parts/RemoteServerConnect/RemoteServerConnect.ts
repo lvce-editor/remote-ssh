@@ -81,10 +81,6 @@ export const pair = async (value: string): Promise<PairingResult> => {
     )
   }
   const result = (await response.json()) as Partial<PairingResult>
-  const webSocketEndpoint = new URL(result.websocketUrl || 'about:blank')
-  const isAllowedWebSocket =
-    webSocketEndpoint.protocol === 'wss:' ||
-    (webSocketEndpoint.protocol === 'ws:' && isLoopback(webSocketEndpoint))
   if (
     result.protocolVersion !== 1 ||
     !Array.isArray(result.capabilities) ||
@@ -94,7 +90,17 @@ export const pair = async (value: string): Promise<PairingResult> => {
       'search-process',
       'shared-process',
       'extension-node-process',
-    ].some((capability) => !result.capabilities?.includes(capability)) ||
+    ].some((capability) => !result.capabilities?.includes(capability))
+  ) {
+    throw new TypeError(
+      'Remote server protocol or capabilities are incompatible. Update the remote server and browser connector.',
+    )
+  }
+  const webSocketEndpoint = new URL(result.websocketUrl || 'about:blank')
+  const isAllowedWebSocket =
+    webSocketEndpoint.protocol === 'wss:' ||
+    (webSocketEndpoint.protocol === 'ws:' && isLoopback(webSocketEndpoint))
+  if (
     webSocketEndpoint.host !== endpoint.host ||
     webSocketEndpoint.protocol !==
       (endpoint.protocol === 'https:' ? 'wss:' : 'ws:') ||

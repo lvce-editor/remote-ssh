@@ -130,7 +130,11 @@ test.each([
     try {
       await expect(
         RemoteServerConnect.pair('https://remote.example.com/#token=pair'),
-      ).rejects.toThrow('invalid pairing response')
+      ).rejects.toThrow(
+        'protocolVersion' in override || 'capabilities' in override
+          ? 'Update the remote server and browser connector'
+          : 'invalid pairing response',
+      )
     } finally {
       fetchSpy.mockRestore()
     }

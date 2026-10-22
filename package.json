@@ -13,11 +13,11 @@
     "dev": "node packages/build/src/dev.ts",
     "e2e": "npm run e2e --workspace=packages/e2e",
     "e2e:headless": "npm run e2e:headless --workspace=packages/e2e",
+    "e2e:web": "npm run e2e:web --workspace=packages/e2e",
     "format": "prettier --write .",
     "lint": "eslint . && prettier --check .",
     "test": "npm run build:extension && npm test --workspaces --if-present",
-    "type-check": "tsc -b",
-    "e2e:web": "npm run e2e:web --workspace=packages/e2e"
+    "type-check": "tsc -b"
   },
   "author": "Lvce Editor",
   "license": "MIT",

@@ -302,15 +302,15 @@ test('rejects an uncertain write on disconnect and opens a fresh socket without 
     '/tmp/file',
     'text',
   )
-  const rejected = expect(write).rejects.toMatchObject({
-    code: 'E_REMOTE_SERVER_WEBSOCKET_CLOSED',
-  })
+  void write.catch(() => {})
   await waitForWebSocket(sockets)
   sockets[0].onopen?.({})
   await flush()
   expect(sockets[0].send).toHaveBeenCalledTimes(1)
   sockets[0].onclose?.({ code: 1006, reason: '' })
-  await rejected
+  await expect(write).rejects.toMatchObject({
+    code: 'E_REMOTE_SERVER_WEBSOCKET_CLOSED',
+  })
 
   const read = RemoteServerConnection.invoke('FileSystem.stat', '/tmp/file')
   await flush()
@@ -329,9 +329,7 @@ test('rejects an uncertain write on disconnect and opens a fresh socket without 
 test('switching workspace closes sockets and rejects outstanding requests from the old generation', async () => {
   const sockets = mockConnections()
   const read = RemoteServerConnection.invoke('FileSystem.stat', '/old')
-  const rejected = expect(read).rejects.toMatchObject({
-    code: 'E_REMOTE_SERVER_CONNECTION_CLOSED',
-  })
+  void read.catch(() => {})
   await waitForWebSocket(sockets)
   sockets[0].onopen?.({})
   await flush()
@@ -341,7 +339,9 @@ test('switching workspace closes sockets and rejects outstanding requests from t
     sessionToken: 'new-session',
     websocketUrl: 'wss://another.example.com/',
   })
-  await rejected
+  await expect(read).rejects.toMatchObject({
+    code: 'E_REMOTE_SERVER_CONNECTION_CLOSED',
+  })
   expect(sockets[0].close).toHaveBeenCalled()
   expect(disposeBridge).toHaveBeenCalledTimes(1)
   expect(RemoteServerConnection.getStatus()).toContain('another.example.com')
