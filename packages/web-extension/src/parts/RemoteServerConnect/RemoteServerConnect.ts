@@ -86,6 +86,7 @@ export const pair = async (value: string): Promise<PairingResult> => {
     !Array.isArray(result.capabilities) ||
     [
       'file-system-process',
+      'file-watcher-explorer',
       'terminal-process',
       'search-process',
       'shared-process',

@@ -5,6 +5,7 @@ const pairingResult = {
   authentication: 'websocket-ticket' as const,
   capabilities: [
     'file-system-process',
+    'file-watcher-explorer',
     'terminal-process',
     'search-process',
     'shared-process',
@@ -118,6 +119,11 @@ test('rejects an insecure public pairing URL', async () => {
 test.each([
   { protocolVersion: 2 },
   { capabilities: ['file-system-process'] },
+  {
+    capabilities: pairingResult.capabilities.filter(
+      (capability) => capability !== 'file-watcher-explorer',
+    ),
+  },
   { websocketUrl: 'wss://other.example.com/' },
   { websocketUrl: 'wss://user:secret@remote.example.com/' },
 ])(
