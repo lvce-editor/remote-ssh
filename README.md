@@ -129,15 +129,29 @@ Use a dedicated DNS name pointing at your remote host, with TCP ports 80/443
 reachable for Caddy certificate issuance and HTTPS. Install Caddy, then use:
 
 ```caddyfile
+{
+    log default {
+        format filter {
+            wrap json
+            fields {
+                request>uri delete
+                request>headers delete
+            }
+        }
+    }
+}
+
 lvce.example.com {
     reverse_proxy 127.0.0.1:3774
 }
 ```
 
-Leave Caddy access logging disabled: WebSocket URLs contain short-lived tickets.
-If a deployment requires access logging, remove query strings and Authorization
-headers before recording requests. Never put the pairing secret or session
-credential in a reverse-proxy URL, access log, or screenshot.
+This configuration removes request URLs and headers from Caddy runtime logs.
+Leave access logging disabled: WebSocket URLs contain short-lived tickets.
+If a deployment requires access logging, apply the same
+[log filters](https://caddyserver.com/docs/caddyfile/directives/log#filter)
+to that logger. Never put the pairing secret or session credential in a
+reverse-proxy URL, access log, or screenshot.
 
 Start the gateway as your ordinary development user:
 
