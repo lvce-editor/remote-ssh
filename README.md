@@ -93,7 +93,7 @@ An optional `LVCE_REMOTE_SSH_TEST_GIT_SCENARIO` absolute module path can export 
 
 The browser connector uses HTTPS and WSS; SSH is used only to install and start
 LVCE on the remote host. Browser devices need no native helper. The first
-release supports a single user and active browser session on Linux.
+release supports a single user and active browser session on Linux x64.
 
 Install the versioned remote server archive and its matching Node runtime from
 this repository's release manifest, verifying both SHA-256 checksums. Keep the
@@ -168,3 +168,25 @@ may also require the browser's local-network permission.
 
 The gateway limits each session to 32 workspace connections, 64 outstanding
 tickets, 120 HTTP/upgrade attempts per minute, and bounded WebSocket queues.
+
+### Browser acceptance tests
+
+Build the static editor and bundled remote backend, then run a browser against
+separate HTTPS frontend and gateway origins:
+
+```sh
+PATH_PREFIX=/lvce-editor npm run build:static
+LVCE_REMOTE_WEB_PATH_PREFIX=/lvce-editor LVCE_REMOTE_WEB_BROWSER=chromium npm run e2e:web
+```
+
+The CI matrix repeats this scenario in Chromium, Firefox, and WebKit. It tests
+remote editing, terminal commands, automatic file watching, search, Git, a real
+TypeScript compiler running through a declared remote Node process, and unsaved
+text across disconnect. Fixtures isolate application state and remove their
+backend processes and temporary files on completion. Self-signed certificates
+are accepted only by the fixture browser context.
+
+For a published static frontend, set `LVCE_REMOTE_WEB_FRONTEND_URL` to its HTTPS
+URL. That smoke test uses the deployed assets and their built-in extensions; it
+omits the injected TypeScript test extension. Chromium is granted local-network
+permission to reach the fixture gateway on this machine.

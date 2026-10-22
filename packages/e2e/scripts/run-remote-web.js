@@ -33,7 +33,12 @@ if (process.argv.includes('--serve')) {
         ? ['--remote-debugging-port=39229']
         : [],
     })
-    page = await browser.newPage({ ignoreHTTPSErrors: true })
+    page = await browser.newPage({
+      ignoreHTTPSErrors: true,
+      ...(browserName === 'chromium' && !fixture.injectedLanguage
+        ? { permissions: ['local-network-access'] }
+        : {}),
+    })
     const socketPaths = []
     page.on('console', (message) => {
       if (message.type() === 'error') diagnostics.push(message.text())
@@ -199,11 +204,13 @@ if (process.argv.includes('--serve')) {
       timeout: 30_000,
     })
     expect(socketPaths).toContain('/websocket/extension-node-process')
-    await command('Remote Language Test: Validate TypeScript')
-    await expect(page.locator('.NotificationMessage').last()).toContainText(
-      '2322:',
-      { timeout: 30_000 },
-    )
+    if (fixture.injectedLanguage) {
+      await command('Remote Language Test: Validate TypeScript')
+      await expect(page.locator('.NotificationMessage').last()).toContainText(
+        '2322:',
+        { timeout: 30_000 },
+      )
+    }
     await page.locator('.EditorInput textarea').focus()
     await page.keyboard.press('Control+End')
     await page.keyboard.type('Unsaved text must survive disconnect')
@@ -216,7 +223,7 @@ if (process.argv.includes('--serve')) {
       'Disconnected',
     )
     console.log(
-      `PASS ${browserName}: static HTTPS frontend, cross-origin pairing, remote save, terminal, watching, search, Git, TypeScript service, and dirty-buffer disconnect`,
+      `PASS ${browserName}: static HTTPS frontend, cross-origin pairing, remote save, terminal, watching, search, Git, ${fixture.injectedLanguage ? 'TypeScript service, ' : ''}and dirty-buffer disconnect`,
     )
   } catch (error) {
     console.error(

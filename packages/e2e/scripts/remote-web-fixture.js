@@ -149,7 +149,10 @@ export const createFixture = async () => {
     })
     const frontendPort = await listen(frontend)
     cleanups.push(() => close(frontend))
-    const origin = `https://localhost:${frontendPort}`
+    const frontendUrl =
+      process.env.LVCE_REMOTE_WEB_FRONTEND_URL ||
+      `https://localhost:${frontendPort}${prefix}/`
+    const origin = new URL(frontendUrl).origin
     const backendEntry =
       process.env.LVCE_REMOTE_WEB_BACKEND_SCRIPT ||
       join(
@@ -298,7 +301,8 @@ export const createFixture = async () => {
       getBackendLog: () => backendLog,
       diagnostics,
       directory,
-      url: `${origin}${prefix}/`,
+      url: frontendUrl,
+      injectedLanguage: !process.env.LVCE_REMOTE_WEB_FRONTEND_URL,
       workspace,
       dispose,
     }
