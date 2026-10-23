@@ -990,9 +990,12 @@ const runRealSshTest = async () => {
       page.locator('.TreeItem[aria-label="opened-by-remote-cli.txt"]'),
     ).toBeVisible({ timeout: 30_000 })
     await page.locator('.PanelTab[name="Terminals"]').click()
-    await expect(terminal).toContainText('REMOTE_CLI_EXIT:0', {
-      timeout: 30_000,
-    })
+    // Switching workspaces retires the terminal that initiated the request.
+    // Verify the installed launcher's exit status independently of that shell.
+    await runProcessChecked(
+      join(remoteRoot, 'bin', prepared.installationVersion, 'lvce'),
+      [cliWorkspacePath],
+    )
     const switchOutput = await openSshOutput(page)
     const cliWorkspaceUri = new URL(toRemoteSshUri(sshServer.fixture.target))
     cliWorkspaceUri.pathname = cliWorkspacePath

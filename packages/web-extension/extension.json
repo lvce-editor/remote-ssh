@@ -18,7 +18,12 @@
   "activation": [
     "onCommand:remote-server.connect",
     "onCommand:remote-server.getWebSocketUrl",
-    "onFileSystem:remote-server"
+    "onFileSystem:remote-server",
+    "onCommand:remote-server.disconnect",
+    "onCommand:remote-server.status",
+    "onCommand:remote-server.connectToProcess",
+    "onCommand:remote-server.request",
+    "onCommand:remote-server.releaseWorkspace"
   ],
   "commands": [
     {
@@ -28,11 +33,36 @@
     {
       "id": "remote-server.getWebSocketUrl",
       "internal": true
+    },
+    {
+      "id": "remote-server.disconnect",
+      "label": "Remote Server: Disconnect"
+    },
+    {
+      "id": "remote-server.status",
+      "label": "Remote Server: Connection Status"
+    },
+    {
+      "id": "remote-server.connectToProcess",
+      "internal": true
+    },
+    {
+      "id": "remote-server.request",
+      "internal": true
+    },
+    {
+      "id": "remote-server.releaseWorkspace",
+      "internal": true
     }
   ],
   "fileSystemProviders": [
     {
       "id": "remote-server"
     }
-  ]
+  ],
+  "workspaceTransport": {
+    "scheme": "remote-server",
+    "command": "remote-server.connectToProcess",
+    "requestCommand": "remote-server.request"
+  }
 }

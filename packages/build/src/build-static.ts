@@ -64,17 +64,36 @@ const configDirectory = path.join(root, 'dist', commitHash, 'config')
 const webExtensionManifest = await readJson<ExtensionManifest>(
   path.join(root, 'packages', 'web-extension', 'extension.json'),
 )
-const webExtensionPath = `${process.env.PATH_PREFIX || ''}/${commitHash}/extensions/${webExtensionManifest.id}`
-const extensionsFile = path.join(configDirectory, 'extensions.json')
-const extensions = await readJson<ExtensionManifest[]>(extensionsFile)
-await writeJson(extensionsFile, [
-  ...extensions.filter(({ id }) => id !== webExtensionManifest.id),
-  { ...webExtensionManifest, path: webExtensionPath },
-])
-
-const webExtensionsFile = path.join(configDirectory, 'webExtensions.json')
-const webExtensions = await readJson<ExtensionManifest[]>(webExtensionsFile)
-await writeJson(webExtensionsFile, [
-  ...webExtensions.filter(({ id }) => id !== webExtensionManifest.id),
-  { ...webExtensionManifest, isWeb: true, path: webExtensionPath },
-])
+const gitExtensionPath = path.join(
+  root,
+  '.tmp',
+  'remote-ssh-server',
+  'lvce-server',
+  'extensions',
+  'builtin.git',
+)
+const gitExtensionManifest = await readJson<ExtensionManifest>(
+  path.join(gitExtensionPath, 'extension.json'),
+)
+await cp(
+  gitExtensionPath,
+  path.join(root, 'dist', commitHash, 'extensions', gitExtensionManifest.id),
+  { force: true, recursive: true },
+)
+const extraExtensions = [webExtensionManifest, gitExtensionManifest].map(
+  (manifest) => ({
+    ...manifest,
+    path: `${process.env.PATH_PREFIX || ''}/${commitHash}/extensions/${manifest.id}`,
+  }),
+)
+const extraIds = new Set(extraExtensions.map(({ id }) => id))
+for (const file of ['extensions.json', 'webExtensions.json']) {
+  const location = path.join(configDirectory, file)
+  const extensions = await readJson<ExtensionManifest[]>(location)
+  await writeJson(location, [
+    ...extensions.filter(({ id }) => !extraIds.has(id)),
+    ...extraExtensions.map((extension) =>
+      file === 'webExtensions.json' ? { ...extension, isWeb: true } : extension,
+    ),
+  ])
+}

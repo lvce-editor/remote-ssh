@@ -8,6 +8,7 @@
     "e2e:cleanup": "node scripts/run-process-cleanup.js",
     "e2e:errors": "node scripts/run-connection-errors.js",
     "e2e:headless": "npm run build:extension && node scripts/run-e2e.js --headless",
+    "e2e:web": "node scripts/run-remote-web.js",
     "test": "node --test"
   },
   "type": "module",

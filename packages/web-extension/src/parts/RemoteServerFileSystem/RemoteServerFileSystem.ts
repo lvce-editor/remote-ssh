@@ -60,6 +60,8 @@ const invokeFileSystem = (
   ...params: readonly unknown[]
 ): Promise<unknown> => {
   const location = getLocation(uri)
+  if (invoke === RemoteServerConnection.invoke)
+    RemoteServerConnection.assertWorkspace(uri)
   return invoke(method, toFileUri(location.path), ...params)
 }
 
@@ -111,6 +113,10 @@ export const createRemoteServerFileSystem = (
     rename: async (oldUri, newUri): Promise<void> => {
       const oldLocation = getLocation(oldUri)
       const newLocation = getLocation(newUri)
+      if (invoke === RemoteServerConnection.invoke) {
+        RemoteServerConnection.assertWorkspace(oldUri)
+        RemoteServerConnection.assertWorkspace(newUri)
+      }
       if (oldLocation.authority !== newLocation.authority) {
         throw new Error('Cannot rename across remote servers')
       }

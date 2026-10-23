@@ -13,6 +13,7 @@
     "dev": "node packages/build/src/dev.ts",
     "e2e": "npm run e2e --workspace=packages/e2e",
     "e2e:headless": "npm run e2e:headless --workspace=packages/e2e",
+    "e2e:web": "npm run e2e:web --workspace=packages/e2e",
     "format": "prettier --write .",
     "lint": "eslint . && prettier --check .",
     "test": "npm run build:extension && npm test --workspaces --if-present",
@@ -23,7 +24,7 @@
   "devDependencies": {
     "@lvce-editor/api": "^9.25.0",
     "@lvce-editor/eslint-config": "^18.7.1",
-    "@lvce-editor/server": "0.121.16",
+    "@lvce-editor/server": "0.125.11",
     "@types/node": "^26.0.1",
     "eslint": "^10.9.0",
     "jest": "^30.4.2",

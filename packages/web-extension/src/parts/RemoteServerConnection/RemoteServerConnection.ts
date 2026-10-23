@@ -1,8 +1,10 @@
 import { RemoteServerError } from '../RemoteServerError/RemoteServerError.ts'
 
-interface ConnectionOptions {
+export interface ConnectionOptions {
+  readonly expiresAt?: number
   readonly sessionToken: string
   readonly websocketUrl: string
+  readonly workspaceUri?: string
 }
 
 export const commandId = 'remote-server.getWebSocketUrl'
@@ -34,13 +36,17 @@ interface Rpc {
 }
 
 const state: {
+  authorizationController: AbortController
+  expiryTimer: ReturnType<typeof setTimeout> | undefined
   generation: number
   options: ConnectionOptions | undefined
-  rpc: Promise<Rpc> | undefined
+  rpcs: Map<string, Promise<Rpc>>
 } = {
+  authorizationController: new AbortController(),
+  expiryTimer: undefined,
   generation: 0,
   options: undefined,
-  rpc: undefined,
+  rpcs: new Map(),
 }
 
 const getWebSocketErrorDetail = (event: unknown): string => {
@@ -89,6 +95,9 @@ const getErrorDetail = (error: unknown): string => {
 }
 
 const getHttpErrorHint = (status: number): string => {
+  if (status === 401)
+    return ' Session expired or revoked; generate a new pairing URL.'
+  if (status === 429) return ' Too many requests; wait one minute and retry.'
   if (status === 404) {
     return ' The remote server does not provide the WebSocket ticket endpoint.'
   }
@@ -108,14 +117,26 @@ const toError = (value: RpcError | undefined): Error => {
   )
 }
 
-const getTicket = async (options: ConnectionOptions): Promise<string> => {
+const getTicket = async (
+  options: ConnectionOptions,
+  type: string,
+  params: Readonly<Record<string, string>>,
+): Promise<string> => {
   const endpoint = new URL('/auth/websocket-ticket', options.websocketUrl)
   endpoint.protocol = endpoint.protocol === 'wss:' ? 'https:' : 'http:'
+  endpoint.searchParams.set('process', type)
+  for (const [key, value] of Object.entries(params))
+    endpoint.searchParams.set(key, value)
   let response: Response
   try {
     response = await fetch(endpoint, {
       headers: { authorization: `Bearer ${options.sessionToken}` },
       method: 'POST',
+      redirect: 'error',
+      signal: AbortSignal.any([
+        state.authorizationController.signal,
+        AbortSignal.timeout(15_000),
+      ]),
     })
   } catch (error) {
     const detail = getErrorDetail(error)
@@ -126,6 +147,7 @@ const getTicket = async (options: ConnectionOptions): Promise<string> => {
     )
   }
   if (!response.ok) {
+    if (response.status === 401 && state.options === options) await dispose()
     const statusText = response.statusText ? ` ${response.statusText}` : ''
     const hint = getHttpErrorHint(response.status)
     throw new RemoteServerError(
@@ -146,23 +168,32 @@ const getTicket = async (options: ConnectionOptions): Promise<string> => {
 const createWebSocketUrl = async (
   options: ConnectionOptions,
   type: string,
+  params: Readonly<Record<string, string>> = {},
 ): Promise<string> => {
   const url = new URL(
     `/websocket/${encodeURIComponent(type)}`,
     options.websocketUrl,
   )
-  url.searchParams.set('ticket', await getTicket(options))
+  for (const [key, value] of Object.entries(params))
+    url.searchParams.set(key, value)
+  url.searchParams.set('ticket', await getTicket(options, type, params))
+  if (state.options !== options)
+    throw new Error('Remote workspace changed while authorizing')
   return url.href
 }
 
 const createRpc = async (
   options: ConnectionOptions,
   generation: number,
+  type: string,
 ): Promise<Rpc> => {
-  const webSocket = new WebSocket(
-    await createWebSocketUrl(options, 'file-system-process'),
-  )
+  const webSocket = new WebSocket(await createWebSocketUrl(options, type))
   const pending = new Map<number, PendingRequest>()
+  const disposeConnection = (): void => {
+    close()
+    webSocket.close()
+  }
+  connections.add(disposeConnection)
   let nextId = 1
   let closed = false
   const { promise: ready, reject, resolve } = Promise.withResolvers<void>()
@@ -177,6 +208,9 @@ const createRpc = async (
       return
     }
     closed = true
+    connections.delete(disposeConnection)
+    clearTimeout(openTimeout)
+    webSocket.close()
     reject(error)
     for (const request of pending.values()) {
       clearTimeout(request.timeout)
@@ -184,11 +218,25 @@ const createRpc = async (
     }
     pending.clear()
     if (state.generation === generation) {
-      state.rpc = undefined
+      state.rpcs.delete(type)
     }
   }
 
-  webSocket.onopen = (): void => resolve()
+  const openTimeout = setTimeout(
+    () =>
+      close(
+        new RemoteServerError(
+          'Remote connection timed out',
+          'E_REMOTE_SERVER_CONNECT_TIMEOUT',
+        ),
+      ),
+    30_000,
+  )
+  void ready.catch(() => {})
+  webSocket.onopen = (): void => {
+    clearTimeout(openTimeout)
+    resolve()
+  }
   webSocket.onerror = (event): void => {
     const detail = getWebSocketErrorDetail(event)
     const suffix = detail ? `: ${detail}` : ''
@@ -208,7 +256,9 @@ const createRpc = async (
     )
   webSocket.onmessage = (event): void => {
     try {
-      const response = JSON.parse(String(event.data)) as RpcResponse
+      const value: unknown = JSON.parse(String(event.data))
+      if (value === 'ready') return
+      const response = value as RpcResponse
       if (!Number.isSafeInteger(response.id)) {
         throw new TypeError('Remote server returned invalid JSON-RPC')
       }
@@ -248,6 +298,8 @@ const createRpc = async (
           'E_REMOTE_SERVER_CONNECTION_CLOSED',
         )
       }
+      if (pending.size >= 256 || webSocket.bufferedAmount > 1024 * 1024)
+        throw new Error('Remote request queue is full')
       const id = nextId++
       return new Promise((resolveRequest, rejectRequest) => {
         const timeout = setTimeout(() => {
@@ -264,61 +316,139 @@ const createRpc = async (
           resolve: resolveRequest,
           timeout,
         })
-        webSocket.send(JSON.stringify({ id, jsonrpc: '2.0', method, params }))
+        try {
+          webSocket.send(JSON.stringify({ id, jsonrpc: '2.0', method, params }))
+        } catch {
+          clearTimeout(timeout)
+          pending.delete(id)
+          rejectRequest(
+            new Error('Remote request could not be sent; it was not retried'),
+          )
+        }
       })
     },
   }
 }
 
-const closeRpc = async (rpcPromise: Promise<Rpc>): Promise<void> => {
-  try {
-    const rpc = await rpcPromise
-    rpc.close()
-  } catch {
-    // A failed connection has no live transport to close.
-  }
-}
+const connections = new Set<() => void>()
 
 export const set = (options: ConnectionOptions): void => {
-  if (state.rpc) {
-    void closeRpc(state.rpc)
-  }
+  state.authorizationController.abort()
+  state.authorizationController = new AbortController()
+  clearTimeout(state.expiryTimer)
+  if (options.expiresAt)
+    state.expiryTimer = setTimeout(
+      () => {
+        void dispose()
+      },
+      Math.max(0, options.expiresAt - Date.now()),
+    )
+  for (const close of connections) close()
   state.generation++
   state.options = options
-  state.rpc = undefined
+  state.rpcs.clear()
 }
 
 export const dispose = async (): Promise<void> => {
-  const { rpc } = state
+  state.authorizationController.abort()
+  clearTimeout(state.expiryTimer)
+  state.expiryTimer = undefined
   state.generation++
   state.options = undefined
-  state.rpc = undefined
-  if (rpc) {
-    await closeRpc(rpc)
+  for (const close of connections) close()
+  state.rpcs.clear()
+}
+
+export const assertWorkspace = (uri: string): void => {
+  if (!state.options)
+    throw new Error(
+      'Remote server is not paired; connect with a new pairing URL',
+    )
+  const actual = new URL(uri)
+  const expected = new URL(state.options.websocketUrl)
+  if (
+    actual.protocol !== 'remote-server:' ||
+    actual.host !== expected.host ||
+    actual.username ||
+    actual.password
+  ) {
+    throw new Error('Remote resource belongs to a different server')
   }
+}
+
+export const getStatus = (): string =>
+  state.options
+    ? `Paired with ${new URL(state.options.websocketUrl).host}`
+    : 'Disconnected; connect with a new pairing URL'
+
+export const revoke = async (): Promise<void> => {
+  const { options } = state
+  await dispose()
+  if (!options) return
+  const url = new URL('/auth/revoke', options.websocketUrl)
+  url.protocol = url.protocol === 'wss:' ? 'https:' : 'http:'
+  const response = await fetch(url, {
+    headers: { authorization: `Bearer ${options.sessionToken}` },
+    method: 'POST',
+    redirect: 'error',
+    signal: AbortSignal.timeout(10_000),
+  })
+  if (!response.ok && response.status !== 401)
+    throw new Error(
+      'Disconnected locally; remote revocation failed. Run revoke-web on the server.',
+    )
+}
+
+export const invokeProcess = async (
+  type: string,
+  method: string,
+  ...params: readonly unknown[]
+): Promise<unknown> => {
+  const { options } = state
+  if (!options)
+    throw new RemoteServerError(
+      'Remote server is not paired',
+      'E_REMOTE_SERVER_NOT_PAIRED',
+    )
+  let promise = state.rpcs.get(type)
+  if (!promise) {
+    promise = createRpc(options, state.generation, type)
+    state.rpcs.set(type, promise)
+    void promise.catch(() => {
+      if (state.rpcs.get(type) === promise) state.rpcs.delete(type)
+    })
+  }
+  const rpc = await promise
+  if (state.options !== options) throw new Error('Remote workspace changed')
+  return rpc.invoke(method, ...params)
 }
 
 export const invoke = async (
   method: string,
   ...params: readonly unknown[]
-): Promise<unknown> => {
-  if (!state.options) {
+): Promise<unknown> => invokeProcess('file-system-process', method, ...params)
+
+export const getWebSocketUrl = async (
+  type: string,
+  params: Readonly<Record<string, string>> = {},
+): Promise<string> => {
+  if (!state.options)
     throw new RemoteServerError(
       'Remote server is not paired',
       'E_REMOTE_SERVER_NOT_PAIRED',
     )
-  }
-  state.rpc ||= createRpc(state.options, state.generation)
-  const rpc = await state.rpc
-  return rpc.invoke(method, ...params)
+  return createWebSocketUrl(state.options, type, params)
 }
 
-export const getWebSocketUrl = async (type: string): Promise<string> => {
-  if (!state.options) {
-    throw new RemoteServerError(
-      'Remote server is not paired',
-      'E_REMOTE_SERVER_NOT_PAIRED',
-    )
-  }
-  return createWebSocketUrl(state.options, type)
+export const trackConnection = (close: () => void): (() => void) => {
+  connections.add(close)
+  return () => connections.delete(close)
 }
+
+export const getOptions = (): ConnectionOptions | undefined => state.options
+
+export const releaseWorkspace = async (uri: string): Promise<void> => {
+  if (state.options?.workspaceUri === uri) await revoke()
+}
+
+export const getGeneration = (): number => state.generation

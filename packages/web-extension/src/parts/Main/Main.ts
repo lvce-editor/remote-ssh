@@ -2,9 +2,11 @@ import {
   activate as activateExtensionApi,
   registerCommand,
   registerFileSystemProvider,
+  showNotification,
 } from '@lvce-editor/api'
 import * as RemoteServerConnect from '../RemoteServerConnect/RemoteServerConnect.ts'
 import * as RemoteServerConnection from '../RemoteServerConnection/RemoteServerConnection.ts'
+import * as Transport from '../RemoteServerConnection/RemoteServerTransport.ts'
 import { fileSystem } from '../RemoteServerFileSystem/RemoteServerFileSystem.ts'
 
 const state = {
@@ -20,6 +22,33 @@ export const activate = async (): Promise<void> => {
     await activateExtensionApi()
     registerFileSystemProvider(fileSystem)
     registerCommand({
+      execute: async (uri: string) => {
+        try {
+          await RemoteServerConnection.releaseWorkspace(uri)
+        } catch {
+          await showNotification(
+            'warning',
+            'Disconnected locally. Remote revocation failed; run revoke-web on the server.',
+          )
+        }
+      },
+      id: 'remote-server.releaseWorkspace',
+    })
+    registerCommand({
+      execute: Transport.connect,
+      id: 'remote-server.connectToProcess',
+    })
+    registerCommand({ execute: Transport.request, id: 'remote-server.request' })
+    registerCommand({
+      execute: () => RemoteServerConnection.revoke(),
+      id: 'remote-server.disconnect',
+    })
+    registerCommand({
+      execute: () =>
+        showNotification('info', RemoteServerConnection.getStatus()),
+      id: 'remote-server.status',
+    })
+    registerCommand({
       execute: (pairingUrl?: string) =>
         pairingUrl
           ? RemoteServerConnect.connectWithPairingUrl(pairingUrl)
@@ -27,7 +56,8 @@ export const activate = async (): Promise<void> => {
       id: 'remote-server.connect',
     })
     registerCommand({
-      execute: (type: string) => RemoteServerConnection.getWebSocketUrl(type),
+      execute: (type: string, params: Readonly<Record<string, string>> = {}) =>
+        RemoteServerConnection.getWebSocketUrl(type, params),
       id: RemoteServerConnection.commandId,
     })
   } catch (error) {

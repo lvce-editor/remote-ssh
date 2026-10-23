@@ -16,6 +16,7 @@ import { homedir } from 'node:os'
 import path from 'node:path'
 import { PassThrough } from 'node:stream'
 import { setTimeout as delay } from 'node:timers/promises'
+import * as RemoteWebControl from './RemoteWebControl.ts'
 import * as RemoteCli from './parts/RemoteCli/RemoteCli.ts'
 import { createRemoteWebGateway } from './RemoteWebGateway.ts'
 
@@ -667,33 +668,52 @@ const runRemoteWebServer = async (): Promise<void> => {
   if (!path.isAbsolute(workspacePath)) {
     throw new TypeError('--workspace must be an absolute path')
   }
-  const port = Number.parseInt(getOption('--port'), 10)
+  const port = Number(getOption('--port'))
   if (!Number.isSafeInteger(port) || port < 0 || port > 65_535) {
     throw new RangeError('--port must be between 0 and 65535')
   }
   const state = await ensureServer()
   const managementSocket = await authenticate(state)
-  const gateway = await createRemoteWebGateway({
-    allowedOrigin,
-    backendPort: state.backendPort,
-    backendToken: state.backendToken,
-    port,
-    publicUrl,
-    workspacePath,
-  })
-  process.stdout.write(
-    `${JSON.stringify({
-      localUrl: `http://127.0.0.1:${gateway.localPort}`,
-      pairingUrl: gateway.pairingUrl,
-      type: 'remote-web-ready',
-    })}\n`,
-  )
-  await new Promise<void>((resolve) => {
-    process.once('SIGINT', resolve)
-    process.once('SIGTERM', resolve)
-  })
-  managementSocket.end()
-  await gateway.close()
+  let closeGateway: (() => Promise<void>) | undefined
+  let closeControl: (() => Promise<void>) | undefined
+  try {
+    const gateway = await createRemoteWebGateway({
+      allowedOrigin,
+      backendPort: state.backendPort,
+      backendToken: state.backendToken,
+      port,
+      publicUrl,
+      workspacePath,
+    })
+    closeGateway = gateway.close
+    closeControl = await RemoteWebControl.listen(
+      path.join(runDirectory, `web-${gateway.localPort}.sock`),
+      gateway,
+    )
+    process.stdout.write(
+      `${JSON.stringify({
+        localUrl: `http://127.0.0.1:${gateway.localPort}`,
+        pairingUrl: gateway.pairingUrl,
+        type: 'remote-web-ready',
+      })}\n`,
+    )
+    await new Promise<void>((resolve) => {
+      managementSocket.once('close', resolve)
+      managementSocket.once('error', () => resolve())
+      process.once('SIGINT', resolve)
+      process.once('SIGTERM', resolve)
+      // Drain management messages so a backend shutdown also delivers EOF.
+      // An unread readiness response otherwise keeps this socket paused.
+      managementSocket.resume()
+    })
+  } finally {
+    managementSocket.end()
+    try {
+      await closeControl?.()
+    } finally {
+      await closeGateway?.()
+    }
+  }
 }
 
 const main = async (): Promise<void> => {
@@ -708,6 +728,19 @@ const main = async (): Promise<void> => {
     case 'daemon':
       await runDaemon()
       return
+    case 'pair-web':
+    case 'revoke-web': {
+      const port = Number(getOption('--port'))
+      if (!Number.isInteger(port) || port < 1 || port > 65535)
+        throw new Error('Invalid web gateway port')
+      process.stdout.write(
+        await RemoteWebControl.request(
+          path.join(runDirectory, `web-${port}.sock`),
+          mode === 'pair-web' ? 'pair' : 'revoke',
+        ),
+      )
+      return
+    }
     case 'serve-web':
       await runRemoteWebServer()
       return

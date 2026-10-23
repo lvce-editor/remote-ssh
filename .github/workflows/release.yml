@@ -48,6 +48,14 @@ jobs:
       - run: npm test
       - run: npm run type-check
       - run: npm run lint
+      # Tests rebuild the development server. Package the release archives last
+      # so their embedded checksums match the server that will be uploaded.
+      - name: Package final release archives
+        run: node packages/build/src/build.ts
+        env:
+          LVCE_REMOTE_SSH_SERVER_VERSION: ${{ needs.create-release.outputs.version }}
+      - name: Verify packaged server checksums
+        run: node packages/build/src/verifyRelease.ts "${{ needs.create-release.outputs.version }}"
       - name: Rename release archive
         shell: bash
         run: mv extension.tar.br "remote-ssh-${{ needs.create-release.outputs.version }}.tar.br"
@@ -55,6 +63,12 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: gh release upload "${{ needs.create-release.outputs.version }}" "remote-ssh-${{ needs.create-release.outputs.version }}.tar.br"
+      - name: Upload browser connector and checksum
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          node packages/build/src/prepareWebRelease.ts "${{ needs.create-release.outputs.version }}"
+          gh release upload "${{ needs.create-release.outputs.version }}" remote-server-v*.tar.br remote-server-v*.sha256
       - name: Upload remote server archive
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
