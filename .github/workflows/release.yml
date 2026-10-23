@@ -39,13 +39,19 @@ jobs:
         with:
           node-version-file: '.nvmrc'
       - run: npm ci
-      - run: npm test
-      - run: npm run type-check
-      - run: npm run lint
       - run: npm run build
         env:
           LVCE_REMOTE_SSH_SERVER_VERSION: ${{ needs.create-release.outputs.version }}
       - run: npm run build:static
+        env:
+          LVCE_REMOTE_SSH_SERVER_VERSION: ${{ needs.create-release.outputs.version }}
+      - run: npm test
+      - run: npm run type-check
+      - run: npm run lint
+      # Tests rebuild the development server. Package the release archives last
+      # so their embedded checksums match the server that will be uploaded.
+      - name: Package final release archives
+        run: node packages/build/src/build.ts
         env:
           LVCE_REMOTE_SSH_SERVER_VERSION: ${{ needs.create-release.outputs.version }}
       - name: Verify packaged server checksums
