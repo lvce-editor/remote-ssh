@@ -108,6 +108,39 @@ test('allows an authenticated loopback server during local development', async (
   fetchSpy.mockRestore()
 })
 
+test.each([
+  new DOMException('request aborted #token=secret', 'AbortError'),
+  new DOMException('request timed out #token=secret', 'TimeoutError'),
+  new TypeError('network failed #token=secret'),
+])(
+  'reports actionable pairing network failures without native errors: %s',
+  async (failure) => {
+    const fetchSpy = jest.spyOn(globalThis, 'fetch').mockRejectedValue(failure)
+    try {
+      let result: unknown
+      try {
+        await RemoteServerConnect.pair(
+          'https://remote.example.com/#token=pair-secret',
+        )
+      } catch (error) {
+        result = error
+      }
+      expect(result).toBeInstanceOf(Error)
+      expect(Object.getPrototypeOf(result)).toBe(Error.prototype)
+      expect(result).toMatchObject({
+        message: expect.stringContaining('HTTPS certificate'),
+      })
+      expect((result as Error).message).toContain(
+        'allow device or local network access',
+      )
+      expect((result as Error).message).not.toContain('secret')
+      expect((result as Error).cause).toBeUndefined()
+    } finally {
+      fetchSpy.mockRestore()
+    }
+  },
+)
+
 test('rejects an insecure public pairing URL', async () => {
   await expect(
     // The intentionally insecure URL is the behavior under test.

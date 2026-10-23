@@ -91,6 +91,11 @@ An optional `LVCE_REMOTE_SSH_TEST_GIT_SCENARIO` absolute module path can export 
 
 ## Remote browser development (HTTPS)
 
+When connecting to a local or private-network gateway, allow device or local
+network access if the browser asks. Public HTTPS gateways do not require this
+permission. A blocked request, an invalid certificate, or an unreachable gateway
+shows a pairing error; correct the connection settings and try again.
+
 The browser connector uses HTTPS and WSS; SSH is used only to install and start
 LVCE on the remote host. Browser devices need no native helper. The first
 release supports a single user and active browser session on Linux x64.
