@@ -265,6 +265,10 @@ if (process.argv.includes('--serve')) {
       page.getByRole('tab', { name: 'Explorer', exact: true }),
     ).toBeVisible({ timeout: 30_000 })
     await command('Remote Server: Connect with Pairing URL')
+    await expect(page.locator('.QuickPick input')).toHaveAttribute(
+      'placeholder',
+      'Paste the HTTPS pairing URL from the remote LVCE server',
+    )
     await page.locator('.QuickPick input').fill(fixture.gateway.pairingUrl)
     await page.keyboard.press('Enter')
     await expect(page.getByRole('dialog')).toContainText(
