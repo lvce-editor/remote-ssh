@@ -117,19 +117,24 @@ test.each([
   async (failure) => {
     const fetchSpy = jest.spyOn(globalThis, 'fetch').mockRejectedValue(failure)
     try {
-      const error = await RemoteServerConnect.pair(
-        'https://remote.example.com/#token=pair-secret',
-      ).catch((value: unknown) => value)
-      expect(error).toBeInstanceOf(Error)
-      expect(Object.getPrototypeOf(error)).toBe(Error.prototype)
-      expect(error).toMatchObject({
+      let result: unknown
+      try {
+        await RemoteServerConnect.pair(
+          'https://remote.example.com/#token=pair-secret',
+        )
+      } catch (error) {
+        result = error
+      }
+      expect(result).toBeInstanceOf(Error)
+      expect(Object.getPrototypeOf(result)).toBe(Error.prototype)
+      expect(result).toMatchObject({
         message: expect.stringContaining('HTTPS certificate'),
       })
-      expect((error as Error).message).toContain(
+      expect((result as Error).message).toContain(
         'allow device or local network access',
       )
-      expect((error as Error).message).not.toContain('secret')
-      expect((error as Error).cause).toBeUndefined()
+      expect((result as Error).message).not.toContain('secret')
+      expect((result as Error).cause).toBeUndefined()
     } finally {
       fetchSpy.mockRestore()
     }
