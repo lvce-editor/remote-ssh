@@ -64,12 +64,20 @@ const getPairingRequest = (
 
 export const pair = async (value: string): Promise<PairingResult> => {
   const { endpoint, token } = getPairingRequest(value)
-  const response = await fetch(endpoint, {
-    headers: { authorization: `Bearer ${token}`, 'x-lvce-protocol': '1' },
-    method: 'POST',
-    redirect: 'error',
-    signal: AbortSignal.timeout(15_000),
-  })
+  let response: Response
+  try {
+    response = await fetch(endpoint, {
+      headers: { authorization: `Bearer ${token}`, 'x-lvce-protocol': '1' },
+      method: 'POST',
+      redirect: 'error',
+      signal: AbortSignal.timeout(15_000),
+    })
+  } catch {
+    // Native DOMExceptions cannot be restored safely across the RPC boundary.
+    throw new Error(
+      'Could not reach the remote server. Check its HTTPS certificate, allowed origin, and network connection. For a local server, allow device or local network access in the browser and retry.',
+    )
+  }
   if (!response.ok) {
     let hint = 'Check HTTPS ingress, allowed origin, and server availability.'
     if (response.status === 401)
