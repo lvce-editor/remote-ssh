@@ -39,6 +39,8 @@ jobs:
         if: steps.npm-cache.outputs.cache-hit != 'true'
       - run: npm run build
       - run: npm run build:static
+      - name: Verify packaged server checksums
+        run: node packages/build/src/verifyRelease.ts dev
       - run: npm test
       - run: npm run type-check
       - run: npm run lint

@@ -39,15 +39,17 @@ jobs:
         with:
           node-version-file: '.nvmrc'
       - run: npm ci
+      - run: npm test
+      - run: npm run type-check
+      - run: npm run lint
       - run: npm run build
         env:
           LVCE_REMOTE_SSH_SERVER_VERSION: ${{ needs.create-release.outputs.version }}
       - run: npm run build:static
         env:
           LVCE_REMOTE_SSH_SERVER_VERSION: ${{ needs.create-release.outputs.version }}
-      - run: npm test
-      - run: npm run type-check
-      - run: npm run lint
+      - name: Verify packaged server checksums
+        run: node packages/build/src/verifyRelease.ts "${{ needs.create-release.outputs.version }}"
       - name: Rename release archive
         shell: bash
         run: mv extension.tar.br "remote-ssh-${{ needs.create-release.outputs.version }}.tar.br"
