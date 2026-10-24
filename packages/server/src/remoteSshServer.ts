@@ -756,8 +756,7 @@ const main = async (): Promise<void> => {
       backendUrl:
         process.argv
           .find((argument) => argument.startsWith('--backend-url='))
-          ?.slice('--backend-url='.length) ||
-        'https://lvce-editor.dev',
+          ?.slice('--backend-url='.length) || 'https://lvce-editor.dev',
       cloudflaredPath:
         process.argv
           .find((argument) => argument.startsWith('--cloudflared-path='))
