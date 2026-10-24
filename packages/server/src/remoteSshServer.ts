@@ -773,9 +773,10 @@ const main = async (): Promise<void> => {
       process.off('SIGINT', cancel)
       process.off('SIGTERM', cancel)
       await tunnel.close()
-      await CloudflareTunnel.disable(
-        path.join(runDirectory, `cloudflare-${port}.json`),
-      )
+      if (!tunnel.persistent)
+        await CloudflareTunnel.disable(
+          path.join(runDirectory, `cloudflare-${port}.json`),
+        )
     }
     return
   }
