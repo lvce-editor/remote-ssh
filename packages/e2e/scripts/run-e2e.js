@@ -853,7 +853,18 @@ const runRealSshTest = async () => {
     expect(sshServer.getConnectionCount()).toBe(connectionCount)
     expect(sshServer.getOutput()).not.toContain('python')
     expect(getArtifactRequestCount()).toBe(2)
-    await remoteFile.click()
+    for (let attempt = 0; attempt < 2; attempt++) {
+      await page.keyboard.press('Control+p')
+      const fileSearch = page.locator('.QuickPick input')
+      await expect(fileSearch).toBeVisible()
+      await fileSearch.fill('file.txt')
+      await expect(page.locator('.QuickPick')).toContainText('file.txt')
+      await page.keyboard.press('Enter')
+      await expect(page.locator('.QuickPick')).toHaveCount(0)
+      await expect(page.locator('.Editor')).toContainText(
+        sshServer.fixture.initialContent,
+      )
+    }
     const editor = page.locator('.Editor')
     await expect(editor).toContainText(sshServer.fixture.initialContent, {
       timeout: 30_000,

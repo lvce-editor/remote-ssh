@@ -24,6 +24,7 @@ if (process.argv.includes('--serve')) {
 } else {
   let browser
   const diagnostics = []
+  const expectedSearchFailures = new Map()
   let page
   try {
     const browserName = process.env.LVCE_REMOTE_WEB_BROWSER || 'chromium'
@@ -44,7 +45,19 @@ if (process.argv.includes('--serve')) {
     })
     const socketPaths = []
     page.on('console', (message) => {
-      if (message.type() === 'error') diagnostics.push(message.text())
+      if (message.type() !== 'error') return
+      const url = message.location().url
+      const expected = expectedSearchFailures.get(url) || 0
+      if (
+        expected > 0 &&
+        message.text() ===
+          'Failed to load resource: the server responded with a status of 503 (Service Unavailable)'
+      ) {
+        expectedSearchFailures.set(url, expected - 1)
+        diagnostics.push({ expectedSearchFailure: new URL(url).pathname })
+        return
+      }
+      diagnostics.push(message.text())
     })
     page.on('response', (response) => {
       if (response.status() >= 400)
@@ -127,7 +140,44 @@ if (process.argv.includes('--serve')) {
     await page.keyboard.press('Enter')
     const file = page.locator('.TreeItem[aria-label="hello.txt"]')
     await expect(file).toBeVisible({ timeout: 30_000 })
-    await file.dblclick()
+    const ticketRoute = '**/auth/websocket-ticket?process=search-process'
+    await page.route(ticketRoute, (route) => {
+      const url = route.request().url()
+      expectedSearchFailures.set(
+        url,
+        (expectedSearchFailures.get(url) || 0) + 1,
+      )
+      return route.fulfill({
+        status: 503,
+        body: 'Search temporarily unavailable',
+      })
+    })
+    await page.keyboard.press('Control+p')
+    const quickOpen = page.locator('.QuickPick input')
+    await expect(quickOpen).toBeVisible()
+    const searchError = page.locator('.Notification').filter({
+      hasText: 'Could not search workspace files:',
+    })
+    await expect(searchError).toBeVisible()
+    await page.keyboard.press('Escape')
+    await expect(page.locator('.QuickPick')).toHaveCount(0)
+    await page.getByRole('tab', { name: 'Explorer', exact: true }).click()
+    await searchError.getByRole('button').last().click()
+    await expect(searchError).toHaveCount(0)
+    await page.unroute(ticketRoute)
+    for (const [query, filename, content] of [
+      ['hello', 'hello.txt', 'Hello from the remote machine'],
+      ['example', 'example.ts', 'const count: number = 1'],
+      ['hello', 'hello.txt', 'Hello from the remote machine'],
+    ]) {
+      await page.keyboard.press('Control+p')
+      await expect(quickOpen).toBeVisible()
+      await quickOpen.fill(query)
+      await expect(page.locator('.QuickPick')).toContainText(filename)
+      await page.keyboard.press('Enter')
+      await expect(page.locator('.QuickPick')).toHaveCount(0)
+      await expect(page.locator('.Editor')).toContainText(content)
+    }
     await expect(page.locator('.Editor')).toContainText(
       'Hello from the remote machine',
     )
@@ -284,7 +334,14 @@ if (process.argv.includes('--serve')) {
     )
     console.error('Ingress requests:', fixture.diagnostics)
     console.error('Backend:', redact(fixture.getBackendLog?.()))
-    console.error(redact(await page?.locator('body').ariaSnapshot()))
+    console.error(
+      redact(
+        await page
+          ?.locator('body')
+          .ariaSnapshot()
+          .catch(() => 'Page snapshot unavailable'),
+      ),
+    )
     throw new Error(redact(error.stack || error.message))
   } finally {
     await browser?.close()
