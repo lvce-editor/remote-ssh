@@ -10,15 +10,30 @@ import { brotliDecompressSync } from 'node:zlib'
 const version = process.argv[2] || 'dev'
 if (!/^(dev|v\d+\.\d+\.\d+)$/.test(version))
   throw new Error('Expected a release tag or dev')
-const archiveName = `lvce-remote-ssh-server-${version}.tar.gz`
+const archiveName = `lvce-remote-ssh-server-${version}${process.arch === 'arm64' ? '-linux-arm64' : ''}.tar.gz`
 const manifest = JSON.parse(
   await readFile(`lvce-remote-ssh-server-manifest-${version}.json`, 'utf8'),
 )
 const checksum = createHash('sha256')
   .update(await readFile(archiveName))
   .digest('hex')
-strictEqual(manifest.platforms['linux-x64'].server.name, archiveName)
-strictEqual(manifest.platforms['linux-x64'].server.sha256, checksum)
+const serverChecksums: string[] = []
+for (const [platform, entry] of Object.entries(manifest.platforms) as [
+  string,
+  { node: { name: string }; server: { name: string; sha256: string } },
+][]) {
+  const content = await readFile(entry.server.name)
+  strictEqual(
+    createHash('sha256').update(content).digest('hex'),
+    entry.server.sha256,
+  )
+  strictEqual(
+    entry.node.name,
+    `node-${manifest.nodeVersion}-${platform}.tar.gz`,
+  )
+  serverChecksums.push(entry.server.sha256)
+}
+strictEqual(serverChecksums.includes(checksum), true)
 
 const directory = await mkdtemp(path.join(tmpdir(), 'lvce-release-verify-'))
 try {
@@ -37,11 +52,12 @@ try {
   ])
   for (const entry of entries) {
     const content = await readFile(path.join(directory, entry), 'utf8')
-    strictEqual(
-      content.includes(checksum),
-      true,
-      `${entry} does not contain the published server archive checksum`,
-    )
+    for (const serverChecksum of serverChecksums)
+      strictEqual(
+        content.includes(serverChecksum),
+        true,
+        `${entry} does not contain the published server archive checksum`,
+      )
   }
 } finally {
   await rm(directory, { force: true, recursive: true })

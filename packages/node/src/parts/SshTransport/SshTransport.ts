@@ -501,7 +501,7 @@ class RemoteConnection implements Connection {
       value.version !== manifest.serverVersion ||
       value.clientVersion !== manifest.serverVersion ||
       value.platform !== 'linux' ||
-      value.arch !== 'x64' ||
+      (value.arch !== 'x64' && value.arch !== 'arm64') ||
       !Array.isArray(value.capabilities) ||
       !value.capabilities.includes('fileSystemProcess') ||
       !value.capabilities.includes('remoteCli') ||

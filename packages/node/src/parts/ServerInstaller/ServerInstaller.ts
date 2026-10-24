@@ -10,6 +10,7 @@ import type { RemoteLocation } from '../RemoteSshUri/RemoteSshUri.ts'
 import {
   manifest as defaultManifest,
   type ServerManifest,
+  selectRemotePlatform,
 } from '../ServerManifest/ServerManifest.ts'
 import * as SshProcessRegistry from '../SshProcessRegistry/SshProcessRegistry.ts'
 
@@ -110,6 +111,7 @@ export const createInstallScript = (manifest: ServerManifest): string => {
     process.env.LVCE_REMOTE_SSH_FORCE_LOCAL_TRANSFER === '1' ? '1' : '0'
   const values = {
     editorVersion: escapeShell(manifest.editorVersion || ''),
+    nodeArchitecture: escapeShell(manifest.nodeArchitecture || 'x64'),
     nodeArchiveName: escapeShell(manifest.nodeArchiveName),
     nodeArchiveSha256: escapeShell(manifest.nodeArchiveSha256),
     nodeArchiveUrl: escapeShell(manifest.nodeArchiveUrl),
@@ -125,6 +127,7 @@ export const createInstallScript = (manifest: ServerManifest): string => {
     : '"$HOME/.lvce-server"'
   return `set -eu
 EDITOR_VERSION=${values.editorVersion}
+NODE_ARCHITECTURE=${values.nodeArchitecture}
 NODE_ARCHIVE_NAME=${values.nodeArchiveName}
 NODE_SHA256=${values.nodeArchiveSha256}
 NODE_URL=${values.nodeArchiveUrl}
@@ -136,7 +139,8 @@ SERVER_VERSION=${values.serverVersion}
 FORCE_LOCAL_TRANSFER=${forceLocalTransfer}
 
 case "$(uname -s):$(uname -m)" in
-  Linux:x86_64) ;;
+  Linux:x86_64) [ "$NODE_ARCHITECTURE" = x64 ] || exit 84 ;;
+  Linux:aarch64|Linux:arm64) [ "$NODE_ARCHITECTURE" = arm64 ] || exit 84 ;;
   *) printf '${unsupportedMarker}%s:%s\\n' "$(uname -s)" "$(uname -m)"; exit 84 ;;
 esac
 
@@ -468,17 +472,37 @@ const transferArchives = async (
   }
 }
 
+const detectRemoteManifest = async (
+  location: RemoteLocation,
+  manifest: ServerManifest,
+  signal?: AbortSignal,
+): Promise<ServerManifest> => {
+  const detected = await runSsh(
+    location,
+    '/bin/sh -s',
+    'printf "__LVCE_REMOTE_SSH_PLATFORM__%s:%s\\n" "$(uname -s)" "$(uname -m)"',
+    signal,
+  )
+  const platform = /__LVCE_REMOTE_SSH_PLATFORM__(Linux:\w+)/.exec(
+    detected.stdout,
+  )?.[1]
+  if (detected.code !== 0 || !platform)
+    throw new Error('Could not detect a supported Linux remote architecture')
+  return selectRemotePlatform(manifest, platform)
+}
+
 export const installServer = async (
   location: RemoteLocation,
   manifest: ServerManifest = defaultManifest,
   signal?: AbortSignal,
 ): Promise<void> => {
+  manifest = await detectRemoteManifest(location, manifest, signal)
   const script = createInstallScript(manifest)
   for (let attempt = 0; attempt < 3; attempt++) {
     const result = await runSsh(location, '/bin/sh -s', script, signal)
     if (result.code === 84 || result.stdout.includes(unsupportedMarker)) {
       throw new Error(
-        `LVCE Remote SSH Server currently supports Linux x64 only: ${result.stdout.trim()}`,
+        `LVCE Remote SSH Server supports Linux x64 and ARM64 with matching runtime archives: ${result.stdout.trim()}`,
       )
     }
     if (result.code === 0 && result.stdout.includes(installedMarker)) {

@@ -85,7 +85,10 @@ void test('escapes values passed to the remote shell', () => {
 
 void test(
   'installs a private runtime and server atomically',
-  { skip: process.platform !== 'linux' || process.arch !== 'x64' },
+  {
+    skip:
+      process.platform !== 'linux' || !['x64', 'arm64'].includes(process.arch),
+  },
   async (context) => {
     const directory = await mkdtemp(path.join(tmpdir(), 'lvce-installer-'))
     context.after(() => rm(directory, { force: true, recursive: true }))
@@ -111,6 +114,7 @@ void test(
       'lvce-remote-ssh-server.mjs',
     ])
     const manifest: ServerManifest = {
+      nodeArchitecture: process.arch === 'arm64' ? 'arm64' : 'x64',
       nodeArchiveName: 'node.tar.gz',
       nodeArchiveSha256: await sha256(nodeArchive),
       nodeArchiveUrl: `file://${nodeArchive}`,
@@ -278,7 +282,10 @@ void test('transfers archives into the setup version directory', () => {
 
 void test(
   'upgrades the actual backend atomically, reuses it, and retains older clients on failure',
-  { skip: process.platform !== 'linux' || process.arch !== 'x64' },
+  {
+    skip:
+      process.platform !== 'linux' || !['x64', 'arm64'].includes(process.arch),
+  },
   async (context) => {
     const directory = await mkdtemp(
       path.join(tmpdir(), 'lvce-installer-version-'),
@@ -380,6 +387,7 @@ void test(
     ])
     const manifest: ServerManifest = {
       editorVersion: '0.120.10',
+      nodeArchitecture: process.arch === 'arm64' ? 'arm64' : 'x64',
       nodeArchiveName: 'node.tar.gz',
       nodeArchiveSha256: await sha256(nodeArchive),
       nodeArchiveUrl: `file://${nodeArchive}`,

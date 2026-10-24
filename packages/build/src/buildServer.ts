@@ -22,6 +22,11 @@ export const nodeArchiveName = `node-${nodeVersion}-linux-x64.tar.gz`
 export const nodeArchiveSha256 =
   '44836872d9aec49f1e6b52a9a922872db9a2b02d235a616a5681b6a85fec8d89'
 export const nodeArchiveUrl = `https://nodejs.org/dist/${nodeVersion}/${nodeArchiveName}`
+export const nodeArm64Archive = {
+  name: `node-${nodeVersion}-linux-arm64.tar.gz`,
+  sha256: '73afc234d558c24919875f51c2d1ea002a2ada4ea6f83601a383869fefa64eed',
+  url: `https://nodejs.org/dist/${nodeVersion}/node-${nodeVersion}-linux-arm64.tar.gz`,
+}
 export const gitExtensionVersion = 'v5.43.2'
 export const gitExtensionArchiveName = `git-${gitExtensionVersion}.tar.br`
 export const gitExtensionArchiveSha256 =
@@ -130,7 +135,7 @@ export const buildServer = async () => {
   const version = process.env.LVCE_REMOTE_SSH_SERVER_VERSION || 'dev'
   const serverBuildDirectory = path.join(root, '.tmp', 'remote-ssh-server')
   const serverFileName = 'lvce-remote-ssh-server.mjs'
-  const serverArchiveName = `lvce-remote-ssh-server-${version}.tar.gz`
+  const serverArchiveName = `lvce-remote-ssh-server-${version}${process.arch === 'arm64' ? '-linux-arm64' : ''}.tar.gz`
   const serverArchivePath = path.join(root, serverArchiveName)
   const manifestName = `lvce-remote-ssh-server-manifest-${version}.json`
   const manifestPath = path.join(root, manifestName)
@@ -191,6 +196,23 @@ export const buildServer = async () => {
   ])
   const serverArchiveSha256 = await getSha256(serverArchivePath)
   const serverArchiveUrl = `https://github.com/lvce-editor/remote-ssh/releases/download/${version}/${serverArchiveName}`
+  const serverArchive = {
+    name: serverArchiveName,
+    sha256: serverArchiveSha256,
+    url: serverArchiveUrl,
+  }
+  const arm64ArchiveName = `lvce-remote-ssh-server-${version}-linux-arm64.tar.gz`
+  const arm64ArchivePath = process.env.LVCE_REMOTE_SSH_ARM64_SERVER_ARCHIVE
+  const arm64ServerArchive =
+    process.arch === 'arm64'
+      ? serverArchive
+      : arm64ArchivePath
+        ? {
+            name: arm64ArchiveName,
+            sha256: await getSha256(arm64ArchivePath),
+            url: `https://github.com/lvce-editor/remote-ssh/releases/download/${version}/${arm64ArchiveName}`,
+          }
+        : undefined
   await writeFile(
     manifestPath,
     `${JSON.stringify(
@@ -199,18 +221,22 @@ export const buildServer = async () => {
         gitExtensionVersion,
         lvceServerVersion: installedLvceServerVersion,
         platforms: {
-          'linux-x64': {
-            node: {
-              name: nodeArchiveName,
-              sha256: nodeArchiveSha256,
-              url: nodeArchiveUrl,
+          ...(process.arch !== 'arm64' && {
+            'linux-x64': {
+              node: {
+                name: nodeArchiveName,
+                sha256: nodeArchiveSha256,
+                url: nodeArchiveUrl,
+              },
+              server: serverArchive,
             },
-            server: {
-              name: serverArchiveName,
-              sha256: serverArchiveSha256,
-              url: serverArchiveUrl,
+          }),
+          ...(arm64ServerArchive && {
+            'linux-arm64': {
+              node: nodeArm64Archive,
+              server: arm64ServerArchive,
             },
-          },
+          }),
         },
         protocolVersion: 1,
         serverVersion: version,
@@ -221,6 +247,12 @@ export const buildServer = async () => {
   )
   return {
     define: {
+      __LVCE_REMOTE_SSH_ARM64_SERVER_ARCHIVE__: arm64ServerArchive
+        ? JSON.stringify(JSON.stringify(arm64ServerArchive))
+        : 'undefined',
+      __LVCE_REMOTE_SSH_NODE_ARM64_ARCHIVE__: JSON.stringify(
+        JSON.stringify(nodeArm64Archive),
+      ),
       __LVCE_REMOTE_SSH_NODE_ARCHIVE_NAME__: JSON.stringify(nodeArchiveName),
       __LVCE_REMOTE_SSH_NODE_ARCHIVE_SHA256__:
         JSON.stringify(nodeArchiveSha256),
