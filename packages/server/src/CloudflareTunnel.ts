@@ -1,0 +1,249 @@
+import { spawn, type ChildProcess } from 'node:child_process'
+import { createHash, randomBytes } from 'node:crypto'
+import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
+import path from 'node:path'
+import { setTimeout as delay } from 'node:timers/promises'
+
+interface Setup {
+  id: string
+  secret: string
+  backendUrl: string
+}
+export const validateBackendUrl = (value: string): string => {
+  const url = new URL(value)
+  if (
+    (url.protocol !== 'https:' &&
+      !(
+        url.protocol === 'http:' &&
+        ['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname)
+      )) ||
+    url.username ||
+    url.password ||
+    url.search ||
+    url.hash ||
+    url.pathname !== '/'
+  )
+    throw new Error('Backend URL must be an HTTPS origin')
+  return url.origin
+}
+const request = async <T>(
+  setup: Pick<Setup, 'backendUrl'> & { secret?: string },
+  pathname: string,
+  body: unknown = {},
+  signal?: AbortSignal,
+): Promise<T> => {
+  const response = await fetch(new URL(pathname, setup.backendUrl), {
+    method: 'POST',
+    redirect: 'error',
+    signal: AbortSignal.any([
+      AbortSignal.timeout(15_000),
+      ...(signal ? [signal] : []),
+    ]),
+    headers: {
+      'Content-Type': 'application/json',
+      ...(setup.secret ? { Authorization: `Bearer ${setup.secret}` } : {}),
+    },
+    body: JSON.stringify(body),
+  })
+  if (!response.ok)
+    throw new Error(
+      `Cloudflare setup failed (HTTP ${response.status}). Check your LVCE account, domain, and backend configuration; retry with a new approval if it expired.`,
+    )
+  return (await response.json()) as T
+}
+export const disable = async (statePath: string): Promise<void> => {
+  let contents: string
+  try {
+    contents = await readFile(statePath, 'utf8')
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return
+    throw error
+  }
+  const state = JSON.parse(contents) as Setup
+  validateBackendUrl(state.backendUrl)
+  if (
+    !/^[a-f0-9]{32}$/.test(state.id) ||
+    !/^[A-Za-z0-9_-]{43}$/.test(state.secret)
+  )
+    throw new Error('Invalid saved Cloudflare setup')
+  for (let attempt = 0; ; attempt++) {
+    try {
+      await request(state, `/cloudflare/requests/${state.id}/disable`)
+      break
+    } catch (error) {
+      if (
+        attempt >= 20 ||
+        !(error instanceof Error) ||
+        !error.message.includes('HTTP 409')
+      )
+        throw error
+      await delay(500)
+    }
+  }
+  await rm(statePath, { force: true })
+  try {
+    const owner = Number(await readFile(`${statePath}.lock/owner`, 'utf8'))
+    if (!Number.isSafeInteger(owner) || owner <= 0) return
+    try {
+      process.kill(owner, 0)
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error
+      await rm(`${statePath}.token`, { force: true })
+      await rm(`${statePath}.lock`, { recursive: true, force: true })
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+  }
+}
+export interface Tunnel {
+  readonly publicUrl: string
+  readonly closed: Promise<void>
+  readonly close: () => Promise<void>
+}
+export const enable = async (options: {
+  readonly backendUrl: string
+  readonly port: number
+  readonly statePath: string
+  readonly cloudflaredPath: string
+  readonly signal: AbortSignal
+  readonly output: (message: string) => void
+}): Promise<Tunnel> => {
+  const backendUrl = validateBackendUrl(options.backendUrl)
+  if (
+    !Number.isSafeInteger(options.port) ||
+    options.port < 1 ||
+    options.port > 65535
+  )
+    throw new Error(
+      'Cloudflare tunnel requires a fixed gateway port between 1 and 65535',
+    )
+  const directory = path.dirname(options.statePath)
+  await mkdir(directory, { recursive: true, mode: 0o700 })
+  const lock = `${options.statePath}.lock`
+  try {
+    await mkdir(lock, { mode: 0o700 })
+    await writeFile(path.join(lock, 'owner'), String(process.pid), {
+      mode: 0o600,
+      flag: 'wx',
+    })
+  } catch {
+    throw new Error('Cloudflare setup is already running for this gateway port')
+  }
+  let child: ChildProcess | undefined
+  const tokenPath = `${options.statePath}.token`
+  const closed = Promise.withResolvers<void>()
+  let finished = false
+  const stop = async (): Promise<void> => {
+    if (finished) return
+    finished = true
+    if (child && child.exitCode === null && child.signalCode === null) {
+      child.kill('SIGTERM')
+      const timer = setTimeout(() => child?.kill('SIGKILL'), 5000)
+      try {
+        await closed.promise
+      } finally {
+        clearTimeout(timer)
+      }
+    }
+    await rm(tokenPath, { force: true })
+    await rm(lock, { recursive: true, force: true })
+  }
+  try {
+    try {
+      await readFile(options.statePath)
+      throw new Error(
+        'A Cloudflare tunnel is already configured; disable it before enabling another',
+      )
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+    }
+    const credential = randomBytes(32).toString('base64url')
+    const setup = await request<{
+      id: string
+      code: string
+      verificationUrl: string
+    }>(
+      { backendUrl },
+      '/cloudflare/requests',
+      {
+        port: options.port,
+        secretHash: createHash('sha256').update(credential).digest('hex'),
+      },
+      options.signal,
+    )
+    if (!/^[a-f0-9]{32}$/.test(setup.id) || !/^[A-F0-9]{8}$/.test(setup.code))
+      throw new Error('Invalid Cloudflare enrollment response')
+    const verification = new URL(setup.verificationUrl)
+    if (
+      verification.origin !== backendUrl ||
+      verification.pathname !== `/cloudflare/setup/${setup.id}` ||
+      verification.search ||
+      verification.hash
+    )
+      throw new Error('Invalid Cloudflare approval URL')
+    const state: Setup = { backendUrl, id: setup.id, secret: credential }
+    await writeFile(`${options.statePath}.tmp`, JSON.stringify(state), {
+      mode: 0o600,
+      flag: 'wx',
+    })
+    await rename(`${options.statePath}.tmp`, options.statePath)
+    options.output(
+      `Open ${verification.href} and confirm code ${setup.code}. Only approve this machine if the codes match.\n`,
+    )
+    const deadline = Date.now() + 600_000
+    let tunnel:
+      | { status: string; hostname?: string; tunnelToken?: string }
+      | undefined
+    while (Date.now() < deadline) {
+      options.signal.throwIfAborted()
+      tunnel = await request(
+        state,
+        `/cloudflare/requests/${setup.id}/poll`,
+        {},
+        options.signal,
+      )
+      if (tunnel?.status === 'ready') break
+      await delay(5000, undefined, { signal: options.signal })
+    }
+    if (
+      tunnel?.status !== 'ready' ||
+      typeof tunnel.hostname !== 'string' ||
+      !/^[a-z0-9.-]+$/.test(tunnel.hostname) ||
+      !tunnel.hostname.includes('.') ||
+      typeof tunnel.tunnelToken !== 'string' ||
+      !/^[A-Za-z0-9_+/=-]+$/.test(tunnel.tunnelToken)
+    )
+      throw new Error(
+        'Cloudflare approval expired or returned invalid tunnel settings',
+      )
+    await writeFile(tokenPath, tunnel.tunnelToken, { mode: 0o600, flag: 'wx' })
+    options.signal.throwIfAborted()
+    child = spawn(
+      options.cloudflaredPath,
+      ['tunnel', '--no-autoupdate', 'run', '--token-file', tokenPath],
+      { stdio: 'ignore' },
+    )
+    child.once('exit', () => closed.resolve())
+    child.once('error', () => closed.resolve())
+    await new Promise<void>((resolve, reject) => {
+      child!.once('spawn', resolve)
+      child!.once('error', () =>
+        reject(
+          new Error(
+            'Could not start cloudflared. Install it on the remote machine or set --cloudflared-path=/absolute/path.',
+          ),
+        ),
+      )
+    })
+    return {
+      publicUrl: `https://${tunnel.hostname}`,
+      closed: closed.promise,
+      close: stop,
+    }
+  } catch (error) {
+    await stop()
+    await rm(`${options.statePath}.tmp`, { force: true })
+    // Retain the private management credential so disable can clean up after partial provisioning.
+    throw error
+  }
+}

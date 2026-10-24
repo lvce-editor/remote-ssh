@@ -6,6 +6,7 @@ import type { RemoteWebGateway } from './RemoteWebGateway.ts'
 export const listen = async (
   socketPath: string,
   gateway: RemoteWebGateway,
+  stopCloudflare?: () => void,
 ): Promise<() => Promise<void>> => {
   const clients = new Set<ReturnType<typeof createConnection>>()
   const server = createServer((socket) => {
@@ -22,7 +23,11 @@ export const listen = async (
       }
       if (!input.includes('\n')) return
       const command = input.trim()
-      if (command === 'pair')
+      if (command === 'cloudflare-stop' && stopCloudflare) {
+        gateway.revoke()
+        stopCloudflare()
+        socket.end('{"ok":true}\n')
+      } else if (command === 'pair')
         socket.end(`${JSON.stringify({ pairingUrl: gateway.pair() })}\n`)
       else if (command === 'revoke') {
         gateway.revoke()
@@ -46,7 +51,7 @@ export const listen = async (
 
 export const request = async (
   socketPath: string,
-  command: 'pair' | 'revoke',
+  command: 'pair' | 'revoke' | 'cloudflare-stop',
 ): Promise<string> => {
   return new Promise((resolve, reject) => {
     const socket = createConnection(socketPath)

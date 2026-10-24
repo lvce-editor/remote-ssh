@@ -238,3 +238,18 @@ For a published static frontend, set `LVCE_REMOTE_WEB_FRONTEND_URL` to its HTTPS
 URL. That smoke test uses the deployed assets and their built-in extensions; it
 omits the injected TypeScript test extension. Chromium is granted local-network
 permission to reach the fixture gateway on this machine.
+
+## Cloudflare tunnel (user-owned account)
+
+Run on the remote Linux x64 host:
+
+```sh
+/path/to/lvce-remote-ssh-server --enable-cloudflare-tunnel --workspace=/absolute/project
+/path/to/lvce-remote-ssh-server --disable-cloudflare-tunnel
+```
+
+Enable stays in the foreground. Open the printed backend approval URL, compare the code, select a Cloudflare-managed domain, then use the printed LVCE pairing URL in the browser. No inbound port, Caddy installation, or browser-machine daemon is required. The backend must first have its Cloudflare OAuth client configured; see [backend deployment setup](https://github.com/lvce-editor/backend-2/blob/main/docs/cloudflare.md).
+
+Options: `--backend-url=https://YOUR_BACKEND`, `--port=3774`, `--allowed-origin=https://lvce-editor.github.io`, and `--cloudflared-path=/absolute/path`. The default downloads official cloudflared 2026.10.3 for Linux x64 and verifies SHA-256 before execution. An override must support `tunnel run --token-file` (cloudflared 2025.4.0+). Tokens are stored in private files and excluded from arguments and output.
+
+Ctrl+C stops the connector and removes the provider resources. After an abrupt crash or failed cleanup, rerun disable or remove the machine in backend account connections. Keep the saved private management credential until cleanup succeeds. Disable uses the same port and OS account as enable. This version does not install a service or retain a public hostname across starts. Pairing grants the privileges of the remote OS account; the workspace path is not a sandbox.

@@ -2,6 +2,7 @@ import {
   activate as activateExtensionApi,
   getWorkspaceUri,
   registerCommand,
+  executeCommand,
   registerFileSystemProvider,
   registerPortProvider,
 } from '@lvce-editor/api'
@@ -44,6 +45,10 @@ export const activate = async (): Promise<void> => {
         }))
       },
       scheme: 'remote-ssh',
+    })
+    registerCommand({
+      execute: () => executeCommand('Cloudflare.openConnections'),
+      id: 'remote-ssh.cloudflare',
     })
     registerCommand({
       execute: () => Connect.connect(),
