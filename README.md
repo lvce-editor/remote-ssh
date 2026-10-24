@@ -241,11 +241,11 @@ permission to reach the fixture gateway on this machine.
 
 ## Cloudflare tunnel (user-owned account)
 
-Run on the remote Linux x64 host:
+After extracting the Node and server release archives as described above, run on the remote Linux x64 host:
 
 ```sh
-/path/to/lvce-remote-ssh-server --enable-cloudflare-tunnel --workspace=/absolute/project
-/path/to/lvce-remote-ssh-server --disable-cloudflare-tunnel
+./node/bin/node ./server/lvce-remote-ssh-server.mjs --enable-cloudflare-tunnel --workspace=/absolute/project
+./node/bin/node ./server/lvce-remote-ssh-server.mjs --disable-cloudflare-tunnel
 ```
 
 Enable stays in the foreground. Open the printed backend approval URL, compare the code, select a Cloudflare-managed domain, then use the printed LVCE pairing URL in the browser. No inbound port, Caddy installation, or browser-machine daemon is required. The backend must first have its Cloudflare OAuth client configured; see [backend deployment setup](https://github.com/lvce-editor/backend-2/blob/main/docs/cloudflare.md).
@@ -253,3 +253,5 @@ Enable stays in the foreground. Open the printed backend approval URL, compare t
 Options: `--backend-url=https://YOUR_BACKEND`, `--port=3774`, `--allowed-origin=https://lvce-editor.github.io`, and `--cloudflared-path=/absolute/path`. The default downloads official cloudflared 2026.10.3 for Linux x64 and verifies SHA-256 before execution. An override must support `tunnel run --token-file` (cloudflared 2025.4.0+). Tokens are stored in private files and excluded from arguments and output.
 
 Ctrl+C stops the connector and removes the provider resources. After an abrupt crash or failed cleanup, rerun disable or remove the machine in backend account connections. Keep the saved private management credential until cleanup succeeds. Disable uses the same port and OS account as enable. This version does not install a service or retain a public hostname across starts. Pairing grants the privileges of the remote OS account; the workspace path is not a sandbox.
+
+Cloudflare management state is saved in `$LVCE_REMOTE_SSH_ROOT/run/cloudflare-PORT.json` (default `~/.lvce-server/run/`). Use the same root for enable and disable. Keep this file private and retain it after a failed cleanup.
