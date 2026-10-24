@@ -23,7 +23,8 @@
     "onCommand:remote-server.status",
     "onCommand:remote-server.connectToProcess",
     "onCommand:remote-server.request",
-    "onCommand:remote-server.releaseWorkspace"
+    "onCommand:remote-server.releaseWorkspace",
+    "onCommand:remote-server.cloudflare"
   ],
   "commands": [
     {
@@ -53,6 +54,10 @@
     {
       "id": "remote-server.releaseWorkspace",
       "internal": true
+    },
+    {
+      "id": "remote-server.cloudflare",
+      "label": "Remote Server: Connect Cloudflare Account"
     }
   ],
   "fileSystemProviders": [

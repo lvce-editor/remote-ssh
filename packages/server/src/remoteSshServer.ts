@@ -16,6 +16,8 @@ import { homedir } from 'node:os'
 import path from 'node:path'
 import { PassThrough } from 'node:stream'
 import { setTimeout as delay } from 'node:timers/promises'
+import { getCloudflared } from './CloudflaredBinary.ts'
+import * as CloudflareTunnel from './CloudflareTunnel.ts'
 import * as RemoteWebControl from './RemoteWebControl.ts'
 import * as RemoteCli from './parts/RemoteCli/RemoteCli.ts'
 import { createRemoteWebGateway } from './RemoteWebGateway.ts'
@@ -661,14 +663,24 @@ const getOption = (name: string): string => {
   return value
 }
 
-const runRemoteWebServer = async (): Promise<void> => {
-  const allowedOrigin = getOption('--allowed-origin')
-  const publicUrl = getOption('--public-url')
+const runRemoteWebServer = async (
+  tunnel?: CloudflareTunnel.Tunnel,
+): Promise<void> => {
+  const allowedOrigin = tunnel
+    ? process.argv
+        .find((argument) => argument.startsWith('--allowed-origin='))
+        ?.slice('--allowed-origin='.length) || 'https://lvce-editor.github.io'
+    : getOption('--allowed-origin')
+  const publicUrl = tunnel?.publicUrl || getOption('--public-url')
   const workspacePath = getOption('--workspace')
   if (!path.isAbsolute(workspacePath)) {
     throw new TypeError('--workspace must be an absolute path')
   }
-  const port = Number(getOption('--port'))
+  const port = Number(
+    process.argv
+      .find((argument) => argument.startsWith('--port='))
+      ?.slice('--port='.length) || '3774',
+  )
   if (!Number.isSafeInteger(port) || port < 0 || port > 65_535) {
     throw new RangeError('--port must be between 0 and 65535')
   }
@@ -689,6 +701,11 @@ const runRemoteWebServer = async (): Promise<void> => {
     closeControl = await RemoteWebControl.listen(
       path.join(runDirectory, `web-${gateway.localPort}.sock`),
       gateway,
+      tunnel
+        ? () => {
+            void tunnel.close()
+          }
+        : undefined,
     )
     process.stdout.write(
       `${JSON.stringify({
@@ -698,6 +715,7 @@ const runRemoteWebServer = async (): Promise<void> => {
       })}\n`,
     )
     await new Promise<void>((resolve) => {
+      void tunnel?.closed.then(resolve)
       managementSocket.once('close', resolve)
       managementSocket.once('error', () => resolve())
       process.once('SIGINT', resolve)
@@ -718,6 +736,73 @@ const runRemoteWebServer = async (): Promise<void> => {
 
 const main = async (): Promise<void> => {
   const mode = process.argv[2]
+  if (
+    mode === '--enable-cloudflare-tunnel' ||
+    (mode === 'serve-web' &&
+      process.argv.includes('--enable-cloudflare-tunnel'))
+  ) {
+    if (process.argv.includes('--disable-cloudflare-tunnel'))
+      throw new Error('Choose either enable or disable Cloudflare tunnel')
+    const port = Number(
+      process.argv
+        .find((argument) => argument.startsWith('--port='))
+        ?.slice('--port='.length) || '3774',
+    )
+    const controller = new AbortController()
+    const cancel = (): void => controller.abort()
+    process.once('SIGINT', cancel)
+    process.once('SIGTERM', cancel)
+    const tunnel = await CloudflareTunnel.enable({
+      backendUrl:
+        process.argv
+          .find((argument) => argument.startsWith('--backend-url='))
+          ?.slice('--backend-url='.length) ||
+        'https://backend-2-975h.onrender.com',
+      cloudflaredPath:
+        process.argv
+          .find((argument) => argument.startsWith('--cloudflared-path='))
+          ?.slice('--cloudflared-path='.length) ||
+        (await getCloudflared(root, controller.signal)),
+      port,
+      statePath: path.join(runDirectory, `cloudflare-${port}.json`),
+      signal: controller.signal,
+      output: (message) => process.stdout.write(message),
+    })
+    try {
+      await runRemoteWebServer(tunnel)
+    } finally {
+      process.off('SIGINT', cancel)
+      process.off('SIGTERM', cancel)
+      await tunnel.close()
+      await CloudflareTunnel.disable(
+        path.join(runDirectory, `cloudflare-${port}.json`),
+      )
+    }
+    return
+  }
+  if (mode === '--disable-cloudflare-tunnel') {
+    const port = Number(
+      process.argv
+        .find((argument) => argument.startsWith('--port='))
+        ?.slice('--port='.length) || '3774',
+    )
+    if (!Number.isInteger(port) || port < 1 || port > 65535)
+      throw new Error('Invalid web gateway port')
+    // Stop local access first, even if Cloudflare is temporarily unreachable.
+    try {
+      await RemoteWebControl.request(
+        path.join(runDirectory, `web-${port}.sock`),
+        'cloudflare-stop',
+      )
+    } catch {
+      /* The gateway may already be stopped. */
+    }
+    await CloudflareTunnel.disable(
+      path.join(runDirectory, `cloudflare-${port}.json`),
+    )
+    process.stdout.write('Cloudflare tunnel disabled.\n')
+    return
+  }
   switch (mode) {
     case 'connect-or-start':
       await connectOrStart()
@@ -730,7 +815,11 @@ const main = async (): Promise<void> => {
       return
     case 'pair-web':
     case 'revoke-web': {
-      const port = Number(getOption('--port'))
+      const port = Number(
+        process.argv
+          .find((argument) => argument.startsWith('--port='))
+          ?.slice('--port='.length) || '3774',
+      )
       if (!Number.isInteger(port) || port < 1 || port > 65535)
         throw new Error('Invalid web gateway port')
       process.stdout.write(

@@ -30,7 +30,8 @@
     "onFileSystem:remote-ssh",
     "onCommand:remote-ssh.request",
     "onPorts:remote-ssh",
-    "onOutput"
+    "onOutput",
+    "onCommand:remote-ssh.cloudflare"
   ],
   "commands": [
     {
@@ -56,6 +57,10 @@
     {
       "id": "remote-ssh.stopForwardPort",
       "internal": true
+    },
+    {
+      "id": "remote-ssh.cloudflare",
+      "label": "Remote Server: Connect Cloudflare Account"
     }
   ],
   "fileSystemProviders": [

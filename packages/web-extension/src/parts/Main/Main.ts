@@ -1,6 +1,7 @@
 import {
   activate as activateExtensionApi,
   registerCommand,
+  executeCommand,
   registerFileSystemProvider,
   showNotification,
 } from '@lvce-editor/api'
@@ -21,6 +22,10 @@ export const activate = async (): Promise<void> => {
   try {
     await activateExtensionApi()
     registerFileSystemProvider(fileSystem)
+    registerCommand({
+      execute: () => executeCommand('Cloudflare.openConnections'),
+      id: 'remote-server.cloudflare',
+    })
     registerCommand({
       execute: async (uri: string) => {
         try {
