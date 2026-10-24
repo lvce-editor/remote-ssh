@@ -61,6 +61,7 @@ void test(
             req.url?.endsWith('/poll')
               ? {
                   status: 'ready',
+                  persistent: true,
                   hostname: 'lvce.example.com',
                   tunnelToken: token,
                 }
@@ -90,6 +91,7 @@ void test(
     })
     try {
       strictEqual(tunnel.publicUrl, 'https://lvce.example.com')
+      strictEqual(tunnel.persistent, true)
       strictEqual((await stat(statePath)).mode & 0o777, 0o600)
       strictEqual((await stat(`${statePath}.token`)).mode & 0o777, 0o600)
       strictEqual(await readFile(`${statePath}.token`, 'utf8'), token)
@@ -109,6 +111,25 @@ void test(
     } finally {
       await tunnel.close()
     }
+    const resumedOutput: string[] = []
+    const resumed = await enable({
+      backendUrl,
+      port: 3774,
+      statePath,
+      cloudflaredPath: binary,
+      signal: new AbortController().signal,
+      output: (message) => resumedOutput.push(message),
+    })
+    try {
+      strictEqual(resumed.publicUrl, tunnel.publicUrl)
+      strictEqual(resumedOutput.join('').includes('Reconnecting'), true)
+      strictEqual(
+        calls.filter((call) => call.path === '/cloudflare/requests').length,
+        1,
+      )
+    } finally {
+      await resumed.close()
+    }
     await disable(statePath)
     await disable(statePath)
     await rejects(stat(`${statePath}.token`), { code: 'ENOENT' })
@@ -117,6 +138,7 @@ void test(
       calls.map((item) => item.path),
       [
         '/cloudflare/requests',
+        `/cloudflare/requests/${id}/poll`,
         `/cloudflare/requests/${id}/poll`,
         `/cloudflare/requests/${id}/disable`,
       ],

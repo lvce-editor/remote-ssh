@@ -60,7 +60,7 @@
     },
     {
       "id": "remote-ssh.cloudflare",
-      "label": "Remote Server: Connect Cloudflare Account"
+      "label": "Remote Server: Manage Tunnel Access"
     }
   ],
   "fileSystemProviders": [

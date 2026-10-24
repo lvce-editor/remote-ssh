@@ -244,7 +244,7 @@ URL. That smoke test uses the deployed assets and their built-in extensions; it
 omits the injected TypeScript test extension. Chromium is granted local-network
 permission to reach the fixture gateway on this machine.
 
-## Cloudflare tunnel (user-owned account)
+## Cloudflare tunnel (LVCE-managed access)
 
 After extracting the Node and server release archives as described above, run on the remote Linux x64 or ARM64 host:
 
@@ -253,13 +253,13 @@ After extracting the Node and server release archives as described above, run on
 ./node/bin/node ./server/lvce-remote-ssh-server.mjs --disable-cloudflare-tunnel
 ```
 
-Enable stays in the foreground. Open the printed backend approval URL, compare the code, select a Cloudflare-managed domain, then use the printed LVCE pairing URL in the browser. No inbound port, Caddy installation, or browser-machine daemon is required. The backend must first have its Cloudflare OAuth client configured; see [backend deployment setup](https://github.com/lvce-editor/backend-2/blob/main/docs/cloudflare.md).
+Enable stays in the foreground. Sign in at `https://lvce-editor.dev/cloudflare` and choose **Claim tunnel access** (one slot per user while capacity is available). Open the CLI approval URL, compare the code, approve the machine, then use the printed LVCE pairing URL with **Remote Server: Connect with Pairing URL** in the browser. No Cloudflare account, domain, inbound port, Caddy installation, or browser-machine daemon is required for managed access. Operators configure their Cloudflare account and zone; see [backend deployment setup](https://github.com/lvce-editor/backend-2/blob/main/docs/cloudflare.md).
 
 The default account backend is `https://lvce-editor.dev`; its Cloudflare connection page is `https://lvce-editor.dev/cloudflare`. Use `https://lvce-editor.dev/cloudflare/callback` as the OAuth redirect URI for this deployment. The old Render subdomain is disabled.
 
 Options: `--backend-url=https://YOUR_BACKEND`, `--port=3774`, `--allowed-origin=https://lvce-editor.github.io`, and `--cloudflared-path=/absolute/path`. The default downloads official cloudflared 2026.10.3 for Linux x64 and ARM64 and verifies SHA-256 before execution. An override must support `tunnel run --token-file` (cloudflared 2025.4.0+). Tokens are stored in private files and excluded from arguments and output.
 
-Ctrl+C stops the connector and removes the provider resources. After an abrupt crash or failed cleanup, rerun disable or remove the machine in backend account connections. Keep the saved private management credential until cleanup succeeds. Disable uses the same port and OS account as enable. This version does not install a service or retain a public hostname across starts. Pairing grants the privileges of the remote OS account; the workspace path is not a sandbox.
+For LVCE-managed tunnels, Ctrl+C stops the connector but retains the tunnel and hostname. Run enable again with the same root and port to reconnect without another enrollment. `--disable-cloudflare-tunnel` or removing the machine deletes the tunnel; the claim remains reserved until **Release tunnel access and remove its tunnel** is used on the account page. Optional user-owned Cloudflare tunnels still require a domain and are removed on shutdown. After an abrupt crash or failed cleanup, rerun disable or remove the machine in backend account connections. Keep the saved private management credential until cleanup succeeds. Disable uses the same port and OS account as enable. This version does not install a system service; keep the foreground process running while using the workspace. Pairing grants the privileges of the remote OS account; the workspace path is not a sandbox.
 
 Cloudflare management state is saved in `$LVCE_REMOTE_SSH_ROOT/run/cloudflare-PORT.json` (default `~/.lvce-server/run/`). Use the same root for enable and disable. Keep this file private and retain it after a failed cleanup.
 

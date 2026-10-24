@@ -47,7 +47,7 @@ const request = async <T>(
   })
   if (!response.ok)
     throw new Error(
-      `Cloudflare setup failed (HTTP ${response.status}). Check your LVCE account, domain, and backend configuration; retry with a new approval if it expired.`,
+      `Cloudflare setup failed (HTTP ${response.status}). Check your LVCE tunnel claim and backend configuration; retry with a new approval if it expired.`,
     )
   return (await response.json()) as T
 }
@@ -96,6 +96,7 @@ export const disable = async (statePath: string): Promise<void> => {
   }
 }
 export interface Tunnel {
+  readonly persistent: boolean
   readonly publicUrl: string
   readonly closed: Promise<void>
   readonly close: () => Promise<void>
@@ -149,56 +150,70 @@ export const enable = async (options: {
     await rm(lock, { recursive: true, force: true })
   }
   try {
+    let state: Setup
     try {
-      await readFile(options.statePath)
-      throw new Error(
-        'A Cloudflare tunnel is already configured; disable it before enabling another',
+      state = JSON.parse(await readFile(options.statePath, 'utf8')) as Setup
+      if (
+        validateBackendUrl(state.backendUrl) !== backendUrl ||
+        !/^[a-f0-9]{32}$/.test(state.id) ||
+        !/^[A-Za-z0-9_-]{43}$/.test(state.secret)
+      )
+        throw new Error(
+          'Invalid saved Cloudflare setup or changed backend; disable the previous tunnel first',
+        )
+      options.output(
+        'Reconnecting the saved tunnel. To enroll another machine, disable this tunnel first.\n',
       )
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+      const credential = randomBytes(32).toString('base64url')
+      const setup = await request<{
+        id: string
+        code: string
+        verificationUrl: string
+      }>(
+        { backendUrl },
+        '/cloudflare/requests',
+        {
+          port: options.port,
+          secretHash: createHash('sha256').update(credential).digest('hex'),
+        },
+        options.signal,
+      )
+      if (!/^[a-f0-9]{32}$/.test(setup.id) || !/^[A-F0-9]{8}$/.test(setup.code))
+        throw new Error('Invalid Cloudflare enrollment response')
+      const verification = new URL(setup.verificationUrl)
+      if (
+        verification.origin !== backendUrl ||
+        verification.pathname !== `/cloudflare/setup/${setup.id}` ||
+        verification.search ||
+        verification.hash
+      )
+        throw new Error('Invalid Cloudflare approval URL')
+      state = { backendUrl, id: setup.id, secret: credential }
+      await writeFile(`${options.statePath}.tmp`, JSON.stringify(state), {
+        mode: 0o600,
+        flag: 'wx',
+      })
+      await rename(`${options.statePath}.tmp`, options.statePath)
+      options.output(
+        `Open ${verification.href}, claim tunnel access if needed, and confirm code ${setup.code}. Only approve this machine if the codes match.\n`,
+      )
     }
-    const credential = randomBytes(32).toString('base64url')
-    const setup = await request<{
-      id: string
-      code: string
-      verificationUrl: string
-    }>(
-      { backendUrl },
-      '/cloudflare/requests',
-      {
-        port: options.port,
-        secretHash: createHash('sha256').update(credential).digest('hex'),
-      },
-      options.signal,
-    )
-    if (!/^[a-f0-9]{32}$/.test(setup.id) || !/^[A-F0-9]{8}$/.test(setup.code))
-      throw new Error('Invalid Cloudflare enrollment response')
-    const verification = new URL(setup.verificationUrl)
-    if (
-      verification.origin !== backendUrl ||
-      verification.pathname !== `/cloudflare/setup/${setup.id}` ||
-      verification.search ||
-      verification.hash
-    )
-      throw new Error('Invalid Cloudflare approval URL')
-    const state: Setup = { backendUrl, id: setup.id, secret: credential }
-    await writeFile(`${options.statePath}.tmp`, JSON.stringify(state), {
-      mode: 0o600,
-      flag: 'wx',
-    })
-    await rename(`${options.statePath}.tmp`, options.statePath)
-    options.output(
-      `Open ${verification.href} and confirm code ${setup.code}. Only approve this machine if the codes match.\n`,
-    )
     const deadline = Date.now() + 600_000
     let tunnel:
-      | { status: string; hostname?: string; tunnelToken?: string }
+      | {
+          status: string
+          hostname?: string
+          tunnelToken?: string
+          persistent?: boolean
+        }
       | undefined
     while (Date.now() < deadline) {
       options.signal.throwIfAborted()
       tunnel = await request(
         state,
-        `/cloudflare/requests/${setup.id}/poll`,
+        `/cloudflare/requests/${state.id}/poll`,
         {},
         options.signal,
       )
@@ -216,6 +231,8 @@ export const enable = async (options: {
       throw new Error(
         'Cloudflare approval expired or returned invalid tunnel settings',
       )
+    // A dead process can leave an old token file; this process owns the setup lock.
+    await rm(tokenPath, { force: true })
     await writeFile(tokenPath, tunnel.tunnelToken, { mode: 0o600, flag: 'wx' })
     options.signal.throwIfAborted()
     child = spawn(
@@ -236,6 +253,7 @@ export const enable = async (options: {
       )
     })
     return {
+      persistent: tunnel.persistent === true,
       publicUrl: `https://${tunnel.hostname}`,
       closed: closed.promise,
       close: stop,
