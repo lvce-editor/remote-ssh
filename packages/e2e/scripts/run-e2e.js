@@ -72,11 +72,11 @@ const createRemoteServerArtifacts = async (
 ) => {
   const artifactsRoot = join(runtimeRoot, 'artifacts')
   const nodeRoot = join(artifactsRoot, 'node-test', 'bin')
-  const nodeArchiveName = 'node-test-linux-x64.tar.gz'
+  const nodeArchiveName = `node-test-linux-${process.arch}.tar.gz`
   const providedNodeArchivePath = process.env.LVCE_REMOTE_SSH_TEST_NODE_ARCHIVE
   const nodeArchivePath =
     providedNodeArchivePath || join(artifactsRoot, nodeArchiveName)
-  const serverArchiveName = 'lvce-remote-ssh-server-dev.tar.gz'
+  const serverArchiveName = `lvce-remote-ssh-server-dev${process.arch === 'arm64' ? '-linux-arm64' : ''}.tar.gz`
   const serverArchivePath = join(repositoryRoot, serverArchiveName)
   const remoteRoot = join(runtimeRoot, 'remote-server')
   const backendScript =
@@ -137,6 +137,10 @@ const createRemoteServerArtifacts = async (
   return {
     artifactServer,
     env: {
+      LVCE_REMOTE_SSH_NODE_ARM64_ARCHIVE_NAME: nodeArchiveName,
+      LVCE_REMOTE_SSH_NODE_ARM64_ARCHIVE_SHA256:
+        await getSha256(nodeArchivePath),
+      LVCE_REMOTE_SSH_NODE_ARM64_ARCHIVE_URL: `${archiveBaseUrl}/${nodeArchiveName}`,
       LVCE_REMOTE_SSH_NODE_ARCHIVE_NAME: nodeArchiveName,
       LVCE_REMOTE_SSH_NODE_ARCHIVE_SHA256: await getSha256(nodeArchivePath),
       LVCE_REMOTE_SSH_NODE_ARCHIVE_URL: `${archiveBaseUrl}/${nodeArchiveName}`,
@@ -146,6 +150,10 @@ const createRemoteServerArtifacts = async (
       ...(process.env.LVCE_REMOTE_SSH_BACKEND_SCRIPT
         ? { LVCE_REMOTE_SSH_BACKEND_SCRIPT: backendScript }
         : {}),
+      LVCE_REMOTE_SSH_ARM64_SERVER_ARCHIVE_NAME: serverArchiveName,
+      LVCE_REMOTE_SSH_ARM64_SERVER_ARCHIVE_SHA256:
+        await getSha256(serverArchivePath),
+      LVCE_REMOTE_SSH_ARM64_SERVER_ARCHIVE_URL: `${archiveBaseUrl}/${serverArchiveName}`,
       LVCE_REMOTE_SSH_SERVER_ARCHIVE_NAME: serverArchiveName,
       LVCE_REMOTE_SSH_SERVER_ARCHIVE_SHA256: await getSha256(serverArchivePath),
       LVCE_REMOTE_SSH_SERVER_ARCHIVE_URL: `${archiveBaseUrl}/${serverArchiveName}`,

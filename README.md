@@ -52,7 +52,7 @@ Python installation is required.
 The filesystem server runs as a user-owned background process on a protected
 Unix socket. One SSH connector multiplexes filesystem requests for the open
 remote, and the server remains available for reconnects until it has been idle
-for three hours. The initial server target is Linux x64; other remote platforms
+for three hours. The initial server target is Linux x64 and ARM64; other remote platforms
 report an explicit unsupported-platform error.
 
 ## Local services and remote workspace transport
@@ -98,27 +98,32 @@ shows a pairing error; correct the connection settings and try again.
 
 The browser connector uses HTTPS and WSS; SSH is used only to install and start
 LVCE on the remote host. Browser devices need no native helper. The first
-release supports a single user and active browser session on Linux x64.
+release supports a single user and active browser session on Linux x64 and ARM64.
 
 Install the versioned remote server archive and its matching Node runtime from
 this repository's release manifest, verifying both SHA-256 checksums. Keep the
 matching `builtin.remote-server` connector in the static editor build. On a
-Linux x64 host with `curl`, `jq`, `tar`, and `sha256sum`, install as your ordinary
+Linux x64 or ARM64 host with `curl`, `jq`, `tar`, and `sha256sum`, install as your ordinary
 development user:
 
 ```sh
 set -eu
 umask 077
-release_tag=v0.19.0
+release_tag='<release-tag>' # Choose a release with ARM64 support for ARM64 hosts.
 install_dir="$HOME/.local/share/lvce-web/$release_tag"
 mkdir -p "$install_dir"
 cd "$install_dir"
 curl --fail --location \
   "https://github.com/lvce-editor/remote-ssh/releases/download/$release_tag/lvce-remote-ssh-server-manifest-$release_tag.json" \
   --output manifest.json
+case "$(uname -m)" in
+  x86_64) remote_platform=linux-x64 ;;
+  aarch64|arm64) remote_platform=linux-arm64 ;;
+  *) echo "Unsupported remote architecture" >&2; exit 1 ;;
+esac
 for artifact in node server; do
-  url=$(jq -er ".platforms[\"linux-x64\"].$artifact.url" manifest.json)
-  digest=$(jq -er ".platforms[\"linux-x64\"].$artifact.sha256" manifest.json)
+  url=$(jq -er ".platforms[\"$remote_platform\"].$artifact.url" manifest.json)
+  digest=$(jq -er ".platforms[\"$remote_platform\"].$artifact.sha256" manifest.json)
   curl --fail --location "$url" --output "$artifact.tar.gz" || exit 1
   printf '%s  %s\n' "$digest" "$artifact.tar.gz" | sha256sum --check - || exit 1
 done
@@ -241,7 +246,7 @@ permission to reach the fixture gateway on this machine.
 
 ## Cloudflare tunnel (user-owned account)
 
-After extracting the Node and server release archives as described above, run on the remote Linux x64 host:
+After extracting the Node and server release archives as described above, run on the remote Linux x64 or ARM64 host:
 
 ```sh
 ./node/bin/node ./server/lvce-remote-ssh-server.mjs --enable-cloudflare-tunnel --workspace=/absolute/project
@@ -250,8 +255,10 @@ After extracting the Node and server release archives as described above, run on
 
 Enable stays in the foreground. Open the printed backend approval URL, compare the code, select a Cloudflare-managed domain, then use the printed LVCE pairing URL in the browser. No inbound port, Caddy installation, or browser-machine daemon is required. The backend must first have its Cloudflare OAuth client configured; see [backend deployment setup](https://github.com/lvce-editor/backend-2/blob/main/docs/cloudflare.md).
 
-Options: `--backend-url=https://YOUR_BACKEND`, `--port=3774`, `--allowed-origin=https://lvce-editor.github.io`, and `--cloudflared-path=/absolute/path`. The default downloads official cloudflared 2026.10.3 for Linux x64 and verifies SHA-256 before execution. An override must support `tunnel run --token-file` (cloudflared 2025.4.0+). Tokens are stored in private files and excluded from arguments and output.
+Options: `--backend-url=https://YOUR_BACKEND`, `--port=3774`, `--allowed-origin=https://lvce-editor.github.io`, and `--cloudflared-path=/absolute/path`. The default downloads official cloudflared 2026.10.3 for Linux x64 and ARM64 and verifies SHA-256 before execution. An override must support `tunnel run --token-file` (cloudflared 2025.4.0+). Tokens are stored in private files and excluded from arguments and output.
 
 Ctrl+C stops the connector and removes the provider resources. After an abrupt crash or failed cleanup, rerun disable or remove the machine in backend account connections. Keep the saved private management credential until cleanup succeeds. Disable uses the same port and OS account as enable. This version does not install a service or retain a public hostname across starts. Pairing grants the privileges of the remote OS account; the workspace path is not a sandbox.
 
 Cloudflare management state is saved in `$LVCE_REMOTE_SSH_ROOT/run/cloudflare-PORT.json` (default `~/.lvce-server/run/`). Use the same root for enable and disable. Keep this file private and retain it after a failed cleanup.
+
+Linux ARM64 uses a native server archive (including its terminal module), a separately verified Node runtime, and the ARM64 cloudflared release. Runtime selection follows the remote host architecture, independently of the client machine. Older releases without an ARM64 server entry fail before downloading an incompatible server.
