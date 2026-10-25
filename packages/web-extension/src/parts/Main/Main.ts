@@ -8,6 +8,7 @@ import {
   storeSecret,
   deleteSecret,
 } from '@lvce-editor/api'
+import * as Benchmark from '../RemoteServerBenchmark/RemoteServerBenchmark.ts'
 import * as RemoteServerConnect from '../RemoteServerConnect/RemoteServerConnect.ts'
 import * as RemoteServerConnection from '../RemoteServerConnection/RemoteServerConnection.ts'
 import * as Transport from '../RemoteServerConnection/RemoteServerTransport.ts'
@@ -31,6 +32,8 @@ export const activate = async (): Promise<void> => {
       id: 'remote-server.prepareWorkspace',
     })
     registerFileSystemProvider(fileSystem)
+    registerFileSystemProvider(Benchmark.reportProvider)
+    registerCommand({ execute: Benchmark.run, id: 'remote-server.benchmark' })
     registerCommand({
       execute: () => executeCommand('Cloudflare.openConnections'),
       id: 'remote-server.cloudflare',
@@ -85,5 +88,6 @@ export const activate = async (): Promise<void> => {
 
 export const deactivate = async (): Promise<void> => {
   state.activated = false
+  Benchmark.dispose()
   await RemoteServerConnection.dispose()
 }

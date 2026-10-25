@@ -37,22 +37,6 @@ const toFileUri = (filePath: string): string => {
   return url.href
 }
 
-const encodeBase64 = (value: string): string => {
-  const bytes = new TextEncoder().encode(value)
-  let binary = ''
-  for (const byte of bytes) {
-    binary += String.fromCodePoint(byte)
-  }
-  return btoa(binary)
-}
-
-const decodeBase64 = (value: string): string => {
-  const binary = atob(value)
-  return new TextDecoder().decode(
-    Uint8Array.from(binary, (character) => character.codePointAt(0) || 0),
-  )
-}
-
 const invokeFileSystem = async (
   invoke: Invoke,
   method: string,
@@ -102,12 +86,12 @@ export const createRemoteServerFileSystem = (
         invoke,
         'FileSystem.readFile',
         uri,
-        'base64',
+        'utf8',
       )
       if (typeof value !== 'string') {
         throw new TypeError('Remote server returned invalid file content')
       }
-      return decodeBase64(value)
+      return value
     },
     remove: async (uri): Promise<void> => {
       requireMutable(uri)
@@ -152,8 +136,8 @@ export const createRemoteServerFileSystem = (
         invoke,
         'FileSystem.writeFile',
         uri,
-        encodeBase64(content),
-        'base64',
+        content,
+        'utf8',
       )
     },
   }
@@ -161,6 +145,4 @@ export const createRemoteServerFileSystem = (
 
 export const fileSystem = createRemoteServerFileSystem()
 
-export const _decodeBase64 = decodeBase64
-export const _encodeBase64 = encodeBase64
 export const _getLocation = getLocation

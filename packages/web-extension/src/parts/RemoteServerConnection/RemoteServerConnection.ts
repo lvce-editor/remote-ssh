@@ -124,6 +124,7 @@ const getTicket = async (
   options: ConnectionOptions,
   type: string,
   params: Readonly<Record<string, string>>,
+  signal?: AbortSignal,
 ): Promise<string> => {
   const endpoint = new URL('/auth/websocket-ticket', options.websocketUrl)
   endpoint.protocol = endpoint.protocol === 'wss:' ? 'https:' : 'http:'
@@ -137,6 +138,7 @@ const getTicket = async (
       method: 'POST',
       redirect: 'error',
       signal: AbortSignal.any([
+        ...(signal ? [signal] : []),
         state.authorizationController.signal,
         AbortSignal.timeout(15_000),
       ]),
@@ -178,6 +180,7 @@ const createWebSocketUrl = async (
   options: ConnectionOptions,
   type: string,
   params: Readonly<Record<string, string>> = {},
+  signal?: AbortSignal,
 ): Promise<string> => {
   const { generation } = state
   const url = new URL(
@@ -186,7 +189,7 @@ const createWebSocketUrl = async (
   )
   for (const [key, value] of Object.entries(params))
     url.searchParams.set(key, value)
-  url.searchParams.set('ticket', await getTicket(options, type, params))
+  url.searchParams.set('ticket', await getTicket(options, type, params, signal))
   if (state.options !== options || state.generation !== generation)
     throw new Error('Remote workspace changed while authorizing')
   return url.href
@@ -196,8 +199,11 @@ const createRpc = async (
   options: ConnectionOptions,
   generation: number,
   type: string,
+  signal?: AbortSignal,
 ): Promise<Rpc> => {
-  const webSocket = new WebSocket(await createWebSocketUrl(options, type))
+  const url = await createWebSocketUrl(options, type, {}, signal)
+  signal?.throwIfAborted()
+  const webSocket = new WebSocket(url)
   const pending = new Map<number, PendingRequest>()
   const disposeConnection = (): void => {
     close()
@@ -219,6 +225,7 @@ const createRpc = async (
     }
     closed = true
     connections.delete(disposeConnection)
+    signal?.removeEventListener('abort', disposeConnection)
     clearTimeout(openTimeout)
     webSocket.close()
     reject(error)
@@ -227,7 +234,7 @@ const createRpc = async (
       request.reject(error)
     }
     pending.clear()
-    if (state.generation === generation) {
+    if (!signal && state.generation === generation) {
       state.rpcs.delete(type)
     }
   }
@@ -242,6 +249,8 @@ const createRpc = async (
       ),
     30_000,
   )
+  signal?.addEventListener('abort', disposeConnection, { once: true })
+  if (signal?.aborted) disposeConnection()
   void ready.catch(() => {})
   webSocket.onopen = (): void => {
     clearTimeout(openTimeout)
@@ -500,3 +509,12 @@ export const releaseWorkspace = async (uri: string): Promise<void> => {
 }
 
 export const getGeneration = (): number => state.generation
+
+// A separate connection keeps bounded measurements from cancelling editor reads.
+export const createBenchmarkRpc = async (signal: AbortSignal): Promise<Rpc> => {
+  if (!state.options) await restore()
+  const { generation, options } = state
+  if (!options)
+    throw new Error('Connect to a remote server before benchmarking')
+  return createRpc(options, generation, 'file-system-process', signal)
+}
