@@ -392,6 +392,10 @@ if (process.argv.includes('--serve')) {
     expect(unexpectedPairing).toBe(false)
     await page.unroute('**/auth/pair')
     await page.locator('.Editor').click()
+    await page.evaluate(async (entry) => {
+      const { executeCommand } = await import(entry)
+      await executeCommand('Main.focus')
+    }, rendererEntry)
     await page.locator('.EditorInput textarea').focus()
     await expect(page.locator('.EditorInput textarea')).toBeFocused()
     await page.keyboard.type('Unsaved text must survive disconnect')
