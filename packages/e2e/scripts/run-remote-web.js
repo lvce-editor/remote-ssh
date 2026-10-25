@@ -201,6 +201,7 @@ if (process.argv.includes('--serve')) {
       await page.keyboard.press('Enter')
       await expect(page.locator('.QuickPick')).toHaveCount(0)
       await expect(page.locator('.Editor')).toContainText(content)
+      await expect(page.locator('.EditorInput textarea')).toBeFocused()
     }
     await expect(page.locator('.Editor')).toContainText(
       'Hello from the remote machine',
