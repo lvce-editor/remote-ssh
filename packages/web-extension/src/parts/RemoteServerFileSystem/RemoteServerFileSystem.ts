@@ -53,15 +53,18 @@ const decodeBase64 = (value: string): string => {
   )
 }
 
-const invokeFileSystem = (
+const invokeFileSystem = async (
   invoke: Invoke,
   method: string,
   uri: string,
   ...params: readonly unknown[]
 ): Promise<unknown> => {
   const location = getLocation(uri)
-  if (invoke === RemoteServerConnection.invoke)
+  if (invoke === RemoteServerConnection.invoke) {
+    if (!RemoteServerConnection.getOptions())
+      await RemoteServerConnection.restore()
     RemoteServerConnection.assertWorkspace(uri)
+  }
   return invoke(method, toFileUri(location.path), ...params)
 }
 
@@ -114,6 +117,8 @@ export const createRemoteServerFileSystem = (
       const oldLocation = getLocation(oldUri)
       const newLocation = getLocation(newUri)
       if (invoke === RemoteServerConnection.invoke) {
+        if (!RemoteServerConnection.getOptions())
+          await RemoteServerConnection.restore()
         RemoteServerConnection.assertWorkspace(oldUri)
         RemoteServerConnection.assertWorkspace(newUri)
       }

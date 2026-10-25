@@ -358,3 +358,19 @@ test('expired or revoked authorization clears the in-memory session', async () =
   ).rejects.toThrow('expired or revoked')
   expect(RemoteServerConnection.getOptions()).toBeUndefined()
 })
+
+test('leaving a folder rejects a late ticket even when its valid session is retained', async () => {
+  const { promise, resolve } = Promise.withResolvers<Response>()
+  jest.spyOn(globalThis, 'fetch').mockReturnValue(promise)
+  const uri = 'remote-server://remote.example.com/home/test'
+  RemoteServerConnection.set({
+    sessionToken: 'session-secret',
+    websocketUrl: 'wss://remote.example.com/',
+    workspaceUri: uri,
+  })
+  const pending = RemoteServerConnection.getWebSocketUrl('terminal-process')
+  await RemoteServerConnection.releaseWorkspace(uri)
+  resolve(Response.json({ ticket: 'late-ticket' }))
+  await expect(pending).rejects.toThrow('changed while authorizing')
+  expect(RemoteServerConnection.getOptions()).toBeDefined()
+})

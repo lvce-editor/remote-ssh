@@ -279,10 +279,65 @@ if (process.argv.includes('--serve')) {
       )
     }
     expect(diagnostics.filter((item) => typeof item === 'string')).toEqual([])
+    // Reload must reuse the valid session instead of consuming the one-time pairing URL again.
+    let unexpectedPairing = false
+    await page.route('**/auth/pair', (route) => {
+      unexpectedPairing = true
+      return route.abort('failed')
+    })
+    const workspaceUrl = page.url()
+    await page.reload()
+    await expect(
+      page.getByRole('tab', { name: 'Explorer', exact: true }),
+    ).toBeVisible({ timeout: 30_000 })
+    if (new URL(workspaceUrl).hash.startsWith('#workspace=')) {
+      expect(page.url()).toBe(workspaceUrl)
+      await page.getByRole('tab', { name: 'Explorer', exact: true }).click()
+      await expect(file).toBeVisible({ timeout: 30_000 })
+    }
+    const rendererEntry = await page
+      .locator('script[type="module"][src]')
+      .getAttribute('src')
+    const recent = await page.evaluate(async (entry) => {
+      const { executeCommand } = await import(entry)
+      const recent = await executeCommand('RecentlyOpened.getRecentlyOpened')
+      await executeCommand('QuickPick.showRecent')
+      return recent
+    }, rendererEntry)
+    const remoteWorkspace = new URL(
+      `remote-server://${new URL(fixture.gateway.pairingUrl).host}`,
+    )
+    remoteWorkspace.pathname = fixture.workspace
+    expect(recent).toContain(remoteWorkspace.href)
+    expect(
+      recent.every(
+        (uri) => !uri.includes('token=') && !uri.includes('ticket='),
+      ),
+    ).toBe(true)
+    await page
+      .getByRole('option')
+      .filter({ hasText: 'workspace' })
+      .first()
+      .click()
+    await page.getByRole('tab', { name: 'Explorer', exact: true }).click()
+    await expect(file).toBeVisible({ timeout: 30_000 })
+    await file.dblclick()
+    await expect(page.locator('.Editor')).toContainText(
+      'Saved from the browser',
+    )
+    expect(unexpectedPairing).toBe(false)
+    await page.unroute('**/auth/pair')
     await page.locator('.EditorInput textarea').focus()
     await page.keyboard.press('Control+End')
     await page.keyboard.type('Unsaved text must survive disconnect')
+    const revocation = page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname === '/auth/revoke' &&
+        response.request().method() === 'POST',
+    )
     await command('Remote Server: Disconnect')
+    await revocation
+    await expect(page.locator('.QuickPick')).toHaveCount(0)
     await expect(page.locator('.Editor')).toContainText(
       'Unsaved text must survive disconnect',
     )
@@ -325,7 +380,7 @@ if (process.argv.includes('--serve')) {
       'Could not reach the remote server. Check its HTTPS certificate',
     )
     console.log(
-      `PASS ${browserName}: static HTTPS frontend, cross-origin pairing, remote save, terminal, watching, search, Git, ${fixture.injectedLanguage ? 'TypeScript service, ' : ''}and dirty-buffer disconnect`,
+      `PASS ${browserName}: static HTTPS frontend, cross-origin pairing, remote save, reload and Open Recent without pairing again, terminal, watching, search, Git, ${fixture.injectedLanguage ? 'TypeScript service, ' : ''}and dirty-buffer disconnect`,
     )
   } catch (error) {
     console.error(

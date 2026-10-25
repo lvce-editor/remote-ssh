@@ -243,3 +243,22 @@ test('a cancelled old workspace switch cannot restore its session over a newer c
   await expect(pending).rejects.toThrow('cancelled')
   expect(connection.getOptions()).toBe(newer)
 })
+
+test('prepares a recently opened folder using the existing session without pairing again', async () => {
+  const connection =
+    await import('../src/parts/RemoteServerConnection/RemoteServerConnection.ts')
+  connection.set({
+    sessionToken: 'session-secret',
+    websocketUrl: 'wss://remote.example.com/',
+    workspaceUri: 'remote-server://remote.example.com/home/old',
+  })
+  await expect(
+    RemoteServerConnect.prepareWorkspace(
+      'remote-server://remote.example.com/home/test/other%20folder',
+    ),
+  ).resolves.toEqual({
+    command: 'remote-server.getWebSocketUrl',
+    disposeCommand: 'remote-server.releaseWorkspace',
+    workspacePath: '/home/test/other folder',
+  })
+})

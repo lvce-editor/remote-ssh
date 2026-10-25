@@ -1,3 +1,4 @@
+import * as Session from '../RemoteServerSession/RemoteServerSession.ts'
 import { RemoteServerError } from '../RemoteServerError/RemoteServerError.ts'
 
 export interface ConnectionOptions {
@@ -147,7 +148,8 @@ const getTicket = async (
     )
   }
   if (!response.ok) {
-    if (response.status === 401 && state.options === options) await dispose()
+    if (response.status === 401 && state.options === options)
+      await invalidate().catch(() => {})
     const statusText = response.statusText ? ` ${response.statusText}` : ''
     const hint = getHttpErrorHint(response.status)
     throw new RemoteServerError(
@@ -170,6 +172,7 @@ const createWebSocketUrl = async (
   type: string,
   params: Readonly<Record<string, string>> = {},
 ): Promise<string> => {
+  const generation = state.generation
   const url = new URL(
     `/websocket/${encodeURIComponent(type)}`,
     options.websocketUrl,
@@ -177,7 +180,7 @@ const createWebSocketUrl = async (
   for (const [key, value] of Object.entries(params))
     url.searchParams.set(key, value)
   url.searchParams.set('ticket', await getTicket(options, type, params))
-  if (state.options !== options)
+  if (state.options !== options || state.generation !== generation)
     throw new Error('Remote workspace changed while authorizing')
   return url.href
 }
@@ -339,7 +342,7 @@ export const set = (options: ConnectionOptions): void => {
   if (options.expiresAt)
     state.expiryTimer = setTimeout(
       () => {
-        void dispose()
+        void invalidate().catch(() => {})
       },
       Math.max(0, options.expiresAt - Date.now()),
     )
@@ -357,6 +360,29 @@ export const dispose = async (): Promise<void> => {
   state.options = undefined
   for (const close of connections) close()
   state.rpcs.clear()
+}
+
+const invalidate = async (): Promise<void> => {
+  const clearing = Session.clear()
+  await dispose()
+  await clearing
+}
+
+let restoration: Promise<void> | undefined
+export const restore = (): Promise<void> => {
+  if (state.options) return Promise.resolve()
+  if (!restoration) {
+    const generation = state.generation
+    restoration = Session.load()
+      .then((options) => {
+        if (options && generation === state.generation && !state.options)
+          set(options)
+      })
+      .finally(() => {
+        restoration = undefined
+      })
+  }
+  return restoration
 }
 
 export const assertWorkspace = (uri: string): void => {
@@ -382,8 +408,9 @@ export const getStatus = (): string =>
     : 'Disconnected; connect with a new pairing URL'
 
 export const revoke = async (): Promise<void> => {
+  if (!state.options) await restore().catch(() => {})
   const { options } = state
-  await dispose()
+  await invalidate().catch(() => {})
   if (!options) return
   const url = new URL('/auth/revoke', options.websocketUrl)
   url.protocol = url.protocol === 'wss:' ? 'https:' : 'http:'
@@ -404,12 +431,14 @@ export const invokeProcess = async (
   method: string,
   ...params: readonly unknown[]
 ): Promise<unknown> => {
+  if (!state.options) await restore()
   const { options } = state
   if (!options)
     throw new RemoteServerError(
       'Remote server is not paired',
       'E_REMOTE_SERVER_NOT_PAIRED',
     )
+  const generation = state.generation
   let promise = state.rpcs.get(type)
   if (!promise) {
     promise = createRpc(options, state.generation, type)
@@ -419,7 +448,8 @@ export const invokeProcess = async (
     })
   }
   const rpc = await promise
-  if (state.options !== options) throw new Error('Remote workspace changed')
+  if (state.options !== options || state.generation !== generation)
+    throw new Error('Remote workspace changed')
   return rpc.invoke(method, ...params)
 }
 
@@ -432,6 +462,7 @@ export const getWebSocketUrl = async (
   type: string,
   params: Readonly<Record<string, string>> = {},
 ): Promise<string> => {
+  if (!state.options) await restore()
   if (!state.options)
     throw new RemoteServerError(
       'Remote server is not paired',
@@ -448,7 +479,9 @@ export const trackConnection = (close: () => void): (() => void) => {
 export const getOptions = (): ConnectionOptions | undefined => state.options
 
 export const releaseWorkspace = async (uri: string): Promise<void> => {
-  if (state.options?.workspaceUri === uri) await revoke()
+  const options = state.options
+  if (options && new URL(uri).host === new URL(options.websocketUrl).host)
+    set(options)
 }
 
 export const getGeneration = (): number => state.generation

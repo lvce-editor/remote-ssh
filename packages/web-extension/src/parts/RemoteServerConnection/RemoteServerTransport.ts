@@ -8,6 +8,7 @@ export const connect = async (
 ): Promise<void> => {
   let dispose = (): void => port.close()
   try {
+    if (!Connection.getOptions()) await Connection.restore()
     Connection.assertWorkspace(workspaceUri)
     if (
       ![
@@ -17,7 +18,10 @@ export const connect = async (
       ].includes(type)
     )
       throw new Error('Unsupported remote workspace transport')
+    const generation = Connection.getGeneration()
     const url = await Connection.getWebSocketUrl(type, params)
+    if (Connection.getGeneration() !== generation)
+      throw new Error('Remote workspace changed while connecting')
     Connection.assertWorkspace(workspaceUri)
     const socket = new WebSocket(url)
     await new Promise<void>((resolve, reject) => {
@@ -117,6 +121,7 @@ export const request = async (
   type: string,
   args: readonly string[] = [],
 ): Promise<unknown> => {
+  if (!Connection.getOptions()) await Connection.restore()
   Connection.assertWorkspace(uri)
   const path = decodeURIComponent(new URL(uri).pathname)
   switch (type) {
