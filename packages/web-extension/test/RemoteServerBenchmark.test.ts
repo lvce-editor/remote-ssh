@@ -7,21 +7,21 @@ import {
 test('reports latency percentiles and successive jitter without credentials', () => {
   expect(summarize([10, 30, 20])).toEqual({
     count: 3,
-    min: 10,
-    median: 20,
-    p95: 30,
     max: 30,
     mean: 20,
     meanSuccessiveDifference: 15,
+    median: 20,
+    min: 10,
+    p95: 30,
   })
   expect(summarize([])).toEqual({
     count: 0,
-    min: null,
-    median: null,
-    p95: null,
     max: null,
     mean: null,
     meanSuccessiveDifference: null,
+    median: null,
+    min: null,
+    p95: null,
   })
 })
 
@@ -61,7 +61,7 @@ test('cancels a stalled request at the deadline and does not report a fabricated
     {
       connect: async (signal) => ({
         close,
-        invoke: () =>
+        invoke: (): Promise<unknown> =>
           new Promise((_, reject) =>
             signal.addEventListener(
               'abort',

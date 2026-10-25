@@ -31,19 +31,45 @@ const defaults: Dependencies = {
     }),
 }
 
-export const summarize = (samples: readonly number[]) => {
+interface LatencySummary {
+  readonly count: number
+  readonly max: number | null
+  readonly mean: number | null
+  readonly meanSuccessiveDifference: number | null
+  readonly median: number | null
+  readonly min: number | null
+  readonly p95: number | null
+}
+
+interface BenchmarkReport {
+  readonly attemptedRequests: number
+  readonly completedRequests: number
+  readonly deadlineExceeded: boolean
+  readonly durationMs: number
+  readonly firstResponseMs: number | null
+  readonly interrupted: boolean
+  readonly measurement: string
+  readonly notes: readonly string[]
+  readonly roundTripMs: LatencySummary
+  readonly samplesMs: readonly number[]
+  readonly schemaVersion: number
+  readonly stallsOver250Ms: number
+  readonly transport: string
+}
+
+export const summarize = (samples: readonly number[]): LatencySummary => {
   const sorted = samples.toSorted((a, b) => a - b)
   const percentile = (p: number): number | null =>
-    sorted.length ? sorted[Math.max(0, Math.ceil(sorted.length * p) - 1)] : null
+    sorted.length > 0
+      ? sorted[Math.max(0, Math.ceil(sorted.length * p) - 1)]
+      : null
   return {
     count: samples.length,
-    min: sorted[0] ?? null,
-    median: percentile(0.5),
-    p95: percentile(0.95),
     max: sorted.at(-1) ?? null,
-    mean: samples.length
-      ? samples.reduce((a, b) => a + b, 0) / samples.length
-      : null,
+    mean:
+      samples.length > 0
+        ? samples.reduce((a, b) => a + b, 0) / samples.length
+        : null,
     meanSuccessiveDifference:
       samples.length > 1
         ? samples
@@ -54,6 +80,9 @@ export const summarize = (samples: readonly number[]) => {
             ) /
           (samples.length - 1)
         : null,
+    median: percentile(0.5),
+    min: sorted[0] ?? null,
+    p95: percentile(0.95),
   }
 }
 
@@ -61,7 +90,7 @@ export const measure = async (
   workspaceUri: string,
   dependencies: Dependencies = defaults,
   durationMs = 5000,
-) => {
+): Promise<BenchmarkReport> => {
   const workspace = new URL(workspaceUri)
   if (workspace.protocol !== 'remote-server:')
     throw new Error('Open a Remote Server workspace before benchmarking')
@@ -99,18 +128,13 @@ export const measure = async (
     rpc?.close()
   }
   return {
-    schemaVersion: 1,
-    transport: 'authenticated-websocket',
-    measurement: 'sequential read-only workspace stat',
-    durationMs: dependencies.now() - started,
-    firstResponseMs,
-    roundTripMs: summarize(samplesMs),
     attemptedRequests,
     completedRequests,
-    stallsOver250Ms: samplesMs.filter((sample) => sample > 250).length,
-    interrupted,
     deadlineExceeded,
-    samplesMs,
+    durationMs: dependencies.now() - started,
+    firstResponseMs,
+    interrupted,
+    measurement: 'sequential read-only workspace stat',
     notes: [
       'First response includes authorization, connection setup and remote service startup.',
       'Warm round trips include network, tunnel, gateway and filesystem service time; this does not isolate Cloudflare latency.',
@@ -118,35 +142,42 @@ export const measure = async (
       'An unfinished request at the five-second deadline is cancelled, not counted as a completed sample.',
       'This measures small-request latency and jitter, not bulk transfer bandwidth.',
     ],
+    roundTripMs: summarize(samplesMs),
+    samplesMs,
+    schemaVersion: 1,
+    stallsOver250Ms: samplesMs.filter((sample) => sample > 250).length,
+    transport: 'authenticated-websocket',
   }
 }
 
-let running = false
-let report: { readonly uri: string; readonly content: string } | undefined
+const state: {
+  report: { readonly content: string; readonly uri: string } | undefined
+  running: boolean
+} = { report: undefined, running: false }
 export const reportProvider = {
   id: 'remote-benchmark',
   isReadonly: (): boolean => true,
+  readFile: (uri: string): string => {
+    if (uri !== state.report?.uri)
+      throw new Error('Benchmark report is no longer available')
+    return state.report.content
+  },
   stat: (uri: string): number => {
-    if (uri !== report?.uri)
+    if (uri !== state.report?.uri)
       throw new Error('Benchmark report is no longer available')
     return 1
-  },
-  readFile: (uri: string): string => {
-    if (uri !== report?.uri)
-      throw new Error('Benchmark report is no longer available')
-    return report.content
   },
 }
 
 export const run = async (): Promise<void> => {
-  if (running) {
+  if (state.running) {
     await showNotification(
       'info',
       'A remote connection benchmark is already running',
     )
     return
   }
-  running = true
+  state.running = true
   try {
     const workspace = await getWorkspaceUri()
     Connection.assertWorkspace(workspace)
@@ -158,13 +189,19 @@ export const run = async (): Promise<void> => {
     const result = await measure(workspace)
     if (generation !== Connection.getGeneration()) return
     const uri = `remote-benchmark://connection/${crypto.randomUUID()}.json`
-    report = { uri, content: JSON.stringify(result, null, 2) + '\n' }
+    const { notes, samplesMs, ...summary } = result
+    const ordered = Object.fromEntries([
+      ...Object.entries(summary),
+      ['notes', notes],
+      ['samplesMs', samplesMs],
+    ])
+    state.report = { content: JSON.stringify(ordered, null, 2) + '\n', uri }
     await openUri(uri)
   } finally {
-    running = false
+    state.running = false
   }
 }
 
 export const dispose = (): void => {
-  report = undefined
+  state.report = undefined
 }

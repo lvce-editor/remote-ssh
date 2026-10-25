@@ -84,7 +84,7 @@ test('rejects root mutations and cross-server renames', async () => {
 })
 
 test('sends Unicode, newlines and NUL as JSON text without base64 expansion', async () => {
-  const content = 'héllo 🌍\n\0'
+  const content = 'h\u{E9}llo 🌍\n\0'
   invoke.mockResolvedValueOnce(content)
   const uri = 'remote-server://remote.example.com/home/test/unicode.txt'
   await expect(fileSystem.readFile(uri)).resolves.toBe(content)

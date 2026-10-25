@@ -513,7 +513,7 @@ export const getGeneration = (): number => state.generation
 // A separate connection keeps bounded measurements from cancelling editor reads.
 export const createBenchmarkRpc = async (signal: AbortSignal): Promise<Rpc> => {
   if (!state.options) await restore()
-  const { options, generation } = state
+  const { generation, options } = state
   if (!options)
     throw new Error('Connect to a remote server before benchmarking')
   return createRpc(options, generation, 'file-system-process', signal)
