@@ -10,7 +10,7 @@ export const verifyAccountBrowser = async (
   const second = await context.browser().newContext(contextOptions)
   try {
     const page = await second.newPage()
-    await page.goto(fixture.url)
+    await page.goto(new URL('account-browser-test.html', fixture.url).href)
     const result = await page.evaluate(
       async ({ pairingUrl, authorization, workspace }) => {
         const origin = new URL(pairingUrl).origin

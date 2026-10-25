@@ -86,6 +86,11 @@ export const createFixture = async () => {
     const sockets = new Set()
     const frontend = createServer(tls, async (request, response) => {
       const pathname = new URL(request.url, 'https://localhost').pathname
+      if (pathname === `${prefix}/account-browser-test.html`) {
+        response.writeHead(200, { 'content-type': 'text/html' })
+        response.end('<!doctype html><title>Account connection test</title>')
+        return
+      }
       if (!pathname.startsWith(`${prefix}/`)) {
         response.writeHead(404)
         response.end()
