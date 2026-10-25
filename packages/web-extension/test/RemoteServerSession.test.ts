@@ -2,21 +2,21 @@ import { afterEach, expect, jest, test } from '@jest/globals'
 import * as Connection from '../src/parts/RemoteServerConnection/RemoteServerConnection.ts'
 import * as Session from '../src/parts/RemoteServerSession/RemoteServerSession.ts'
 
-const options = () => ({
+const options = (): Required<Connection.ConnectionOptions> => ({
   expiresAt: Date.now() + 60_000,
   sessionToken: 'a'.repeat(64),
   websocketUrl: 'wss://remote.example/',
   workspaceUri: 'remote-server://remote.example/home/test/project',
 })
-const configure = () => {
+const configure = (): Map<string, string> => {
   const values = new Map<string, string>()
   Session.configure({
+    deleteSecret: async (key) => {
+      values.delete(key)
+    },
     getSecret: async (key) => values.get(key),
     storeSecret: async (key, value) => {
       values.set(key, value)
-    },
-    deleteSecret: async (key) => {
-      values.delete(key)
     },
   })
   return values
@@ -103,11 +103,11 @@ test('disconnect still revokes remotely when clearing browser storage fails', as
     .spyOn(globalThis, 'fetch')
     .mockResolvedValue(Response.json({}))
   Session.configure({
-    getSecret: async () => undefined,
-    storeSecret: async () => {},
     deleteSecret: async () => {
       throw new Error('Storage unavailable')
     },
+    getSecret: async () => undefined,
+    storeSecret: async () => {},
   })
   Connection.set(options())
   try {

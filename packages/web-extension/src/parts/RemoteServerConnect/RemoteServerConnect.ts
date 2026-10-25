@@ -3,8 +3,8 @@ import {
   showQuickInput,
   showNotification,
 } from '@lvce-editor/api'
-import * as Session from '../RemoteServerSession/RemoteServerSession.ts'
 import * as RemoteServerConnection from '../RemoteServerConnection/RemoteServerConnection.ts'
+import * as Session from '../RemoteServerSession/RemoteServerSession.ts'
 
 export interface PairingResult {
   readonly authentication: 'websocket-ticket'
@@ -213,7 +213,9 @@ export const connectWithPairingUrl = async (
   }
 }
 
-export const prepareWorkspace = async (uri: string) => {
+export const prepareWorkspace = async (
+  uri: string,
+): Promise<Parameters<SetWorkspaceUri>[2] | undefined> => {
   if (!RemoteServerConnection.getOptions())
     await RemoteServerConnection.restore()
   if (!RemoteServerConnection.getOptions()) {

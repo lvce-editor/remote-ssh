@@ -319,6 +319,7 @@ if (process.argv.includes('--serve')) {
       .filter({ hasText: 'workspace' })
       .first()
       .click()
+    await expect(page.locator('.QuickPick')).toHaveCount(0)
     await page.getByRole('tab', { name: 'Explorer', exact: true }).click()
     await expect(file).toBeVisible({ timeout: 30_000 })
     await file.dblclick()

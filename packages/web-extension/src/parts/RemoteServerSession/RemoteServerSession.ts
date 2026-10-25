@@ -1,30 +1,46 @@
 import type { ConnectionOptions } from '../RemoteServerConnection/RemoteServerConnection.ts'
 
 export interface Storage {
+  readonly deleteSecret: (key: string) => Promise<void>
   readonly getSecret: (key: string) => Promise<string | undefined>
   readonly storeSecret: (key: string, value: string) => Promise<void>
-  readonly deleteSecret: (key: string) => Promise<void>
 }
 const key = 'remote-server.session.v1'
-let storage: Storage | undefined
-let pending: Promise<unknown> = Promise.resolve()
+const state: { storage: Storage | undefined; pending: Promise<unknown> } = {
+  pending: Promise.resolve(),
+  storage: undefined,
+}
 
 export const configure = (value: Storage | undefined): void => {
-  storage = value
+  state.storage = value
+}
+const run = async <T>(
+  previous: Promise<unknown>,
+  operation: () => Promise<T>,
+): Promise<T> => {
+  await previous
+  return operation()
+}
+const ignoreFailure = async (promise: Promise<unknown>): Promise<void> => {
+  try {
+    await promise
+  } catch {
+    /* Keep the next storage operation usable. */
+  }
 }
 const serialize = <T>(operation: () => Promise<T>): Promise<T> => {
-  const result = pending.then(operation)
-  pending = result.catch(() => {})
+  const result = run(state.pending, operation)
+  state.pending = ignoreFailure(result)
   return result
 }
 export const save = (options: ConnectionOptions): Promise<void> => {
-  const target = storage
+  const target = state.storage
   return serialize(async () => {
     await target?.storeSecret(key, JSON.stringify(options))
   })
 }
 export const clear = (): Promise<void> => {
-  const target = storage
+  const target = state.storage
   return serialize(async () => {
     await target?.deleteSecret(key)
   })
@@ -67,7 +83,7 @@ const isValid = (value: unknown): value is ConnectionOptions => {
   }
 }
 export const load = (): Promise<ConnectionOptions | undefined> => {
-  const target = storage
+  const target = state.storage
   return serialize(async () => {
     const raw = await target?.getSecret(key)
     if (!raw) return undefined
