@@ -192,7 +192,8 @@ revokes the previous browser session. Pairing links expire after ten minutes;
 sessions expire after 24 hours; process-specific tickets expire after one
 minute and work once. Revocation and expiry close live connections, including
 remote extension processes. Restarting the gateway forgets all credentials.
-Reload the browser and pair again; credentials are held only in memory.
+Reloading reuses the valid session saved in extension secret storage. Pair again
+after session expiration, revocation, or a gateway restart.
 If the backend stops, the gateway exits too. Start `serve-web` again and use its
 fresh pairing link.
 
