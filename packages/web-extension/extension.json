@@ -24,7 +24,8 @@
     "onCommand:remote-server.connectToProcess",
     "onCommand:remote-server.request",
     "onCommand:remote-server.releaseWorkspace",
-    "onCommand:remote-server.cloudflare"
+    "onCommand:remote-server.cloudflare",
+    "onCommand:remote-server.prepareWorkspace"
   ],
   "commands": [
     {
@@ -58,6 +59,10 @@
     {
       "id": "remote-server.cloudflare",
       "label": "Remote Server: Manage Tunnel Access"
+    },
+    {
+      "id": "remote-server.prepareWorkspace",
+      "internal": true
     }
   ],
   "fileSystemProviders": [

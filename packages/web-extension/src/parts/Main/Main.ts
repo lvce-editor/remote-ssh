@@ -4,11 +4,15 @@ import {
   executeCommand,
   registerFileSystemProvider,
   showNotification,
+  getSecret,
+  storeSecret,
+  deleteSecret,
 } from '@lvce-editor/api'
 import * as RemoteServerConnect from '../RemoteServerConnect/RemoteServerConnect.ts'
 import * as RemoteServerConnection from '../RemoteServerConnection/RemoteServerConnection.ts'
 import * as Transport from '../RemoteServerConnection/RemoteServerTransport.ts'
 import { fileSystem } from '../RemoteServerFileSystem/RemoteServerFileSystem.ts'
+import * as Session from '../RemoteServerSession/RemoteServerSession.ts'
 
 const state = {
   activated: false,
@@ -21,6 +25,11 @@ export const activate = async (): Promise<void> => {
   state.activated = true
   try {
     await activateExtensionApi()
+    Session.configure({ deleteSecret, getSecret, storeSecret })
+    registerCommand({
+      execute: RemoteServerConnect.prepareWorkspace,
+      id: 'remote-server.prepareWorkspace',
+    })
     registerFileSystemProvider(fileSystem)
     registerCommand({
       execute: () => executeCommand('Cloudflare.openConnections'),
@@ -49,8 +58,11 @@ export const activate = async (): Promise<void> => {
       id: 'remote-server.disconnect',
     })
     registerCommand({
-      execute: () =>
-        showNotification('info', RemoteServerConnection.getStatus()),
+      execute: async () => {
+        if (!RemoteServerConnection.getOptions())
+          await RemoteServerConnection.restore()
+        return showNotification('info', RemoteServerConnection.getStatus())
+      },
       id: 'remote-server.status',
     })
     registerCommand({

@@ -266,3 +266,5 @@ An expired or disabled saved enrollment is cleaned up before the CLI requests a 
 Cloudflare management state is saved in `$LVCE_REMOTE_SSH_ROOT/run/cloudflare-PORT.json` (default `~/.lvce-server/run/`). Use the same root for enable and disable. Keep this file private and retain it after a failed cleanup.
 
 Linux ARM64 uses a native server archive (including its terminal module), a separately verified Node runtime, and the ARM64 cloudflared release. Runtime selection follows the remote host architecture, independently of the client machine. Older releases without an ARM64 server entry fail before downloading an incompatible server.
+
+The browser connector keeps its expiring session in extension secret storage so reloading can reuse it. The remote workspace reference in the Pages URL and Open Recent contains no credentials. Switching folders closes active sockets; **Remote Server: Disconnect** revokes the session and removes its saved credential. A gateway restart, revocation or session expiration requires a fresh pairing URL.

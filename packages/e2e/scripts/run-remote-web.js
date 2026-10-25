@@ -23,12 +23,13 @@ if (process.argv.includes('--serve')) {
   await fixture.dispose()
 } else {
   let browser
+  let context
   const diagnostics = []
   const expectedSearchFailures = new Map()
   let page
   try {
     const browserName = process.env.LVCE_REMOTE_WEB_BROWSER || 'chromium'
-    browser = await { chromium, firefox, webkit }[browserName].launch({
+    const launchOptions = {
       headless: true,
       ...(browserName === 'firefox' && !fixture.injectedLanguage
         ? { firefoxUserPrefs: { 'network.lna.skip-domains': 'localhost' } }
@@ -36,13 +37,24 @@ if (process.argv.includes('--serve')) {
       args: process.env.LVCE_REMOTE_WEB_DEBUG
         ? ['--remote-debugging-port=39229']
         : [],
-    })
-    page = await browser.newPage({
+    }
+    const contextOptions = {
       ignoreHTTPSErrors: true,
       ...(browserName === 'chromium' && !fixture.injectedLanguage
         ? { permissions: ['local-network-access'] }
         : {}),
-    })
+    }
+    if (browserName === 'webkit') {
+      // WebKit's ephemeral context discards Cache Storage on navigation.
+      context = await webkit.launchPersistentContext(
+        join(fixture.directory, 'browser-profile'),
+        { ...launchOptions, ...contextOptions },
+      )
+    } else {
+      browser = await { chromium, firefox }[browserName].launch(launchOptions)
+      context = await browser.newContext(contextOptions)
+    }
+    page = await context.newPage()
     const socketPaths = []
     page.on('console', (message) => {
       if (message.type() !== 'error') return
@@ -140,6 +152,15 @@ if (process.argv.includes('--serve')) {
     await page.keyboard.press('Enter')
     const file = page.locator('.TreeItem[aria-label="hello.txt"]')
     await expect(file).toBeVisible({ timeout: 30_000 })
+    if (process.env.LVCE_REMOTE_WEB_REQUIRE_WORKSPACE_RESTORE === '1') {
+      const expected = new URL(
+        `remote-server://${new URL(fixture.gateway.pairingUrl).host}`,
+      )
+      expected.pathname = fixture.workspace
+      expect(
+        new URLSearchParams(new URL(page.url()).hash.slice(1)).get('workspace'),
+      ).toBe(expected.href)
+    }
     const ticketRoute = '**/auth/websocket-ticket?process=search-process'
     await page.route(ticketRoute, (route) => {
       const url = route.request().url()
@@ -161,7 +182,10 @@ if (process.argv.includes('--serve')) {
     await expect(searchError).toBeVisible()
     await page.keyboard.press('Escape')
     await expect(page.locator('.QuickPick')).toHaveCount(0)
-    await page.getByRole('tab', { name: 'Explorer', exact: true }).click()
+    await page.keyboard.press('Control+Shift+E')
+    await expect(
+      page.getByRole('tab', { name: 'Explorer', exact: true }),
+    ).toHaveAttribute('aria-selected', 'true')
     await searchError.getByRole('button').last().click()
     await expect(searchError).toHaveCount(0)
     await page.unroute(ticketRoute)
@@ -260,6 +284,110 @@ if (process.argv.includes('--serve')) {
       .locator('textarea[name="SearchValue"]')
       .fill('Remote external change')
     await expect(search).toContainText('external.txt', { timeout: 30_000 })
+    await page.keyboard.press('Control+Shift+E')
+    await expect(
+      page.getByRole('tab', { name: 'Explorer', exact: true }),
+    ).toHaveAttribute('aria-selected', 'true')
+    await expect(file).toBeVisible({ timeout: 30_000 })
+    // Reload must reuse the valid session instead of consuming the one-time pairing URL again.
+    let unexpectedPairing = false
+    await page.route('**/auth/pair', (route) => {
+      unexpectedPairing = true
+      return route.abort('failed')
+    })
+    const workspaceUrl = page.url()
+    await page.reload()
+    await expect(
+      page.getByRole('tab', { name: 'Explorer', exact: true }),
+    ).toBeVisible({ timeout: 30_000 })
+    if (new URL(workspaceUrl).hash.startsWith('#workspace=')) {
+      expect(page.url()).toBe(workspaceUrl)
+      await expect(file).toBeVisible({ timeout: 30_000 })
+      await page.getByRole('menuitem', { name: 'View', exact: true }).click()
+      await page
+        .getByRole('menuitem', { name: 'Terminal', exact: true })
+        .click()
+      const reloadedTerminal = page.locator('.XtermTerminal')
+      await expect(reloadedTerminal).toBeVisible({ timeout: 30_000 })
+      await reloadedTerminal.click()
+      await reloadedTerminal
+        .locator('.xterm-helper-textarea')
+        .pressSequentially(
+          "pwd; printf 'reloaded remotely\\n' > reload-terminal-created.txt; printf 'RELOAD_OK\\n'\n",
+        )
+      await expect(reloadedTerminal).toContainText('RELOAD_OK')
+      await expect(reloadedTerminal).toContainText(fixture.workspace)
+      expect(
+        await readFile(
+          join(fixture.workspace, 'reload-terminal-created.txt'),
+          'utf8',
+        ),
+      ).toContain('reloaded remotely')
+      await page.keyboard.press('Control+Shift+E')
+      await expect(
+        page.getByRole('tab', { name: 'Explorer', exact: true }),
+      ).toHaveAttribute('aria-selected', 'true')
+      await expect(
+        page.locator('.TreeItem[aria-label="reload-terminal-created.txt"]'),
+      ).toBeVisible({ timeout: 30_000 })
+    }
+    const rendererEntry = await page
+      .locator('script[type="module"][src]')
+      .getAttribute('src')
+    const recent = await page.evaluate(async (entry) => {
+      const { executeCommand } = await import(entry)
+      const recent = await executeCommand('RecentlyOpened.getRecentlyOpened')
+      await executeCommand('QuickPick.showRecent')
+      return recent
+    }, rendererEntry)
+    const remoteWorkspace = new URL(
+      `remote-server://${new URL(fixture.gateway.pairingUrl).host}`,
+    )
+    remoteWorkspace.pathname = fixture.workspace
+    expect(recent).toContain(remoteWorkspace.href)
+    expect(
+      recent.every(
+        (uri) => !uri.includes('token=') && !uri.includes('ticket='),
+      ),
+    ).toBe(true)
+    if (new URL(workspaceUrl).hash.startsWith('#workspace=')) {
+      // Updated Pages frontends route Open Recent through prepareWorkspace.
+      await page
+        .getByRole('option')
+        .filter({ hasText: 'workspace' })
+        .first()
+        .click()
+      await expect(page.locator('.QuickPick')).toHaveCount(0)
+    } else {
+      // Older exported frontends predate that routing; exercise its connector contract directly.
+      await page.keyboard.press('Escape')
+      await page.evaluate(
+        async ({ entry, uri }) => {
+          const { executeCommand } = await import(entry)
+          const connection = await executeCommand(
+            'ExtensionHost.executeCommand',
+            'remote-server.prepareWorkspace',
+            uri,
+            false,
+          )
+          if (!connection)
+            throw new Error('Saved remote session was not restored')
+          await executeCommand('Workspace.setUri', uri, '/', connection)
+        },
+        { entry: rendererEntry, uri: remoteWorkspace.href },
+      )
+    }
+    await page.keyboard.press('Control+Shift+E')
+    await expect(
+      page.getByRole('tab', { name: 'Explorer', exact: true }),
+    ).toHaveAttribute('aria-selected', 'true')
+    await expect(file).toBeVisible({ timeout: 30_000 })
+    await file.dblclick()
+    await expect(page.locator('.Editor')).toContainText(
+      'Saved from the browser',
+    )
+    expect(unexpectedPairing).toBe(false)
+    await page.unroute('**/auth/pair')
     await page.keyboard.press('Control+Shift+G')
     await expect(page.locator('.SourceControl')).toContainText('hello.txt', {
       timeout: 30_000,
@@ -279,13 +407,35 @@ if (process.argv.includes('--serve')) {
       )
     }
     expect(diagnostics.filter((item) => typeof item === 'string')).toEqual([])
+    await page.locator('.Editor').click()
+    await page.evaluate(async (entry) => {
+      const { executeCommand } = await import(entry)
+      await executeCommand('Main.focus')
+    }, rendererEntry)
     await page.locator('.EditorInput textarea').focus()
-    await page.keyboard.press('Control+End')
+    await expect(page.locator('.EditorInput textarea')).toBeFocused()
     await page.keyboard.type('Unsaved text must survive disconnect')
-    await command('Remote Server: Disconnect')
-    await expect(page.locator('.Editor')).toContainText(
-      'Unsaved text must survive disconnect',
+    const getBufferText = () =>
+      page.evaluate(async (entry) => {
+        const { executeCommand } = await import(entry)
+        return (
+          (await executeCommand('GetActiveEditor.getTextDocument'))?.text || ''
+        )
+      }, rendererEntry)
+    await expect
+      .poll(getBufferText)
+      .toContain('Unsaved text must survive disconnect')
+    const revocation = page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname === '/auth/revoke' &&
+        response.request().method() === 'POST',
     )
+    await command('Remote Server: Disconnect')
+    await revocation
+    await expect(page.locator('.QuickPick')).toHaveCount(0)
+    await expect
+      .poll(getBufferText)
+      .toContain('Unsaved text must survive disconnect')
     for (const pid of [shellPid, languagePid].filter(Boolean)) {
       await expect
         .poll(
@@ -306,7 +456,7 @@ if (process.argv.includes('--serve')) {
       'Disconnected',
     )
     await page.close()
-    page = await browser.newPage({ ignoreHTTPSErrors: true })
+    page = await context.newPage()
     await page.route('**/auth/pair', (route) =>
       route.abort('connectionrefused'),
     )
@@ -325,7 +475,7 @@ if (process.argv.includes('--serve')) {
       'Could not reach the remote server. Check its HTTPS certificate',
     )
     console.log(
-      `PASS ${browserName}: static HTTPS frontend, cross-origin pairing, remote save, terminal, watching, search, Git, ${fixture.injectedLanguage ? 'TypeScript service, ' : ''}and dirty-buffer disconnect`,
+      `PASS ${browserName}: static HTTPS frontend, cross-origin pairing, remote save, reload and Open Recent without pairing again, terminal, watching, search, Git, ${fixture.injectedLanguage ? 'TypeScript service, ' : ''}and dirty-buffer disconnect`,
     )
   } catch (error) {
     console.error(
@@ -344,6 +494,7 @@ if (process.argv.includes('--serve')) {
     )
     throw new Error(redact(error.stack || error.message))
   } finally {
+    await context?.close()
     await browser?.close()
     await fixture.dispose()
   }

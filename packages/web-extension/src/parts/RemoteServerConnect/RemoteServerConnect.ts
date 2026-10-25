@@ -1,5 +1,10 @@
-import { executeCommand, showQuickInput } from '@lvce-editor/api'
+import {
+  executeCommand,
+  showQuickInput,
+  showNotification,
+} from '@lvce-editor/api'
 import * as RemoteServerConnection from '../RemoteServerConnection/RemoteServerConnection.ts'
+import * as Session from '../RemoteServerSession/RemoteServerSession.ts'
 
 export interface PairingResult {
   readonly authentication: 'websocket-ticket'
@@ -189,11 +194,44 @@ export const connectWithPairingUrl = async (
       disposeCommand: 'remote-server.releaseWorkspace',
       workspacePath: result.workspacePath,
     })
+    if (RemoteServerConnection.getOptions() === options) {
+      try {
+        await Session.save(options)
+      } catch {
+        void showNotification(
+          'warning',
+          'Connected, but the session could not be saved. Reloading will require a fresh pairing URL.',
+        ).catch(() => {})
+      }
+    }
   } catch (error) {
     if (RemoteServerConnection.getOptions() === options) {
       if (previous) RemoteServerConnection.set(previous)
       else await RemoteServerConnection.dispose()
     }
     throw error
+  }
+}
+
+export const prepareWorkspace = async (
+  uri: string,
+  promptForPairing = true,
+): Promise<Parameters<SetWorkspaceUri>[2] | undefined> => {
+  if (!RemoteServerConnection.getOptions())
+    await RemoteServerConnection.restore()
+  if (!RemoteServerConnection.getOptions()) {
+    if (promptForPairing) await connect()
+    return undefined
+  }
+  RemoteServerConnection.assertWorkspace(uri)
+  const url = new URL(uri)
+  if (url.search || url.hash)
+    throw new Error(
+      'Remote workspace URI must not contain credentials or parameters',
+    )
+  return {
+    command: RemoteServerConnection.commandId,
+    disposeCommand: 'remote-server.releaseWorkspace',
+    workspacePath: decodeURIComponent(url.pathname),
   }
 }
