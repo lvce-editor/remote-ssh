@@ -175,3 +175,142 @@ void test('an untrusted approval response cannot persist credentials or leave a 
   await rejects(stat(statePath), { code: 'ENOENT' })
   await rejects(stat(statePath + '.lock'), { code: 'ENOENT' })
 })
+
+void test('expired saved enrollment is disabled before a fresh approval is printed', async (context) => {
+  const directory = await mkdtemp(path.join(tmpdir(), 'lvce-cloudflare-'))
+  const statePath = path.join(directory, 'state.json')
+  const backendUrl = 'https://backend.example'
+  const oldId = 'a'.repeat(32)
+  const newId = 'b'.repeat(32)
+  const saved = { backendUrl, id: oldId, secret: 'c'.repeat(43) }
+  await writeFile(statePath, JSON.stringify(saved), { mode: 0o600 })
+  const originalFetch = globalThis.fetch
+  const calls: string[] = []
+  const output: string[] = []
+  const freshPoll = new Error('Fresh approval was polled')
+  globalThis.fetch = async (input, init) => {
+    const pathname = new URL(String(input)).pathname
+    calls.push(pathname)
+    await stat(`${statePath}.lock/owner`)
+    if (pathname === `/cloudflare/requests/${oldId}/poll`)
+      return Response.json({}, { status: 410 })
+    if (pathname === `/cloudflare/requests/${oldId}/disable`) {
+      strictEqual(
+        new Headers(init?.headers).get('Authorization'),
+        `Bearer ${saved.secret}`,
+      )
+      return Response.json({ disabled: true })
+    }
+    if (pathname === '/cloudflare/requests') {
+      strictEqual(JSON.parse(await readFile(statePath, 'utf8')).id, oldId)
+      return Response.json({
+        id: newId,
+        code: 'ABCDEF12',
+        verificationUrl: `${backendUrl}/cloudflare/setup/${newId}`,
+      })
+    }
+    strictEqual(pathname, `/cloudflare/requests/${newId}/poll`)
+    throw freshPoll
+  }
+  context.after(async () => {
+    globalThis.fetch = originalFetch
+    await rm(directory, { recursive: true, force: true })
+  })
+  await rejects(
+    enable({
+      backendUrl,
+      port: 3774,
+      statePath,
+      cloudflaredPath: '/unused',
+      signal: new AbortController().signal,
+      output: (message) => output.push(message),
+    }),
+    (error) => error === freshPoll,
+  )
+  deepStrictEqual(calls, [
+    `/cloudflare/requests/${oldId}/poll`,
+    `/cloudflare/requests/${oldId}/disable`,
+    '/cloudflare/requests',
+    `/cloudflare/requests/${newId}/poll`,
+  ])
+  const replacement = JSON.parse(await readFile(statePath, 'utf8'))
+  strictEqual(replacement.id, newId)
+  strictEqual(replacement.secret === saved.secret, false)
+  strictEqual(
+    output.join('').includes(`${backendUrl}/cloudflare/setup/${newId}`),
+    true,
+  )
+  await rejects(stat(`${statePath}.lock`), { code: 'ENOENT' })
+})
+
+for (const status of [401, 403, 503]) {
+  void test(`saved credentials survive HTTP ${status} without automatic enrollment`, async (context) => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'lvce-cloudflare-'))
+    const statePath = path.join(directory, 'state.json')
+    const backendUrl = 'https://backend.example'
+    const saved = { backendUrl, id: 'a'.repeat(32), secret: 'c'.repeat(43) }
+    const contents = JSON.stringify(saved)
+    await writeFile(statePath, contents, { mode: 0o600 })
+    const originalFetch = globalThis.fetch
+    const calls: string[] = []
+    globalThis.fetch = async (input) => {
+      calls.push(new URL(String(input)).pathname)
+      return Response.json({}, { status })
+    }
+    context.after(async () => {
+      globalThis.fetch = originalFetch
+      await rm(directory, { recursive: true, force: true })
+    })
+    await rejects(
+      enable({
+        backendUrl,
+        port: 3774,
+        statePath,
+        cloudflaredPath: '/unused',
+        signal: new AbortController().signal,
+        output: () => {},
+      }),
+      new RegExp(`HTTP ${status}`),
+    )
+    deepStrictEqual(calls, [`/cloudflare/requests/${saved.id}/poll`])
+    strictEqual(await readFile(statePath, 'utf8'), contents)
+    await rejects(stat(`${statePath}.lock`), { code: 'ENOENT' })
+  })
+}
+
+void test('failed expired-enrollment cleanup preserves the only management credential', async (context) => {
+  const directory = await mkdtemp(path.join(tmpdir(), 'lvce-cloudflare-'))
+  const statePath = path.join(directory, 'state.json')
+  const backendUrl = 'https://backend.example'
+  const saved = { backendUrl, id: 'a'.repeat(32), secret: 'c'.repeat(43) }
+  const contents = JSON.stringify(saved)
+  await writeFile(statePath, contents, { mode: 0o600 })
+  const originalFetch = globalThis.fetch
+  const calls: string[] = []
+  globalThis.fetch = async (input) => {
+    const pathname = new URL(String(input)).pathname
+    calls.push(pathname)
+    return Response.json({}, { status: pathname.endsWith('/poll') ? 410 : 503 })
+  }
+  context.after(async () => {
+    globalThis.fetch = originalFetch
+    await rm(directory, { recursive: true, force: true })
+  })
+  await rejects(
+    enable({
+      backendUrl,
+      port: 3774,
+      statePath,
+      cloudflaredPath: '/unused',
+      signal: new AbortController().signal,
+      output: () => {},
+    }),
+    /HTTP 503/,
+  )
+  deepStrictEqual(calls, [
+    `/cloudflare/requests/${saved.id}/poll`,
+    `/cloudflare/requests/${saved.id}/disable`,
+  ])
+  strictEqual(await readFile(statePath, 'utf8'), contents)
+  await rejects(stat(`${statePath}.lock`), { code: 'ENOENT' })
+})
