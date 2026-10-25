@@ -23,12 +23,13 @@ if (process.argv.includes('--serve')) {
   await fixture.dispose()
 } else {
   let browser
+  let context
   const diagnostics = []
   const expectedSearchFailures = new Map()
   let page
   try {
     const browserName = process.env.LVCE_REMOTE_WEB_BROWSER || 'chromium'
-    browser = await { chromium, firefox, webkit }[browserName].launch({
+    const launchOptions = {
       headless: true,
       ...(browserName === 'firefox' && !fixture.injectedLanguage
         ? { firefoxUserPrefs: { 'network.lna.skip-domains': 'localhost' } }
@@ -36,13 +37,24 @@ if (process.argv.includes('--serve')) {
       args: process.env.LVCE_REMOTE_WEB_DEBUG
         ? ['--remote-debugging-port=39229']
         : [],
-    })
-    page = await browser.newPage({
+    }
+    const contextOptions = {
       ignoreHTTPSErrors: true,
       ...(browserName === 'chromium' && !fixture.injectedLanguage
         ? { permissions: ['local-network-access'] }
         : {}),
-    })
+    }
+    if (browserName === 'webkit') {
+      // WebKit's ephemeral context discards Cache Storage on navigation.
+      context = await webkit.launchPersistentContext(
+        join(fixture.directory, 'browser-profile'),
+        { ...launchOptions, ...contextOptions },
+      )
+    } else {
+      browser = await { chromium, firefox }[browserName].launch(launchOptions)
+      context = await browser.newContext(contextOptions)
+    }
+    page = await context.newPage()
     const socketPaths = []
     page.on('console', (message) => {
       if (message.type() !== 'error') return
@@ -272,25 +284,11 @@ if (process.argv.includes('--serve')) {
       .locator('textarea[name="SearchValue"]')
       .fill('Remote external change')
     await expect(search).toContainText('external.txt', { timeout: 30_000 })
-    await page.keyboard.press('Control+Shift+G')
-    await expect(page.locator('.SourceControl')).toContainText('hello.txt', {
-      timeout: 30_000,
-    })
-    expect(socketPaths).toContain('/websocket/extension-node-process')
-    let languagePid
-    if (fixture.injectedLanguage) {
-      await command('Remote Language Test: Validate TypeScript')
-      await expect(page.locator('.NotificationMessage').last()).toContainText(
-        '2322:',
-        { timeout: 30_000 },
-      )
-      languagePid = Number(
-        (await page.locator('.NotificationMessage').last().textContent()).match(
-          /pid (\d+)/,
-        )[1],
-      )
-    }
-    expect(diagnostics.filter((item) => typeof item === 'string')).toEqual([])
+    await page.keyboard.press('Control+Shift+E')
+    await expect(
+      page.getByRole('tab', { name: 'Explorer', exact: true }),
+    ).toHaveAttribute('aria-selected', 'true')
+    await expect(file).toBeVisible({ timeout: 30_000 })
     // Reload must reuse the valid session instead of consuming the one-time pairing URL again.
     let unexpectedPairing = false
     await page.route('**/auth/pair', (route) => {
@@ -304,10 +302,6 @@ if (process.argv.includes('--serve')) {
     ).toBeVisible({ timeout: 30_000 })
     if (new URL(workspaceUrl).hash.startsWith('#workspace=')) {
       expect(page.url()).toBe(workspaceUrl)
-      await page.keyboard.press('Control+Shift+E')
-      await expect(
-        page.getByRole('tab', { name: 'Explorer', exact: true }),
-      ).toHaveAttribute('aria-selected', 'true')
       await expect(file).toBeVisible({ timeout: 30_000 })
       await page.getByRole('menuitem', { name: 'View', exact: true }).click()
       await page
@@ -374,7 +368,10 @@ if (process.argv.includes('--serve')) {
             'ExtensionHost.executeCommand',
             'remote-server.prepareWorkspace',
             uri,
+            false,
           )
+          if (!connection)
+            throw new Error('Saved remote session was not restored')
           await executeCommand('Workspace.setUri', uri, '/', connection)
         },
         { entry: rendererEntry, uri: remoteWorkspace.href },
@@ -391,6 +388,25 @@ if (process.argv.includes('--serve')) {
     )
     expect(unexpectedPairing).toBe(false)
     await page.unroute('**/auth/pair')
+    await page.keyboard.press('Control+Shift+G')
+    await expect(page.locator('.SourceControl')).toContainText('hello.txt', {
+      timeout: 30_000,
+    })
+    expect(socketPaths).toContain('/websocket/extension-node-process')
+    let languagePid
+    if (fixture.injectedLanguage) {
+      await command('Remote Language Test: Validate TypeScript')
+      await expect(page.locator('.NotificationMessage').last()).toContainText(
+        '2322:',
+        { timeout: 30_000 },
+      )
+      languagePid = Number(
+        (await page.locator('.NotificationMessage').last().textContent()).match(
+          /pid (\d+)/,
+        )[1],
+      )
+    }
+    expect(diagnostics.filter((item) => typeof item === 'string')).toEqual([])
     await page.locator('.Editor').click()
     await page.evaluate(async (entry) => {
       const { executeCommand } = await import(entry)
@@ -440,7 +456,7 @@ if (process.argv.includes('--serve')) {
       'Disconnected',
     )
     await page.close()
-    page = await browser.newPage({ ignoreHTTPSErrors: true })
+    page = await context.newPage()
     await page.route('**/auth/pair', (route) =>
       route.abort('connectionrefused'),
     )
@@ -478,6 +494,7 @@ if (process.argv.includes('--serve')) {
     )
     throw new Error(redact(error.stack || error.message))
   } finally {
+    await context?.close()
     await browser?.close()
     await fixture.dispose()
   }
