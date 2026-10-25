@@ -11,7 +11,7 @@ beforeEach(() => {
 })
 
 test('maps remote server URIs onto backend file URIs', async () => {
-  invoke.mockResolvedValueOnce('aGVsbG8=')
+  invoke.mockResolvedValueOnce('hello')
 
   await expect(
     fileSystem.readFile(
@@ -21,7 +21,7 @@ test('maps remote server URIs onto backend file URIs', async () => {
   expect(invoke).toHaveBeenCalledWith(
     'FileSystem.readFile',
     'file:///home/test/readme.txt',
-    'base64',
+    'utf8',
   )
 
   await fileSystem.writeFile(
@@ -31,8 +31,8 @@ test('maps remote server URIs onto backend file URIs', async () => {
   expect(invoke).toHaveBeenLastCalledWith(
     'FileSystem.writeFile',
     'file:///home/test/new.txt',
-    'aGVsbG8=',
-    'base64',
+    'hello',
+    'utf8',
   )
 })
 
@@ -81,4 +81,18 @@ test('rejects root mutations and cross-server renames', async () => {
     ),
   ).rejects.toThrow(/across remote servers/)
   expect(invoke).not.toHaveBeenCalled()
+})
+
+test('sends Unicode, newlines and NUL as JSON text without base64 expansion', async () => {
+  const content = 'héllo 🌍\n\0'
+  invoke.mockResolvedValueOnce(content)
+  const uri = 'remote-server://remote.example.com/home/test/unicode.txt'
+  await expect(fileSystem.readFile(uri)).resolves.toBe(content)
+  await fileSystem.writeFile(uri, content)
+  expect(invoke).toHaveBeenLastCalledWith(
+    'FileSystem.writeFile',
+    'file:///home/test/unicode.txt',
+    content,
+    'utf8',
+  )
 })

@@ -152,6 +152,13 @@ if (process.argv.includes('--serve')) {
     await page.keyboard.press('Enter')
     const file = page.locator('.TreeItem[aria-label="hello.txt"]')
     await expect(file).toBeVisible({ timeout: 30_000 })
+    await command('Remote Server: Benchmark Connection')
+    await expect(page.locator('.Editor')).toContainText('"roundTripMs"', {
+      timeout: 15_000,
+    })
+    await expect(page.locator('.Editor')).toContainText('"schemaVersion": 1')
+    await expect(page.locator('.Editor')).toContainText('"interrupted": false')
+
     if (process.env.LVCE_REMOTE_WEB_REQUIRE_WORKSPACE_RESTORE === '1') {
       const expected = new URL(
         `remote-server://${new URL(fixture.gateway.pairingUrl).host}`,

@@ -374,3 +374,41 @@ test('leaving a folder rejects a late ticket even when its valid session is reta
   await expect(pending).rejects.toThrow('changed while authorizing')
   expect(RemoteServerConnection.getOptions()).toBeDefined()
 })
+
+test('benchmark deadline closes only its own socket and preserves pending editor reads', async () => {
+  const sockets = mockConnections()
+  const editorRead = RemoteServerConnection.invoke(
+    'FileSystem.readFile',
+    '/file',
+    'utf8',
+  )
+  await waitForWebSocket(sockets)
+  sockets[0].onopen?.({})
+  await flush()
+  const controller = new AbortController()
+  const benchmark = await RemoteServerConnection.createBenchmarkRpc(
+    controller.signal,
+  )
+  sockets[1].onopen?.({})
+  const probe = benchmark.invoke('FileSystem.stat', '/')
+  void probe.catch(() => {})
+  await flush()
+  controller.abort()
+  await expect(probe).rejects.toMatchObject({
+    code: 'E_REMOTE_SERVER_CONNECTION_CLOSED',
+  })
+  expect(sockets[0].close).not.toHaveBeenCalled()
+  const request = JSON.parse(sockets[0].send.mock.calls[0][0])
+  sockets[0].onmessage?.({
+    data: JSON.stringify({ id: request.id, result: 'content' }),
+  })
+  await expect(editorRead).resolves.toBe('content')
+  const nextRead = RemoteServerConnection.invoke('FileSystem.stat', '/file')
+  await flush()
+  expect(sockets).toHaveLength(2)
+  const nextRequest = JSON.parse(sockets[0].send.mock.calls[1][0])
+  sockets[0].onmessage?.({
+    data: JSON.stringify({ id: nextRequest.id, result: 1 }),
+  })
+  await expect(nextRead).resolves.toBe(1)
+})

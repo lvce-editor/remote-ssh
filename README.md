@@ -269,3 +269,23 @@ Cloudflare management state is saved in `$LVCE_REMOTE_SSH_ROOT/run/cloudflare-PO
 Linux ARM64 uses a native server archive (including its terminal module), a separately verified Node runtime, and the ARM64 cloudflared release. Runtime selection follows the remote host architecture, independently of the client machine. Older releases without an ARM64 server entry fail before downloading an incompatible server.
 
 The browser connector keeps its expiring session in extension secret storage so reloading can reuse it. The remote workspace reference in the Pages URL and Open Recent contains no credentials. Switching folders closes active sockets; **Remote Server: Disconnect** revokes the session and removes its saved credential. A gateway restart, revocation or session expiration requires a fresh pairing URL.
+
+### Browser connection benchmark
+
+In a paired remote workspace, run **Remote Server: Benchmark Connection** from the
+command palette. After about five seconds, a read-only JSON report opens locally
+in the editor. It includes first-response time (including authentication and
+connection setup), warm request latency samples, median/p95 latency, jitter,
+completed requests, stalls over 250 ms, and interruption/deadline information.
+The test only reads workspace metadata, uses a separate authenticated socket,
+and closes that socket at its deadline or when the workspace disconnects.
+
+This measures the complete browser-to-filesystem route, including a Cloudflare
+tunnel when used. It cannot attribute latency to Cloudflare separately and does
+not measure bulk download bandwidth. No file contents, endpoint credentials or
+workspace paths are included in the report. Only the latest report is retained
+in memory; copy its JSON before running another benchmark or reloading.
+
+Browser text reads and writes use UTF-8 JSON strings directly. Base64 remains
+appropriate for the desktop SSH provider, which returns binary-safe blobs for
+image previews and other non-text files.

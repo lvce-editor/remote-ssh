@@ -25,7 +25,8 @@
     "onCommand:remote-server.request",
     "onCommand:remote-server.releaseWorkspace",
     "onCommand:remote-server.cloudflare",
-    "onCommand:remote-server.prepareWorkspace"
+    "onCommand:remote-server.prepareWorkspace",
+    "onCommand:remote-server.benchmark"
   ],
   "commands": [
     {
@@ -63,11 +64,18 @@
     {
       "id": "remote-server.prepareWorkspace",
       "internal": true
+    },
+    {
+      "id": "remote-server.benchmark",
+      "label": "Remote Server: Benchmark Connection"
     }
   ],
   "fileSystemProviders": [
     {
       "id": "remote-server"
+    },
+    {
+      "id": "remote-benchmark"
     }
   ],
   "workspaceTransport": {
