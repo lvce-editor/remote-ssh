@@ -2,6 +2,8 @@ import { RemoteServerError } from '../RemoteServerError/RemoteServerError.ts'
 import * as Session from '../RemoteServerSession/RemoteServerSession.ts'
 
 export interface ConnectionOptions {
+  readonly account?: boolean
+  readonly accountId?: string
   readonly expiresAt?: number
   readonly sessionToken: string
   readonly websocketUrl: string
@@ -517,4 +519,22 @@ export const createBenchmarkRpc = async (signal: AbortSignal): Promise<Rpc> => {
   if (!options)
     throw new Error('Connect to a remote server before benchmarking')
   return createRpc(options, generation, 'file-system-process', signal)
+}
+
+export const validateAccountSession = async (): Promise<void> => {
+  const { options } = state
+  if (!options?.account) return
+  const endpoint = new URL('/auth/session', options.websocketUrl)
+  endpoint.protocol = endpoint.protocol === 'wss:' ? 'https:' : 'http:'
+  const response = await fetch(endpoint, {
+    headers: { authorization: `Bearer ${options.sessionToken}` },
+    method: 'POST',
+    redirect: 'error',
+    signal: AbortSignal.timeout(15_000),
+  })
+  if (response.status === 401 && state.options === options) await invalidate()
+  else if (!response.ok)
+    throw new Error(
+      'Remote session unavailable. Check the server and retry connecting from your LVCE account.',
+    )
 }

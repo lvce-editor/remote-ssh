@@ -1,5 +1,7 @@
 import { deepStrictEqual, rejects, strictEqual } from 'node:assert/strict'
+import { createHmac, randomBytes } from 'node:crypto'
 import { once } from 'node:events'
+import { setTimeout as delay } from 'node:timers/promises'
 import { request } from 'node:http'
 import { test } from 'node:test'
 import { WebSocket, WebSocketServer } from 'ws'
@@ -161,6 +163,7 @@ void test('pairs once and proxies an origin-authenticated ticket', async (contex
 const fixture = async (
   context: import('node:test').TestContext,
   lifetime?: number,
+  accountAccess?: { readonly key: string; readonly check: () => Promise<void> },
 ) => {
   const backend = new WebSocketServer({ host: '127.0.0.1', port: 0 })
   await once(backend, 'listening')
@@ -180,6 +183,8 @@ const fixture = async (
     publicUrl: 'https://remote.example.com',
     workspacePath: '/tmp/project',
     sessionTtl: lifetime,
+    accountAccess,
+    accountCheckInterval: 20,
   })
   context.after(async () => {
     await gateway.close()
@@ -429,4 +434,116 @@ void test('forwards a file-sized payload larger than one MiB within the gateway 
   client.send(payload)
   const [data] = await reply
   strictEqual(Buffer.compare(data as Buffer, payload), 0)
+})
+
+void test('pairing another browser preserves the first browser session', async (context) => {
+  const f = await fixture(context)
+  const first = await f.pair()
+  const second = await f.pair(f.gateway.pair())
+  await f.ticket(first, 'file-system-process')
+  await f.ticket(second, 'file-system-process')
+})
+
+const grant = (key: string, fields: object = {}): string => {
+  const payload = Buffer.from(
+    JSON.stringify({
+      audience: 'https://remote.example.com',
+      origin: allowedOrigin,
+      expiresAt: Date.now() + 60_000,
+      nonce: randomBytes(32).toString('base64url'),
+      ...fields,
+    }),
+  ).toString('base64url')
+  return `${payload}.${createHmac('sha256', Buffer.from(key, 'hex')).update(`lvce-browser-access-v1.${payload}`).digest('base64url')}`
+}
+void test('account grants create independent browser sessions, reject replay and revoke only the signing-out browser', async (context) => {
+  const key = '34'.repeat(32)
+  const f = await fixture(context, undefined, { key, check: async () => {} })
+  const firstGrant = grant(key)
+  const first = await post(f.gateway.localPort, '/auth/account', firstGrant)
+  strictEqual(first.status, 200)
+  const firstSession = ((await first.json()) as { sessionToken: string })
+    .sessionToken
+  strictEqual(
+    (await post(f.gateway.localPort, '/auth/account', firstGrant)).status,
+    401,
+  )
+  const second = await post(f.gateway.localPort, '/auth/account', grant(key))
+  strictEqual(second.status, 200)
+  const secondSession = ((await second.json()) as { sessionToken: string })
+    .sessionToken
+  await f.ticket(firstSession, 'file-system-process')
+  await f.ticket(secondSession, 'file-system-process')
+  const pairing = await f.pair()
+  await f.ticket(firstSession, 'file-system-process')
+  await f.ticket(pairing, 'file-system-process')
+  strictEqual(
+    (await post(f.gateway.localPort, '/auth/revoke', firstSession)).status,
+    200,
+  )
+  strictEqual(
+    (await post(f.gateway.localPort, '/auth/session', firstSession)).status,
+    401,
+  )
+  await f.ticket(secondSession, 'file-system-process')
+  for (const invalid of [
+    grant('56'.repeat(32)),
+    grant(key, { audience: 'https://other.example' }),
+    grant(key, { origin: 'https://evil.test' }),
+    grant(key, { expiresAt: Date.now() - 1 }),
+    grant(key, { expiresAt: Date.now() + 120_000 }),
+    'malformed',
+  ])
+    strictEqual(
+      (await post(f.gateway.localPort, '/auth/account', invalid)).status,
+      401,
+    )
+  strictEqual(
+    (
+      await post(
+        f.gateway.localPort,
+        '/auth/account',
+        grant(key),
+        'https://evil.test',
+      )
+    ).status,
+    403,
+  )
+})
+void test('failed account ownership checks close account sockets, reject access, then recover without affecting manual pairing', async (context) => {
+  const key = '34'.repeat(32)
+  let permitted = true
+  const f = await fixture(context, undefined, {
+    key,
+    check: async () => {
+      if (!permitted) throw new Error('revoked or offline')
+    },
+  })
+  const response = await post(f.gateway.localPort, '/auth/account', grant(key))
+  const session = ((await response.json()) as { sessionToken: string })
+    .sessionToken
+  const ticket = await f.ticket(session, 'file-system-process')
+  const socket = new WebSocket(f.socketUrl('file-system-process', ticket), {
+    origin: allowedOrigin,
+  })
+  await once(socket, 'open')
+  const disconnected = once(socket, 'close')
+  permitted = false
+  await disconnected
+  strictEqual(
+    (await post(f.gateway.localPort, '/auth/session', session)).status,
+    401,
+  )
+  strictEqual(
+    (await post(f.gateway.localPort, '/auth/account', grant(key))).status,
+    401,
+  )
+  const manual = await f.pair()
+  await f.ticket(manual, 'file-system-process')
+  permitted = true
+  await delay(40)
+  strictEqual(
+    (await post(f.gateway.localPort, '/auth/account', grant(key))).status,
+    200,
+  )
 })

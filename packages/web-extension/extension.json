@@ -26,7 +26,9 @@
     "onCommand:remote-server.releaseWorkspace",
     "onCommand:remote-server.cloudflare",
     "onCommand:remote-server.prepareWorkspace",
-    "onCommand:remote-server.benchmark"
+    "onCommand:remote-server.benchmark",
+    "onCommand:remote-server.connectAccount",
+    "onCommand:remote-server.disconnectAccount"
   ],
   "commands": [
     {
@@ -68,6 +70,14 @@
     {
       "id": "remote-server.benchmark",
       "label": "Remote Server: Benchmark Connection"
+    },
+    {
+      "id": "remote-server.connectAccount",
+      "label": "Remote Server: Connect from LVCE Account"
+    },
+    {
+      "id": "remote-server.disconnectAccount",
+      "internal": true
     }
   ],
   "fileSystemProviders": [

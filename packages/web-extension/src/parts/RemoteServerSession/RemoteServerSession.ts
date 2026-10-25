@@ -2,6 +2,7 @@ import type { ConnectionOptions } from '../RemoteServerConnection/RemoteServerCo
 
 export interface Storage {
   readonly deleteSecret: (key: string) => Promise<void>
+  readonly getAccountId?: () => Promise<string>
   readonly getSecret: (key: string) => Promise<string | undefined>
   readonly storeSecret: (key: string, value: string) => Promise<void>
 }
@@ -93,7 +94,14 @@ export const load = (): Promise<ConnectionOptions | undefined> => {
     } catch {
       value = undefined
     }
-    if (isValid(value)) return value
+    if (isValid(value)) {
+      if (!value.account) return value
+      if (
+        value.accountId &&
+        value.accountId === (await target?.getAccountId?.())
+      )
+        return value
+    }
     await target?.deleteSecret(key)
     return undefined
   })

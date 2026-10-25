@@ -263,11 +263,11 @@ test('prepares a recently opened folder using the existing session without pairi
   })
 })
 
-test('startup preparation without a saved session does not open a pairing prompt', async () => {
+test('startup preparation without a saved session attempts account authorization without a pairing prompt', async () => {
   await expect(
     RemoteServerConnect.prepareWorkspace(
       'remote-server://remote.example.com/home/test',
       false,
     ),
-  ).resolves.toBeUndefined()
+  ).rejects.toThrow()
 })

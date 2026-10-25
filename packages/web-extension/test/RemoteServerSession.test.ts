@@ -2,7 +2,10 @@ import { afterEach, expect, jest, test } from '@jest/globals'
 import * as Connection from '../src/parts/RemoteServerConnection/RemoteServerConnection.ts'
 import * as Session from '../src/parts/RemoteServerSession/RemoteServerSession.ts'
 
-const options = (): Required<Connection.ConnectionOptions> => ({
+const options = (): Connection.ConnectionOptions & {
+  expiresAt: number
+  workspaceUri: string
+} => ({
   expiresAt: Date.now() + 60_000,
   sessionToken: 'a'.repeat(64),
   websocketUrl: 'wss://remote.example/',
@@ -120,4 +123,28 @@ test('disconnect still revokes remotely when clearing browser storage fails', as
   } finally {
     Session.configure(undefined)
   }
+})
+
+test('saved account sessions require the same signed-in account; manual sessions stay independent', async () => {
+  const values = new Map<string, string>()
+  let accountId = 'owner'
+  Session.configure({
+    deleteSecret: async (key) => {
+      values.delete(key)
+    },
+    getAccountId: async () => accountId,
+    getSecret: async (key) => values.get(key),
+    storeSecret: async (key, value) => {
+      values.set(key, value)
+    },
+  })
+  const saved = { ...options(), account: true, accountId }
+  await Session.save(saved)
+  expect(await Session.load()).toEqual(saved)
+  accountId = 'other'
+  expect(await Session.load()).toBeUndefined()
+  expect(values.size).toBe(0)
+  await Session.save({ ...saved, accountId: 'owner' })
+  accountId = ''
+  expect(await Session.load()).toBeUndefined()
 })

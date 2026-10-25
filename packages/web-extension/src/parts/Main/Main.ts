@@ -26,10 +26,24 @@ export const activate = async (): Promise<void> => {
   state.activated = true
   try {
     await activateExtensionApi()
-    Session.configure({ deleteSecret, getSecret, storeSecret })
+    Session.configure({
+      deleteSecret,
+      getAccountId: () =>
+        executeCommand('Cloudflare.getAccountId') as Promise<string>,
+      getSecret,
+      storeSecret,
+    })
     registerCommand({
       execute: RemoteServerConnect.prepareWorkspace,
       id: 'remote-server.prepareWorkspace',
+    })
+    registerCommand({
+      execute: RemoteServerConnect.connectAccount,
+      id: 'remote-server.connectAccount',
+    })
+    registerCommand({
+      execute: RemoteServerConnect.disconnectAccount,
+      id: 'remote-server.disconnectAccount',
     })
     registerFileSystemProvider(fileSystem)
     registerFileSystemProvider(Benchmark.reportProvider)
