@@ -355,6 +355,8 @@ export const prepareWorkspace = async (
 
 export const disconnectAccount = async (): Promise<void> => {
   state.pairingAttempt++
+  if (!RemoteServerConnection.getOptions())
+    await RemoteServerConnection.restore()
   const options = RemoteServerConnection.getOptions()
   if (options?.account) await RemoteServerConnection.revoke()
   else if (!options) await RemoteServerConnection.dispose()

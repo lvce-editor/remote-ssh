@@ -159,3 +159,37 @@ test('selects among account machines using the quick pick value', async () => {
   )
   expect(Connection.getOptions()?.accountId).toBe('owner')
 })
+
+test('signing out revokes an account session saved before the current runtime was activated', async () => {
+  const values = new Map<string, string>()
+  Session.configure({
+    deleteSecret: async (key) => {
+      values.delete(key)
+    },
+    getAccountId: async () => 'owner',
+    getSecret: async (key) => values.get(key),
+    storeSecret: async (key, value) => {
+      values.set(key, value)
+    },
+  })
+  await Session.save({
+    account: true,
+    accountId: 'owner',
+    expiresAt: Date.now() + 60_000,
+    sessionToken: 'a'.repeat(64),
+    websocketUrl: 'wss://remote.test/',
+    workspaceUri: 'remote-server://remote.test/project',
+  })
+  const fetchSpy = jest
+    .spyOn(globalThis, 'fetch')
+    .mockResolvedValue(Response.json({ ok: true }))
+  await Connect.disconnectAccount()
+  expect(fetchSpy).toHaveBeenCalledWith(
+    new URL('https://remote.test/auth/revoke'),
+    expect.objectContaining({
+      headers: { authorization: `Bearer ${'a'.repeat(64)}` },
+    }),
+  )
+  expect(values.size).toBe(0)
+  expect(Connection.getOptions()).toBeUndefined()
+})
