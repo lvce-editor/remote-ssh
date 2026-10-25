@@ -140,6 +140,15 @@ if (process.argv.includes('--serve')) {
     await page.keyboard.press('Enter')
     const file = page.locator('.TreeItem[aria-label="hello.txt"]')
     await expect(file).toBeVisible({ timeout: 30_000 })
+    if (process.env.LVCE_REMOTE_WEB_REQUIRE_WORKSPACE_RESTORE === '1') {
+      const expected = new URL(
+        `remote-server://${new URL(fixture.gateway.pairingUrl).host}`,
+      )
+      expected.pathname = fixture.workspace
+      expect(
+        new URLSearchParams(new URL(page.url()).hash.slice(1)).get('workspace'),
+      ).toBe(expected.href)
+    }
     const ticketRoute = '**/auth/websocket-ticket?process=search-process'
     await page.route(ticketRoute, (route) => {
       const url = route.request().url()
@@ -161,7 +170,10 @@ if (process.argv.includes('--serve')) {
     await expect(searchError).toBeVisible()
     await page.keyboard.press('Escape')
     await expect(page.locator('.QuickPick')).toHaveCount(0)
-    await page.getByRole('tab', { name: 'Explorer', exact: true }).click()
+    await page.keyboard.press('Control+Shift+E')
+    await expect(
+      page.getByRole('tab', { name: 'Explorer', exact: true }),
+    ).toHaveAttribute('aria-selected', 'true')
     await searchError.getByRole('button').last().click()
     await expect(searchError).toHaveCount(0)
     await page.unroute(ticketRoute)
@@ -292,7 +304,10 @@ if (process.argv.includes('--serve')) {
     ).toBeVisible({ timeout: 30_000 })
     if (new URL(workspaceUrl).hash.startsWith('#workspace=')) {
       expect(page.url()).toBe(workspaceUrl)
-      await page.getByRole('tab', { name: 'Explorer', exact: true }).click()
+      await page.keyboard.press('Control+Shift+E')
+      await expect(
+        page.getByRole('tab', { name: 'Explorer', exact: true }),
+      ).toHaveAttribute('aria-selected', 'true')
       await expect(file).toBeVisible({ timeout: 30_000 })
       await page.getByRole('menuitem', { name: 'View', exact: true }).click()
       await page
@@ -314,7 +329,10 @@ if (process.argv.includes('--serve')) {
           'utf8',
         ),
       ).toContain('reloaded remotely')
-      await page.getByRole('tab', { name: 'Explorer', exact: true }).click()
+      await page.keyboard.press('Control+Shift+E')
+      await expect(
+        page.getByRole('tab', { name: 'Explorer', exact: true }),
+      ).toHaveAttribute('aria-selected', 'true')
       await expect(
         page.locator('.TreeItem[aria-label="reload-terminal-created.txt"]'),
       ).toBeVisible({ timeout: 30_000 })
@@ -362,7 +380,10 @@ if (process.argv.includes('--serve')) {
         { entry: rendererEntry, uri: remoteWorkspace.href },
       )
     }
-    await page.getByRole('tab', { name: 'Explorer', exact: true }).click()
+    await page.keyboard.press('Control+Shift+E')
+    await expect(
+      page.getByRole('tab', { name: 'Explorer', exact: true }),
+    ).toHaveAttribute('aria-selected', 'true')
     await expect(file).toBeVisible({ timeout: 30_000 })
     await file.dblclick()
     await expect(page.locator('.Editor')).toContainText(
