@@ -26,6 +26,15 @@ export const validateBackendUrl = (value: string): string => {
     throw new Error('Backend URL must be an HTTPS origin')
   return url.origin
 }
+class CloudflareRequestError extends Error {
+  readonly status: number
+  constructor(status: number) {
+    super(
+      `Cloudflare setup failed (HTTP ${status}). Check your LVCE tunnel claim and backend configuration; retry with a new approval if it expired.`,
+    )
+    this.status = status
+  }
+}
 const request = async <T>(
   setup: Pick<Setup, 'backendUrl'> & { secret?: string },
   pathname: string,
@@ -45,11 +54,32 @@ const request = async <T>(
     },
     body: JSON.stringify(body),
   })
-  if (!response.ok)
-    throw new Error(
-      `Cloudflare setup failed (HTTP ${response.status}). Check your LVCE tunnel claim and backend configuration; retry with a new approval if it expired.`,
-    )
+  if (!response.ok) throw new CloudflareRequestError(response.status)
   return (await response.json()) as T
+}
+const disableSetup = async (
+  state: Setup,
+  signal?: AbortSignal,
+): Promise<void> => {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      await request(
+        state,
+        `/cloudflare/requests/${state.id}/disable`,
+        {},
+        signal,
+      )
+      break
+    } catch (error) {
+      if (
+        attempt >= 20 ||
+        !(error instanceof CloudflareRequestError) ||
+        error.status !== 409
+      )
+        throw error
+      await delay(500, undefined, { signal })
+    }
+  }
 }
 export const disable = async (statePath: string): Promise<void> => {
   let contents: string
@@ -66,20 +96,7 @@ export const disable = async (statePath: string): Promise<void> => {
     !/^[A-Za-z0-9_-]{43}$/.test(state.secret)
   )
     throw new Error('Invalid saved Cloudflare setup')
-  for (let attempt = 0; ; attempt++) {
-    try {
-      await request(state, `/cloudflare/requests/${state.id}/disable`)
-      break
-    } catch (error) {
-      if (
-        attempt >= 20 ||
-        !(error instanceof Error) ||
-        !error.message.includes('HTTP 409')
-      )
-        throw error
-      await delay(500)
-    }
-  }
+  await disableSetup(state)
   await rm(statePath, { force: true })
   try {
     const owner = Number(await readFile(`${statePath}.lock/owner`, 'utf8'))
@@ -150,22 +167,7 @@ export const enable = async (options: {
     await rm(lock, { recursive: true, force: true })
   }
   try {
-    let state: Setup
-    try {
-      state = JSON.parse(await readFile(options.statePath, 'utf8')) as Setup
-      if (
-        validateBackendUrl(state.backendUrl) !== backendUrl ||
-        !/^[a-f0-9]{32}$/.test(state.id) ||
-        !/^[A-Za-z0-9_-]{43}$/.test(state.secret)
-      )
-        throw new Error(
-          'Invalid saved Cloudflare setup or changed backend; disable the previous tunnel first',
-        )
-      options.output(
-        'Reconnecting the saved tunnel. To enroll another machine, disable this tunnel first.\n',
-      )
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+    const enroll = async (): Promise<Setup> => {
       const credential = randomBytes(32).toString('base64url')
       const setup = await request<{
         id: string
@@ -190,7 +192,7 @@ export const enable = async (options: {
         verification.hash
       )
         throw new Error('Invalid Cloudflare approval URL')
-      state = { backendUrl, id: setup.id, secret: credential }
+      const state = { backendUrl, id: setup.id, secret: credential }
       await writeFile(`${options.statePath}.tmp`, JSON.stringify(state), {
         mode: 0o600,
         flag: 'wx',
@@ -199,8 +201,28 @@ export const enable = async (options: {
       options.output(
         `Open ${verification.href}, claim tunnel access if needed, and confirm code ${setup.code}. Only approve this machine if the codes match.\n`,
       )
+      return state
     }
-    const deadline = Date.now() + 600_000
+    let state: Setup
+    try {
+      state = JSON.parse(await readFile(options.statePath, 'utf8')) as Setup
+      if (
+        validateBackendUrl(state.backendUrl) !== backendUrl ||
+        !/^[a-f0-9]{32}$/.test(state.id) ||
+        !/^[A-Za-z0-9_-]{43}$/.test(state.secret)
+      )
+        throw new Error(
+          'Invalid saved Cloudflare setup or changed backend; disable the previous tunnel first',
+        )
+      options.output(
+        'Reconnecting the saved tunnel. To enroll another machine, disable this tunnel first.\n',
+      )
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+      state = await enroll()
+    }
+    let deadline = Date.now() + 600_000
+    let recovered = false
     let tunnel:
       | {
           status: string
@@ -211,12 +233,31 @@ export const enable = async (options: {
       | undefined
     while (Date.now() < deadline) {
       options.signal.throwIfAborted()
-      tunnel = await request(
-        state,
-        `/cloudflare/requests/${state.id}/poll`,
-        {},
-        options.signal,
-      )
+      try {
+        tunnel = await request(
+          state,
+          `/cloudflare/requests/${state.id}/poll`,
+          {},
+          options.signal,
+        )
+      } catch (error) {
+        if (
+          !(error instanceof CloudflareRequestError) ||
+          error.status !== 410 ||
+          recovered
+        )
+          throw error
+        // Confirm provider cleanup before replacing the only saved management credential.
+        await disableSetup(state, options.signal)
+        options.signal.throwIfAborted()
+        options.output(
+          'The saved approval expired or its tunnel was disabled. Starting a new approval.\n',
+        )
+        state = await enroll()
+        recovered = true
+        deadline = Date.now() + 600_000
+        continue
+      }
       if (tunnel?.status === 'ready') break
       await delay(5000, undefined, { signal: options.signal })
     }
