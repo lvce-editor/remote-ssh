@@ -215,11 +215,12 @@ export const connectWithPairingUrl = async (
 
 export const prepareWorkspace = async (
   uri: string,
+  promptForPairing = true,
 ): Promise<Parameters<SetWorkspaceUri>[2] | undefined> => {
   if (!RemoteServerConnection.getOptions())
     await RemoteServerConnection.restore()
   if (!RemoteServerConnection.getOptions()) {
-    await connect()
+    if (promptForPairing) await connect()
     return undefined
   }
   RemoteServerConnection.assertWorkspace(uri)

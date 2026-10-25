@@ -262,3 +262,12 @@ test('prepares a recently opened folder using the existing session without pairi
     workspacePath: '/home/test/other folder',
   })
 })
+
+test('startup preparation without a saved session does not open a pairing prompt', async () => {
+  await expect(
+    RemoteServerConnect.prepareWorkspace(
+      'remote-server://remote.example.com/home/test',
+      false,
+    ),
+  ).resolves.toBeUndefined()
+})

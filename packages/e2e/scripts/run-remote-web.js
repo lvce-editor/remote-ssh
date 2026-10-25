@@ -294,6 +294,30 @@ if (process.argv.includes('--serve')) {
       expect(page.url()).toBe(workspaceUrl)
       await page.getByRole('tab', { name: 'Explorer', exact: true }).click()
       await expect(file).toBeVisible({ timeout: 30_000 })
+      await page.getByRole('menuitem', { name: 'View', exact: true }).click()
+      await page
+        .getByRole('menuitem', { name: 'Terminal', exact: true })
+        .click()
+      const reloadedTerminal = page.locator('.XtermTerminal')
+      await expect(reloadedTerminal).toBeVisible({ timeout: 30_000 })
+      await reloadedTerminal.click()
+      await reloadedTerminal
+        .locator('.xterm-helper-textarea')
+        .pressSequentially(
+          "pwd; printf 'reloaded remotely\\n' > reload-terminal-created.txt; printf 'RELOAD_OK\\n'\n",
+        )
+      await expect(reloadedTerminal).toContainText('RELOAD_OK')
+      await expect(reloadedTerminal).toContainText(fixture.workspace)
+      expect(
+        await readFile(
+          join(fixture.workspace, 'reload-terminal-created.txt'),
+          'utf8',
+        ),
+      ).toContain('reloaded remotely')
+      await page.getByRole('tab', { name: 'Explorer', exact: true }).click()
+      await expect(
+        page.locator('.TreeItem[aria-label="reload-terminal-created.txt"]'),
+      ).toBeVisible({ timeout: 30_000 })
     }
     const rendererEntry = await page
       .locator('script[type="module"][src]')
@@ -314,12 +338,30 @@ if (process.argv.includes('--serve')) {
         (uri) => !uri.includes('token=') && !uri.includes('ticket='),
       ),
     ).toBe(true)
-    await page
-      .getByRole('option')
-      .filter({ hasText: 'workspace' })
-      .first()
-      .click()
-    await expect(page.locator('.QuickPick')).toHaveCount(0)
+    if (new URL(workspaceUrl).hash.startsWith('#workspace=')) {
+      // Updated Pages frontends route Open Recent through prepareWorkspace.
+      await page
+        .getByRole('option')
+        .filter({ hasText: 'workspace' })
+        .first()
+        .click()
+      await expect(page.locator('.QuickPick')).toHaveCount(0)
+    } else {
+      // Older exported frontends predate that routing; exercise its connector contract directly.
+      await page.keyboard.press('Escape')
+      await page.evaluate(
+        async ({ entry, uri }) => {
+          const { executeCommand } = await import(entry)
+          const connection = await executeCommand(
+            'ExtensionHost.executeCommand',
+            'remote-server.prepareWorkspace',
+            uri,
+          )
+          await executeCommand('Workspace.setUri', uri, '/', connection)
+        },
+        { entry: rendererEntry, uri: remoteWorkspace.href },
+      )
+    }
     await page.getByRole('tab', { name: 'Explorer', exact: true }).click()
     await expect(file).toBeVisible({ timeout: 30_000 })
     await file.dblclick()
@@ -328,9 +370,20 @@ if (process.argv.includes('--serve')) {
     )
     expect(unexpectedPairing).toBe(false)
     await page.unroute('**/auth/pair')
+    await page.locator('.Editor').click()
     await page.locator('.EditorInput textarea').focus()
-    await page.keyboard.press('Control+End')
+    await expect(page.locator('.EditorInput textarea')).toBeFocused()
     await page.keyboard.type('Unsaved text must survive disconnect')
+    const getBufferText = () =>
+      page.evaluate(async (entry) => {
+        const { executeCommand } = await import(entry)
+        return (
+          (await executeCommand('GetActiveEditor.getTextDocument'))?.text || ''
+        )
+      }, rendererEntry)
+    await expect
+      .poll(getBufferText)
+      .toContain('Unsaved text must survive disconnect')
     const revocation = page.waitForResponse(
       (response) =>
         new URL(response.url()).pathname === '/auth/revoke' &&
@@ -339,9 +392,9 @@ if (process.argv.includes('--serve')) {
     await command('Remote Server: Disconnect')
     await revocation
     await expect(page.locator('.QuickPick')).toHaveCount(0)
-    await expect(page.locator('.Editor')).toContainText(
-      'Unsaved text must survive disconnect',
-    )
+    await expect
+      .poll(getBufferText)
+      .toContain('Unsaved text must survive disconnect')
     for (const pid of [shellPid, languagePid].filter(Boolean)) {
       await expect
         .poll(
