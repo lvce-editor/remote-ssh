@@ -30,7 +30,6 @@
     "onFileSystem:remote-ssh",
     "onCommand:remote-ssh.request",
     "onPorts:remote-ssh",
-    "onOutput",
     "onCommand:remote-ssh.cloudflare"
   ],
   "commands": [
