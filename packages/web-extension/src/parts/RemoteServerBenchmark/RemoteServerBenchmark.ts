@@ -105,12 +105,12 @@ export const measure = async (
     durationMs: dependencies.now() - started,
     firstResponseMs,
     roundTripMs: summarize(samplesMs),
-    samplesMs,
     attemptedRequests,
     completedRequests,
     stallsOver250Ms: samplesMs.filter((sample) => sample > 250).length,
     interrupted,
     deadlineExceeded,
+    samplesMs,
     notes: [
       'First response includes authorization, connection setup and remote service startup.',
       'Warm round trips include network, tunnel, gateway and filesystem service time; this does not isolate Cloudflare latency.',
