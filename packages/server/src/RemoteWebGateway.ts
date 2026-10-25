@@ -1,4 +1,4 @@
-import { randomBytes, timingSafeEqual } from 'node:crypto'
+import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
 import {
   createServer,
   type IncomingMessage,
@@ -30,10 +30,16 @@ interface GatewayOptions {
   readonly publicUrl: string
   readonly workspacePath: string
   /** Shorter lifetimes can be used by deterministic integration tests. */
+  readonly accountAccess?: {
+    readonly key: string
+    readonly check: () => Promise<void>
+  }
+  readonly accountCheckInterval?: number
   readonly sessionTtl?: number
 }
 
 interface Session {
+  readonly account: boolean
   readonly expiresAt: number
   readonly clients: Set<WebSocket>
   readonly timer: ReturnType<typeof setTimeout>
@@ -128,6 +134,11 @@ const getTarget = (type: string, parameters: URLSearchParams): string => {
 export const createRemoteWebGateway = async (
   options: GatewayOptions,
 ): Promise<RemoteWebGateway> => {
+  if (
+    options.accountAccess &&
+    !/^[a-f0-9]{64}$/.test(options.accountAccess.key)
+  )
+    throw new TypeError('Invalid account access key')
   const allowedOriginUrl = new URL(options.allowedOrigin)
   validatePublicUrl(allowedOriginUrl, '--allowed-origin')
   const allowedOrigin = allowedOriginUrl.origin
@@ -138,6 +149,10 @@ export const createRemoteWebGateway = async (
   const sessions = new Map<string, Session>()
   const tickets = new Map<string, Ticket>()
   const clients = new Set<WebSocket>()
+  const usedAuthorizations = new Map<string, number>()
+  let accountAvailable = !!options.accountAccess
+  let checkingAccount = false
+  let closed = false
   let pairingToken = ''
   let pairingExpires = 0
   let attempts = 0
@@ -178,6 +193,65 @@ export const createRemoteWebGateway = async (
       return undefined
     }
     return session
+  }
+  const checkAccount = async (): Promise<void> => {
+    if (!options.accountAccess || checkingAccount || closed) return
+    checkingAccount = true
+    try {
+      await options.accountAccess.check()
+      if (!closed) accountAvailable = true
+    } catch {
+      accountAvailable = false
+      for (const [token, session] of sessions)
+        if (session.account) revokeSession(token)
+    } finally {
+      checkingAccount = false
+    }
+  }
+  const accountTimer = options.accountAccess
+    ? setInterval(() => {
+        void checkAccount()
+      }, options.accountCheckInterval ?? 30_000)
+    : undefined
+  accountTimer?.unref()
+  const authorizeAccount = (authorization: string): boolean => {
+    if (
+      !options.accountAccess ||
+      !accountAvailable ||
+      authorization.length > 2048
+    )
+      return false
+    try {
+      const [payload, signature, extra] = authorization.split('.')
+      if (!payload || !signature || extra !== undefined) return false
+      const expected = createHmac(
+        'sha256',
+        Buffer.from(options.accountAccess.key, 'hex'),
+      )
+        .update(`lvce-browser-access-v1.${payload}`)
+        .digest('base64url')
+      if (!tokensEqual(signature, expected)) return false
+      const grant = JSON.parse(Buffer.from(payload, 'base64url').toString())
+      const now = Date.now()
+      for (const [nonce, expires] of usedAuthorizations)
+        if (expires <= now) usedAuthorizations.delete(nonce)
+      if (
+        grant.audience !== publicUrl.origin ||
+        grant.origin !== allowedOrigin ||
+        !Number.isSafeInteger(grant.expiresAt) ||
+        grant.expiresAt <= now ||
+        grant.expiresAt > now + 90_000 ||
+        typeof grant.nonce !== 'string' ||
+        !/^[A-Za-z0-9_-]{43}$/.test(grant.nonce) ||
+        usedAuthorizations.has(grant.nonce) ||
+        usedAuthorizations.size >= 128
+      )
+        return false
+      usedAuthorizations.set(grant.nonce, grant.expiresAt)
+      return true
+    } catch {
+      return false
+    }
   }
   const server = createServer(
     { maxHeaderSize: 8192, requestTimeout: 10_000, headersTimeout: 10_000 },
@@ -223,7 +297,8 @@ export const createRemoteWebGateway = async (
         return
       }
       const token = getBearerToken(request)
-      if (url.pathname === '/auth/pair') {
+      if (url.pathname === '/auth/pair' || url.pathname === '/auth/account') {
+        const account = url.pathname === '/auth/account'
         if (request.headers['x-lvce-protocol'] !== '1') {
           writeJson(response, 426, {
             error:
@@ -232,9 +307,11 @@ export const createRemoteWebGateway = async (
           return
         }
         if (
-          !pairingToken ||
-          Date.now() >= pairingExpires ||
-          !tokensEqual(token, pairingToken)
+          account
+            ? !authorizeAccount(token)
+            : !pairingToken ||
+              Date.now() >= pairingExpires ||
+              !tokensEqual(token, pairingToken)
         ) {
           writeJson(response, 401, {
             error:
@@ -242,15 +319,25 @@ export const createRemoteWebGateway = async (
           })
           return
         }
-        pairingToken = ''
-        // One active browser session per gateway. Pairing again revokes the previous client.
-        for (const previous of sessions.keys()) revokeSession(previous)
+        if (sessions.size >= 16) {
+          writeJson(response, 429, {
+            error:
+              'Too many browser sessions; disconnect an existing browser or run revoke-web',
+          })
+          return
+        }
+        if (!account) pairingToken = ''
         const sessionToken = randomBytes(32).toString('hex')
         const lifetime = options.sessionTtl ?? sessionTtl
         const expiresAt = Date.now() + lifetime
         const timer = setTimeout(() => revokeSession(sessionToken), lifetime)
         timer.unref()
-        sessions.set(sessionToken, { clients: new Set(), expiresAt, timer })
+        sessions.set(sessionToken, {
+          account,
+          clients: new Set(),
+          expiresAt,
+          timer,
+        })
         writeJson(response, 200, {
           authentication: 'websocket-ticket',
           capabilities: [...allowedProcesses],
@@ -267,6 +354,10 @@ export const createRemoteWebGateway = async (
         writeJson(response, 401, {
           error: 'Session expired or revoked; pair again',
         })
+        return
+      }
+      if (url.pathname === '/auth/session') {
+        writeJson(response, 200, { valid: true })
         return
       }
       if (url.pathname === '/auth/revoke') {
@@ -437,6 +528,8 @@ export const createRemoteWebGateway = async (
     throw new Error('Failed to determine remote web gateway port')
   return {
     close: async () => {
+      closed = true
+      clearInterval(accountTimer)
       revoke()
       for (const client of clients) client.terminate()
       await new Promise<void>((resolve, reject) =>

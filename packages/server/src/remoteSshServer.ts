@@ -690,6 +690,7 @@ const runRemoteWebServer = async (
   let closeControl: (() => Promise<void>) | undefined
   try {
     const gateway = await createRemoteWebGateway({
+      accountAccess: tunnel?.accountAccess,
       allowedOrigin,
       backendPort: state.backendPort,
       backendToken: state.backendToken,

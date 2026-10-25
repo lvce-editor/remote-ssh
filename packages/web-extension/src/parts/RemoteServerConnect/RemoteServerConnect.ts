@@ -1,12 +1,14 @@
 import {
   executeCommand,
   showQuickInput,
+  showQuickPick,
   showNotification,
 } from '@lvce-editor/api'
 import * as RemoteServerConnection from '../RemoteServerConnection/RemoteServerConnection.ts'
 import * as Session from '../RemoteServerSession/RemoteServerSession.ts'
 
 export interface PairingResult {
+  readonly accountId?: string
   readonly authentication: 'websocket-ticket'
   readonly capabilities: readonly string[]
   readonly protocolVersion: 1
@@ -67,8 +69,12 @@ const getPairingRequest = (
   return { endpoint, token }
 }
 
-export const pair = async (value: string): Promise<PairingResult> => {
+export const pair = async (
+  value: string,
+  account = false,
+): Promise<PairingResult> => {
   const { endpoint, token } = getPairingRequest(value)
+  if (account) endpoint.pathname = '/auth/account'
   let response: Response
   try {
     response = await fetch(endpoint, {
@@ -86,7 +92,9 @@ export const pair = async (value: string): Promise<PairingResult> => {
   if (!response.ok) {
     let hint = 'Check HTTPS ingress, allowed origin, and server availability.'
     if (response.status === 401)
-      hint = 'Generate a new pairing URL on the remote server.'
+      hint = account
+        ? 'Account authorization expired or was revoked. Connect from your LVCE account again.'
+        : 'Generate a new pairing URL on the remote server.'
     else if (response.status === 426)
       hint = 'Update the remote server and browser connector.'
     throw new Error(
@@ -168,6 +176,7 @@ export const connectWithPairingUrl = async (
   value: string,
   setUri: SetWorkspaceUri = setWorkspaceUri,
   pairServer: (value: string) => Promise<PairingResult> = pair,
+  account = false,
 ): Promise<void> => {
   const attempt = ++state.pairingAttempt
   const generation = RemoteServerConnection.getGeneration()
@@ -182,6 +191,7 @@ export const connectWithPairingUrl = async (
   const workspaceUri = toWorkspaceUri(result.websocketUrl, result.workspacePath)
   const previous = RemoteServerConnection.getOptions()
   const options = {
+    ...(account && { account: true, accountId: result.accountId }),
     expiresAt: Date.parse(result.sessionExpiresAt),
     sessionToken: result.sessionToken,
     websocketUrl: result.websocketUrl,
@@ -213,15 +223,122 @@ export const connectWithPairingUrl = async (
   }
 }
 
+interface AccountMachine {
+  readonly browserAccess: boolean
+  readonly disabled: boolean
+  readonly hostname: string
+}
+export const authorizeAccount = async (
+  hostname: string,
+  execute: typeof executeCommand = executeCommand,
+): Promise<PairingResult> => {
+  const grant = (await execute('Cloudflare.authorizeBrowser', hostname)) as {
+    authorization: string
+    publicUrl: string
+    accountId: string
+  }
+  const endpoint = new URL(grant.publicUrl)
+  if (
+    endpoint.protocol !== 'https:' ||
+    endpoint.host !== hostname ||
+    endpoint.pathname !== '/' ||
+    endpoint.username ||
+    endpoint.password ||
+    endpoint.search ||
+    endpoint.hash ||
+    typeof grant.authorization !== 'string' ||
+    typeof grant.accountId !== 'string' ||
+    !grant.accountId
+  )
+    throw new Error('Invalid account authorization response')
+  endpoint.hash = new URLSearchParams({ token: grant.authorization }).toString()
+  return { ...(await pair(endpoint.href, true)), accountId: grant.accountId }
+}
+export const connectAccount = async (
+  execute: typeof executeCommand = executeCommand,
+  showPick: typeof showQuickPick = showQuickPick,
+  setUri: SetWorkspaceUri = setWorkspaceUri,
+): Promise<void> => {
+  const result = (await execute('Cloudflare.getMachines')) as {
+    machines: AccountMachine[]
+  }
+  const machines = result.machines.filter((machine) => !machine.disabled)
+  if (machines.length === 0)
+    throw new Error(
+      'No remote machines belong to your LVCE account. Run Remote Server: Manage Tunnel Access to approve a machine.',
+    )
+  let selected = machines[0]
+  if (machines.length > 1) {
+    const choice = (await showPick({
+      items: machines.map((machine) => ({
+        description: 'LVCE account',
+        label: machine.hostname,
+        value: machine.hostname,
+      })),
+      placeholder: 'Select a remote machine from your LVCE account',
+    })) as string | undefined
+    selected = machines.find((machine) => machine.hostname === choice)!
+    if (!selected) return
+  }
+  if (!selected.browserAccess)
+    throw new Error(
+      'Update and restart this remote server to enable account connections.',
+    )
+  await connectWithPairingUrl(
+    '',
+    setUri,
+    () => authorizeAccount(selected.hostname, execute),
+    true,
+  )
+}
+
 export const prepareWorkspace = async (
   uri: string,
   promptForPairing = true,
+  authorize: (hostname: string) => Promise<PairingResult> = authorizeAccount,
 ): Promise<Parameters<SetWorkspaceUri>[2] | undefined> => {
   if (!RemoteServerConnection.getOptions())
     await RemoteServerConnection.restore()
+  await RemoteServerConnection.validateAccountSession()
   if (!RemoteServerConnection.getOptions()) {
-    if (promptForPairing) await connect()
-    return undefined
+    const url = new URL(uri)
+    if (
+      url.protocol !== 'remote-server:' ||
+      url.username ||
+      url.password ||
+      url.search ||
+      url.hash
+    )
+      throw new Error('Invalid remote workspace URI')
+    const generation = RemoteServerConnection.getGeneration()
+    const attempt = ++state.pairingAttempt
+    try {
+      const result = await authorize(url.host)
+      if (
+        generation !== RemoteServerConnection.getGeneration() ||
+        attempt !== state.pairingAttempt
+      )
+        throw new Error('Remote workspace changed while authorizing')
+      const options = {
+        account: true,
+        accountId: result.accountId,
+        expiresAt: Date.parse(result.sessionExpiresAt),
+        sessionToken: result.sessionToken,
+        websocketUrl: result.websocketUrl,
+        workspaceUri: toWorkspaceUri(result.websocketUrl, result.workspacePath),
+      }
+      RemoteServerConnection.set(options)
+      await Session.save(options)
+    } catch (error) {
+      if (
+        generation !== RemoteServerConnection.getGeneration() ||
+        attempt !== state.pairingAttempt
+      )
+        throw error
+      if (!promptForPairing) throw error
+      await connect()
+      return undefined
+    }
   }
   RemoteServerConnection.assertWorkspace(uri)
   const url = new URL(uri)
@@ -234,4 +351,13 @@ export const prepareWorkspace = async (
     disposeCommand: 'remote-server.releaseWorkspace',
     workspacePath: decodeURIComponent(url.pathname),
   }
+}
+
+export const disconnectAccount = async (): Promise<void> => {
+  state.pairingAttempt++
+  if (!RemoteServerConnection.getOptions())
+    await RemoteServerConnection.restore()
+  const options = RemoteServerConnection.getOptions()
+  if (options?.account) await RemoteServerConnection.revoke()
+  else if (!options) await RemoteServerConnection.dispose()
 }

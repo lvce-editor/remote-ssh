@@ -1,4 +1,5 @@
 import { spawn, execFileSync } from 'node:child_process'
+import { createHmac, randomBytes } from 'node:crypto'
 import { once } from 'node:events'
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { request as httpRequest } from 'node:http'
@@ -85,6 +86,11 @@ export const createFixture = async () => {
     const sockets = new Set()
     const frontend = createServer(tls, async (request, response) => {
       const pathname = new URL(request.url, 'https://localhost').pathname
+      if (pathname === `${prefix}/account-browser-test.html`) {
+        response.writeHead(200, { 'content-type': 'text/html' })
+        response.end('<!doctype html><title>Account connection test</title>')
+        return
+      }
       if (!pathname.startsWith(`${prefix}/`)) {
         response.writeHead(404)
         response.end()
@@ -287,7 +293,9 @@ export const createFixture = async () => {
       for (const socket of sockets) socket.destroy()
       await close(ingress)
     })
+    const accountKey = randomBytes(32).toString('hex')
     gateway = await createRemoteWebGateway({
+      accountAccess: { key: accountKey, check: async () => {} },
       allowedOrigin: origin,
       backendPort,
       backendToken: 'fixture-backend',
@@ -297,6 +305,17 @@ export const createFixture = async () => {
     })
     cleanups.push(() => gateway.close())
     return {
+      authorizeBrowser: () => {
+        const payload = Buffer.from(
+          JSON.stringify({
+            audience: `https://localhost:${ingressPort}`,
+            origin,
+            expiresAt: Date.now() + 60_000,
+            nonce: randomBytes(32).toString('base64url'),
+          }),
+        ).toString('base64url')
+        return `${payload}.${createHmac('sha256', Buffer.from(accountKey, 'hex')).update(`lvce-browser-access-v1.${payload}`).digest('base64url')}`
+      },
       gateway,
       getBackendLog: () => backendLog,
       diagnostics,

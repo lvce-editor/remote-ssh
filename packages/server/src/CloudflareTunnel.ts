@@ -113,6 +113,10 @@ export const disable = async (statePath: string): Promise<void> => {
   }
 }
 export interface Tunnel {
+  readonly accountAccess?: {
+    readonly key: string
+    readonly check: () => Promise<void>
+  }
   readonly persistent: boolean
   readonly publicUrl: string
   readonly closed: Promise<void>
@@ -272,6 +276,24 @@ export const enable = async (options: {
       throw new Error(
         'Cloudflare approval expired or returned invalid tunnel settings',
       )
+    const browserKey = randomBytes(32).toString('hex')
+    await request(
+      state,
+      `/cloudflare/requests/${state.id}/browser-access/register`,
+      { key: browserKey },
+      options.signal,
+    )
+    const accountAccess = {
+      key: browserKey,
+      check: async (): Promise<void> => {
+        await request(
+          state,
+          `/cloudflare/requests/${state.id}/browser-access/check`,
+          { key: browserKey },
+          options.signal,
+        )
+      },
+    }
     // A dead process can leave an old token file; this process owns the setup lock.
     await rm(tokenPath, { force: true })
     await writeFile(tokenPath, tunnel.tunnelToken, { mode: 0o600, flag: 'wx' })
@@ -294,6 +316,7 @@ export const enable = async (options: {
       )
     })
     return {
+      accountAccess,
       persistent: tunnel.persistent === true,
       publicUrl: `https://${tunnel.hostname}`,
       closed: closed.promise,

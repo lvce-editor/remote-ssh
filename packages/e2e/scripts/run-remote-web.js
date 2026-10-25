@@ -1,6 +1,7 @@
 import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { chromium, firefox, webkit, expect } from '@playwright/test'
+import { verifyAccountBrowser } from './verify-account-browser.js'
 import { createFixture } from './remote-web-fixture.js'
 
 const redact = (value = '') =>
@@ -152,6 +153,7 @@ if (process.argv.includes('--serve')) {
     await page.keyboard.press('Enter')
     const file = page.locator('.TreeItem[aria-label="hello.txt"]')
     await expect(file).toBeVisible({ timeout: 30_000 })
+    await verifyAccountBrowser(context, fixture, contextOptions)
     await command('Remote Server: Benchmark Connection')
     await expect(page.locator('.Editor')).toContainText('"roundTripMs"', {
       timeout: 15_000,

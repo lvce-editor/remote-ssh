@@ -289,3 +289,20 @@ in memory; copy its JSON before running another benchmark or reloading.
 Browser text reads and writes use UTF-8 JSON strings directly. Base64 remains
 appropriate for the desktop SSH provider, which returns binary-safe blobs for
 image previews and other non-text files.
+
+### Connect using your LVCE account
+
+For an approved Cloudflare tunnel, sign in to the same LVCE account in the web
+editor, then run **Remote Server: Connect from LVCE Account**. The machine approval
+is shared across browsers and computers; each browser receives an independent
+session. Opening a saved workspace link in another signed-in browser also works.
+No pairing URL needs to be copied. Existing machines need an updated remote server
+and one restart to register account access; their tunnel and claim are reused.
+
+Browser sessions are saved in local secret storage and checked against the active
+LVCE account on restore. Signing out or switching accounts disconnects that
+browser. Removing the tunnel or releasing its claim denies new access and closes
+account sessions within 45 seconds (30-second checks plus 15-second timeout).
+Backend outages also close account sessions on the next failed check; reconnect
+from your account once connectivity returns. Manual pairing URLs remain available
+for unmanaged servers, and `revoke-web` closes all sessions locally.

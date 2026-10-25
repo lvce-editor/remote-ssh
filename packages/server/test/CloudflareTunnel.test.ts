@@ -139,7 +139,9 @@ void test(
       [
         '/cloudflare/requests',
         `/cloudflare/requests/${id}/poll`,
+        `/cloudflare/requests/${id}/browser-access/register`,
         `/cloudflare/requests/${id}/poll`,
+        `/cloudflare/requests/${id}/browser-access/register`,
         `/cloudflare/requests/${id}/disable`,
       ],
     )
