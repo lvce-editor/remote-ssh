@@ -232,7 +232,7 @@ export const authorizeAccount = async (
   hostname: string,
   execute: typeof executeCommand = executeCommand,
 ): Promise<PairingResult> => {
-  const grant = (await execute('Cloudflare.authorizeBrowser', hostname)) as {
+  const grant = (await execute('remote-server.authorizeBrowser', hostname)) as {
     authorization: string
     publicUrl: string
     accountId: string
@@ -259,7 +259,7 @@ export const connectAccount = async (
   showPick: typeof showQuickPick = showQuickPick,
   setUri: SetWorkspaceUri = setWorkspaceUri,
 ): Promise<void> => {
-  const result = (await execute('Cloudflare.getMachines')) as {
+  const result = (await execute('remote-server.getMachines')) as {
     machines: AccountMachine[]
   }
   const machines = result.machines.filter((machine) => !machine.disabled)

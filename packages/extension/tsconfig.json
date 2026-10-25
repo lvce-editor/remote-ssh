@@ -10,10 +10,10 @@
     "isolatedModules": true,
     "strict": true,
     "forceConsistentCasingInFileNames": true,
-    "rootDir": ".",
+    "rootDir": "..",
     "composite": true,
     "allowImportingTsExtensions": true,
     "noUnusedLocals": true
   },
-  "include": ["src", "test"]
+  "include": ["src", "test", "../shared/src"]
 }

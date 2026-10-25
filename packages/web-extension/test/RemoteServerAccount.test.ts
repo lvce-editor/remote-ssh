@@ -34,13 +34,13 @@ afterEach(async () => {
 })
 const configure = (): void => {
   executeCommand.mockImplementation(async (command) => {
-    if (command === 'Cloudflare.getMachines')
+    if (command === 'remote-server.getMachines')
       return {
         machines: [
           { browserAccess: true, disabled: false, hostname: 'remote.test' },
         ],
       }
-    if (command === 'Cloudflare.authorizeBrowser')
+    if (command === 'remote-server.authorizeBrowser')
       return {
         accountId: 'owner',
         authorization: 'one-use-grant',
@@ -133,7 +133,7 @@ test('a restarted server replaces the expired local session using the account', 
 test('selects among account machines using the quick pick value', async () => {
   configure()
   executeCommand.mockImplementation(async (command, hostname) => {
-    if (command === 'Cloudflare.getMachines')
+    if (command === 'remote-server.getMachines')
       return {
         machines: ['first.test', 'remote.test'].map((host) => ({
           browserAccess: true,
@@ -141,7 +141,7 @@ test('selects among account machines using the quick pick value', async () => {
           hostname: host,
         })),
       }
-    if (command === 'Cloudflare.authorizeBrowser') {
+    if (command === 'remote-server.authorizeBrowser') {
       return {
         accountId: 'owner',
         authorization: 'grant',
@@ -154,7 +154,7 @@ test('selects among account machines using the quick pick value', async () => {
   jest.spyOn(globalThis, 'fetch').mockResolvedValue(Response.json(result))
   await Connect.connectAccount(executeCommand, showQuickPick, setUri)
   expect(executeCommand).toHaveBeenCalledWith(
-    'Cloudflare.authorizeBrowser',
+    'remote-server.authorizeBrowser',
     'remote.test',
   )
   expect(Connection.getOptions()?.accountId).toBe('owner')

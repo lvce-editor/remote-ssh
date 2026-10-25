@@ -1,13 +1,13 @@
 import {
   activate as activateExtensionApi,
   registerCommand,
-  executeCommand,
   registerFileSystemProvider,
   showNotification,
   getSecret,
   storeSecret,
   deleteSecret,
 } from '@lvce-editor/api'
+import * as Cloudflare from '../../../../shared/src/parts/Cloudflare/Cloudflare.ts'
 import * as Benchmark from '../RemoteServerBenchmark/RemoteServerBenchmark.ts'
 import * as RemoteServerConnect from '../RemoteServerConnect/RemoteServerConnect.ts'
 import * as RemoteServerConnection from '../RemoteServerConnection/RemoteServerConnection.ts'
@@ -28,8 +28,7 @@ export const activate = async (): Promise<void> => {
     await activateExtensionApi()
     Session.configure({
       deleteSecret,
-      getAccountId: () =>
-        executeCommand('Cloudflare.getAccountId') as Promise<string>,
+      getAccountId: Cloudflare.client.getAccountId,
       getSecret,
       storeSecret,
     })
@@ -45,11 +44,34 @@ export const activate = async (): Promise<void> => {
       execute: RemoteServerConnect.disconnectAccount,
       id: 'remote-server.disconnectAccount',
     })
+    registerCommand({
+      execute: Cloudflare.client.getMachines,
+      id: 'remote-server.getMachines',
+    })
+    registerCommand({
+      execute: Cloudflare.client.authorizeBrowser,
+      id: 'remote-server.authorizeBrowser',
+    })
+    registerCommand({
+      execute: async () => {
+        Cloudflare.client.suspend()
+        try {
+          await RemoteServerConnect.disconnectAccount()
+        } catch {
+          // Local disposal precedes revocation. Signing out remains available offline.
+        }
+      },
+      id: 'remote-server.accountWillChange',
+    })
+    registerCommand({
+      execute: Cloudflare.client.resume,
+      id: 'remote-server.accountDidChange',
+    })
     registerFileSystemProvider(fileSystem)
     registerFileSystemProvider(Benchmark.reportProvider)
     registerCommand({ execute: Benchmark.run, id: 'remote-server.benchmark' })
     registerCommand({
-      execute: () => executeCommand('Cloudflare.openConnections'),
+      execute: Cloudflare.openConnections,
       id: 'remote-server.cloudflare',
     })
     registerCommand({
