@@ -535,6 +535,46 @@ const openSshOutput = async (page) => {
   return page.locator('.OutputContent')
 }
 
+// Workspace-scoped channels are hidden after a failed local connection. Inspect
+// the owning extension's persisted diagnostics without forcing its UI visible.
+const getSshOutputLogs = async (page) => {
+  const worker = page
+    .workers()
+    .find((candidate) =>
+      candidate
+        .url()
+        .includes('/extensions/builtin.remote-ssh/dist/remoteSshMain.js'),
+    )
+  expect(worker).toBeDefined()
+  return worker.evaluate(async () => {
+    const database = await new Promise((resolve) => {
+      const request = indexedDB.open('lvce-output-channels')
+      request.onupgradeneeded = () => request.transaction.abort()
+      request.onerror = () => resolve(undefined)
+      request.onsuccess = () => resolve(request.result)
+    })
+    if (!database) return ''
+    try {
+      const transaction = database.transaction('chunks', 'readonly')
+      const chunks = await new Promise((resolve, reject) => {
+        const request = transaction.objectStore('chunks').getAll()
+        request.onerror = () => reject(request.error)
+        request.onsuccess = () => resolve(request.result)
+      })
+      return chunks
+        .filter(
+          (chunk) =>
+            chunk.channelId === 'remote-ssh' &&
+            chunk.extensionPath === location.pathname,
+        )
+        .map((chunk) => chunk.text)
+        .join('')
+    } finally {
+      database.close()
+    }
+  })
+}
+
 const verifyHttpPortForwarding = async (
   sshServer,
   remoteArtifacts,
@@ -1081,15 +1121,24 @@ const runRealSshTest = async () => {
         await expect(
           page.locator('.TreeItem[aria-label="file.txt"]'),
         ).toHaveCount(0)
-        const output = await openSshOutput(page)
-        await output.press('Home')
-        await expect(output).toContainText(
-          'ERROR: Failed to connect to SSH target:',
+        const outputTab = page.locator('.PanelTab[name="Output"]')
+        if (!(await outputTab.isVisible()))
+          await page.keyboard.press('Control+Backquote')
+        await outputTab.click()
+        const select = page.locator('[name="output"]')
+        await expect(select.locator('option').first()).toHaveText(
+          'Main Process',
         )
-        await expect(output).toContainText(detail)
-        await output.press('End')
-        await expect(output).toContainText(code)
-        await expect(output).not.toContainText('Connected to SSH workspace')
+        await expect(select.locator('option[value="remote-ssh"]')).toHaveCount(
+          0,
+        )
+        await expect(async () => {
+          const logs = await getSshOutputLogs(page)
+          expect(logs).toContain('ERROR: Failed to connect to SSH target:')
+          expect(logs).toContain(detail)
+          expect(logs).toContain(code)
+          expect(logs).not.toContain('Connected to SSH workspace')
+        }).toPass({ timeout: 5_000 })
         console.log(`PASS error notification and output channel: ${code}`)
       },
       prepared.installationVersion,
