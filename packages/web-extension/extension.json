@@ -28,7 +28,11 @@
     "onCommand:remote-server.prepareWorkspace",
     "onCommand:remote-server.benchmark",
     "onCommand:remote-server.connectAccount",
-    "onCommand:remote-server.disconnectAccount"
+    "onCommand:remote-server.disconnectAccount",
+    "onCommand:remote-server.getMachines",
+    "onCommand:remote-server.authorizeBrowser",
+    "onCommand:remote-server.accountWillChange",
+    "onCommand:remote-server.accountDidChange"
   ],
   "commands": [
     {
@@ -78,6 +82,22 @@
     {
       "id": "remote-server.disconnectAccount",
       "internal": true
+    },
+    {
+      "id": "remote-server.getMachines",
+      "internal": true
+    },
+    {
+      "id": "remote-server.authorizeBrowser",
+      "internal": true
+    },
+    {
+      "id": "remote-server.accountWillChange",
+      "internal": true
+    },
+    {
+      "id": "remote-server.accountDidChange",
+      "internal": true
     }
   ],
   "fileSystemProviders": [
@@ -92,5 +112,9 @@
     "scheme": "remote-server",
     "command": "remote-server.connectToProcess",
     "requestCommand": "remote-server.request"
+  },
+  "accountLifecycle": {
+    "willChange": "remote-server.accountWillChange",
+    "didChange": "remote-server.accountDidChange"
   }
 }

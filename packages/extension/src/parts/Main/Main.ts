@@ -2,10 +2,10 @@ import {
   activate as activateExtensionApi,
   getWorkspaceUri,
   registerCommand,
-  executeCommand,
   registerFileSystemProvider,
   registerPortProvider,
 } from '@lvce-editor/api'
+import * as Cloudflare from '../../../../shared/src/parts/Cloudflare/Cloudflare.ts'
 import * as Connect from '../Connect/Connect.ts'
 import { fileSystem } from '../FileSystem/FileSystem.ts'
 import * as ProcessConnection from '../ProcessConnection/ProcessConnection.ts'
@@ -47,7 +47,7 @@ export const activate = async (): Promise<void> => {
       scheme: 'remote-ssh',
     })
     registerCommand({
-      execute: () => executeCommand('Cloudflare.openConnections'),
+      execute: Cloudflare.openConnections,
       id: 'remote-ssh.cloudflare',
     })
     registerCommand({

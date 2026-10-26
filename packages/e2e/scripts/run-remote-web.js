@@ -129,6 +129,15 @@ if (process.argv.includes('--serve')) {
         }
       })
     })
+    // Configure the real built-in account backend before starting the editor.
+    // This exercises extension -> renderer -> auth worker configuration queries.
+    await page.goto(new URL('account-browser-test.html', fixture.url).href)
+    await page.evaluate((backendUrl) => {
+      localStorage.setItem(
+        'settings',
+        JSON.stringify({ 'layout.backendUrl': backendUrl }),
+      )
+    }, new URL(fixture.url).origin)
     await page.goto(fixture.url)
     await expect(
       page.getByRole('tab', { name: 'Explorer', exact: true }),
@@ -142,6 +151,17 @@ if (process.argv.includes('--serve')) {
         page.getByRole('option', { name: label, exact: true }),
       ).toBeVisible()
       await page.keyboard.press('Enter')
+    }
+    const connectionsPage = page.waitForEvent('popup')
+    await command('Remote Server: Manage Tunnel Access')
+    const connections = await connectionsPage
+    try {
+      await expect(connections).toHaveURL(
+        new URL('/cloudflare', fixture.url).href,
+      )
+      await expect(connections).toHaveTitle('Configured account connections')
+    } finally {
+      await connections.close()
     }
     await command('Remote Server: Connect with Pairing URL')
     const input = page.locator('.QuickPick input')
