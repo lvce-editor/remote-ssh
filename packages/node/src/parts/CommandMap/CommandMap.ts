@@ -1,10 +1,15 @@
 import * as SshConfigHosts from '../SshConfigHosts/SshConfigHosts.ts'
 import * as SshFileSystem from '../SshFileSystem/SshFileSystem.ts'
 import * as SshProcessRegistry from '../SshProcessRegistry/SshProcessRegistry.ts'
+import * as SshTransport from '../SshTransport/SshTransport.ts'
 import * as SshWorkspace from '../SshWorkspace/SshWorkspace.ts'
 
 export const commandMap = {
-  'RemoteSsh.dispose': SshProcessRegistry.dispose,
+  'RemoteSsh.configure': SshTransport.configure,
+  'RemoteSsh.dispose': async (): Promise<void> => {
+    SshTransport.dispose()
+    await SshProcessRegistry.dispose()
+  },
   'SshConfigHosts.get': SshConfigHosts.getSshConfigHosts,
   'SshFileSystem.cancelConnect': SshFileSystem.cancelConnect,
   'SshFileSystem.connect': SshFileSystem.connect,
