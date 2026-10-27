@@ -306,3 +306,23 @@ account sessions within 45 seconds (30-second checks plus 15-second timeout).
 Backend outages also close account sessions on the next failed check; reconnect
 from your account once connectivity returns. Manual pairing URLs remain available
 for unmanaged servers, and `revoke-web` closes all sessions locally.
+
+### Background server updates
+
+`remoteSsh.updateMode` accepts `background` (the default) or `foreground`.
+The setting is read when the extension starts its SSH helper; reload after changing it.
+
+Background mode opens the workspace using an installed compatible server while
+installing the current server into its separate versioned directory. Compatibility
+requires server v0.23.0 or newer, coordinated editor backend 0.125.16 or newer,
+no version newer than the client, protocol 1, and the required backend capabilities.
+Unknown/development versions, missing private runtimes, first installations and
+incompatible servers use the foreground installer.
+
+After the new backend passes a filesystem probe, outstanding helper requests drain
+and new requests and backend sockets switch to it. Existing terminals, watchers,
+extension sessions, CLI clients and port forwards retain their original transport
+for the workspace lifetime; their state is not replayed into another process.
+Disconnecting disposes both transports and cancels any update. A failed installation
+or handover keeps the original server usable. Update results are available through
+`SshFileSystem.getProgress` for diagnostics.

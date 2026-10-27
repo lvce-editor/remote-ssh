@@ -53,6 +53,9 @@ jobs:
       - name: Install OpenSSH server
         if: startsWith(matrix.os, 'ubuntu')
         run: sudo apt-get update && sudo apt-get install --yes openssh-server
+      - name: Check background SSH updates
+        if: startsWith(matrix.os, 'ubuntu')
+        run: npm run e2e:updates --workspace=packages/e2e
       - name: Check SSH process cleanup
         if: startsWith(matrix.os, 'ubuntu')
         run: npm run e2e:cleanup --workspace=packages/e2e

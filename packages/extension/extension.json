@@ -79,6 +79,12 @@
       "enum": ["default", "verbose"],
       "default": "default",
       "description": "Controls the amount of information written to the Remote SSH output channel."
+    },
+    "remoteSsh.updateMode": {
+      "type": "string",
+      "enum": ["foreground", "background"],
+      "default": "background",
+      "description": "Install compatible Remote SSH server updates in the background while keeping existing sessions connected."
     }
   },
   "workspaceTransport": {

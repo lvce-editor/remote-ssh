@@ -1,4 +1,4 @@
-import { createNodeRpc } from '@lvce-editor/api'
+import { createNodeRpc, getPreference } from '@lvce-editor/api'
 
 const rpcId = 'builtin.remote-ssh.node'
 
@@ -10,7 +10,12 @@ const state: {
 
 const getRpc = (): ReturnType<typeof createNodeRpc> => {
   if (!state.rpcPromise) {
-    state.rpcPromise = createNodeRpc({ id: rpcId })
+    state.rpcPromise = (async (): ReturnType<typeof createNodeRpc> => {
+      const rpc = await createNodeRpc({ id: rpcId })
+      const updateMode = await getPreference('remoteSsh.updateMode')
+      await rpc.invoke('RemoteSsh.configure', updateMode)
+      return rpc
+    })()
   }
   return state.rpcPromise
 }

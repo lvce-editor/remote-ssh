@@ -5,8 +5,11 @@ import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import type { RemoteLocation } from '../RemoteSshUri/RemoteSshUri.ts'
+import * as BackendRouter from '../BackendRouter/BackendRouter.ts'
 import * as ConnectionError from '../ConnectionError/ConnectionError.ts'
+import { ConnectionSession } from '../ConnectionSession/ConnectionSession.ts'
 import { RemoteSshError } from '../RemoteSshError/RemoteSshError.ts'
+import * as ServerCompatibility from '../ServerCompatibility/ServerCompatibility.ts'
 import { installServer } from '../ServerInstaller/ServerInstaller.ts'
 import {
   manifest,
@@ -40,7 +43,7 @@ interface OpenMessage extends OpenRequest {
 
 type ServerMessage = OpenMessage | ReadyMessage
 
-interface Connection {
+export interface Connection {
   readonly forwardPort: (
     workspacePath: string,
     remotePort: number,
@@ -84,6 +87,7 @@ const serverStartingMarker = '__LVCE_REMOTE_SSH_STARTING__'
 const remoteLogPath = `${process.env.LVCE_REMOTE_SSH_REMOTE_ROOT || '$HOME/.lvce-server'}/run/server-${manifest.serverVersion}.log`
 
 const installRequiredMarker = '__LVCE_REMOTE_SSH_INSTALL_REQUIRED__'
+const installedServerMarker = '__LVCE_REMOTE_SSH_USING_INSTALLED__'
 const sshExecutable =
   process.platform === 'win32'
     ? 'C:\\Windows\\System32\\OpenSSH\\ssh.exe'
@@ -98,7 +102,11 @@ interface ConnectionSetup {
 
 const connections = new Map<string, ConnectionSetup>()
 const connectionProgress = new Map<string, string>()
-const state = { nextConnectionId: 1 }
+const state = { nextConnectionId: 1, updateMode: 'background' }
+
+export const configure = (updateMode: unknown): void => {
+  state.updateMode = updateMode === 'foreground' ? 'foreground' : 'background'
+}
 
 const setConnectionProgress = (
   location: RemoteLocation,
@@ -129,6 +137,7 @@ const getPortArgs = (location: RemoteLocation): readonly string[] => {
 
 const getRemoteCommand = (
   selectedManifest: ServerManifest = manifest,
+  allowCompatible = false,
 ): string => {
   const configuredRoot = process.env.LVCE_REMOTE_SSH_REMOTE_ROOT
   const root = configuredRoot
@@ -138,7 +147,10 @@ const getRemoteCommand = (
   const backendEnvironment = configuredBackend
     ? ` LVCE_REMOTE_SSH_BACKEND_SCRIPT=${escapeShell(configuredBackend)}`
     : ''
-  return `printf '${connectedMarker}\\n'; root=${root}; runtime="$root/runtimes/${selectedManifest.nodeVersion}/bin/node"; server="$root/servers/${selectedManifest.serverVersion}/lvce-remote-ssh-server.mjs"; if [ -x "$runtime" ] && [ -f "$server" ]; then printf '${serverStartingMarker}\\n'; LVCE_REMOTE_SSH_ROOT="$root" LVCE_REMOTE_SSH_CLIENT_VERSION=${escapeShell(selectedManifest.serverVersion)}${backendEnvironment} exec "$runtime" "$server" connect-or-start; else printf '${installRequiredMarker}\\n'; exit 86; fi`
+  const discovery = allowCompatible
+    ? `if [ -x "$runtime" ] && [ ! -f "$server" ]; then installed="$("$runtime" -e ${escapeShell(ServerCompatibility.discoveryScript)} "$root" ${escapeShell(selectedManifest.serverVersion)} 2>/dev/null)"; if [ -n "$installed" ]; then server="$root/servers/$installed/lvce-remote-ssh-server.mjs"; printf '${installedServerMarker}\\n'; fi; fi; `
+    : ''
+  return `printf '${connectedMarker}\\n'; root=${root}; runtime="$root/runtimes/${selectedManifest.nodeVersion}/bin/node"; server="$root/servers/${selectedManifest.serverVersion}/lvce-remote-ssh-server.mjs"; ${discovery}if [ -x "$runtime" ] && [ -f "$server" ]; then printf '${serverStartingMarker}\\n'; LVCE_REMOTE_SSH_ROOT="$root" LVCE_REMOTE_SSH_CLIENT_VERSION=${escapeShell(selectedManifest.serverVersion)}${backendEnvironment} exec "$runtime" "$server" connect-or-start; else printf '${installRequiredMarker}\\n'; exit 86; fi`
 }
 
 const getControlPath = (location: RemoteLocation): string => {
@@ -155,6 +167,7 @@ const getControlPath = (location: RemoteLocation): string => {
 const getSshArgs = (
   location: RemoteLocation,
   controlPath = getControlPath(location),
+  allowCompatible = false,
 ): readonly string[] => {
   return [
     '-M',
@@ -177,7 +190,7 @@ const getSshArgs = (
     ...getPortArgs(location),
     '--',
     location.target,
-    getRemoteCommand(),
+    getRemoteCommand(manifest, allowCompatible),
   ]
 }
 
@@ -311,6 +324,7 @@ class RemoteConnection implements Connection {
   private buffer = ''
   private closed = false
   private isReady = false
+  private usingInstalled = false
   private stage: ConnectionError.Stage = 'connect'
   private closeError: Error | undefined
   private readonly backendRpcs = new Map<
@@ -343,7 +357,10 @@ class RemoteConnection implements Connection {
       stopping?: Promise<void>
     }
   >()
+  private readonly allowCompatible: boolean
   private workspaceBackend: WorkspaceBackend | undefined
+
+  version = manifest.serverVersion
 
   constructor(
     child: ChildProcessWithoutNullStreams,
@@ -353,7 +370,9 @@ class RemoteConnection implements Connection {
     onClose: () => void,
     onProgress: (message: string) => void,
     signal: AbortSignal,
+    allowCompatible = false,
   ) {
+    this.allowCompatible = allowCompatible
     this.child = child
     this.location = location
     this.controlPath = controlPath
@@ -400,6 +419,11 @@ class RemoteConnection implements Connection {
       return
     }
     this.closed = true
+    if (this.usingInstalled && !this.isReady && !this.signal.aborted) {
+      error = new InstallRequiredError(
+        'Installed Remote SSH server is unavailable',
+      )
+    }
     if (
       !(error instanceof InstallRequiredError) &&
       !(error instanceof RemoteSshError)
@@ -415,10 +439,7 @@ class RemoteConnection implements Connection {
     clearTimeout(this.readyTimeout)
     this.signal.removeEventListener('abort', this.handleAbort)
     this.readyReject(error)
-    for (const rpc of this.backendRpcs.values()) {
-      rpc.dispose()
-    }
-    this.backendRpcs.clear()
+    this.disposeBackendRpcs()
     for (const waiter of this.openRequestWaiters) {
       waiter.reject(error)
     }
@@ -446,8 +467,28 @@ class RemoteConnection implements Connection {
     }
   }
 
+  private isCompatibleVersion(version: string): boolean {
+    return (
+      version === manifest.serverVersion ||
+      (this.allowCompatible &&
+        ServerCompatibility.isCompatible(version, manifest.serverVersion))
+    )
+  }
+
+  private getIncompatibleError(version: string): Error {
+    if (this.allowCompatible && version !== manifest.serverVersion)
+      return new InstallRequiredError(
+        'Installed Remote SSH server is incompatible',
+      )
+    return new Error('Remote SSH server protocol is incompatible')
+  }
+
   private handleLine(line: string): void {
     if (this.closed) {
+      return
+    }
+    if (line === installedServerMarker) {
+      this.usingInstalled = true
       return
     }
     if (line === connectedMarker) {
@@ -498,7 +539,7 @@ class RemoteConnection implements Connection {
     if (
       value.type !== 'ready' ||
       value.protocolVersion !== manifest.protocolVersion ||
-      value.version !== manifest.serverVersion ||
+      !this.isCompatibleVersion(value.version) ||
       value.clientVersion !== manifest.serverVersion ||
       value.platform !== 'linux' ||
       (value.arch !== 'x64' && value.arch !== 'arm64') ||
@@ -510,10 +551,11 @@ class RemoteConnection implements Connection {
       !Number.isSafeInteger(value.backend.port) ||
       typeof value.backend.token !== 'string'
     ) {
-      this.close(new Error('Remote SSH server protocol is incompatible'))
+      this.close(this.getIncompatibleError(value.version))
       this.child.kill()
       return
     }
+    this.version = value.version
     void this.handleReady(value)
   }
 
@@ -551,6 +593,11 @@ class RemoteConnection implements Connection {
       this.close(error instanceof Error ? error : new Error(String(error)))
       this.child.kill()
     }
+  }
+
+  disposeBackendRpcs(): void {
+    for (const rpc of this.backendRpcs.values()) rpc.dispose()
+    this.backendRpcs.clear()
   }
 
   async waitUntilReady(): Promise<void> {
@@ -737,7 +784,8 @@ const spawnConnection = async (
   location: RemoteLocation,
   onClose: () => void,
   signal: AbortSignal,
-): Promise<Connection> => {
+  allowCompatible = false,
+): Promise<RemoteConnection> => {
   if (signal.aborted) {
     throw new Error('Remote SSH workspace setup was cancelled')
   }
@@ -745,7 +793,7 @@ const spawnConnection = async (
   await rm(controlPath, { force: true })
   const localPort = await getAvailablePort()
   const child = SshProcessRegistry.register(
-    spawn(sshExecutable, getSshArgs(location, controlPath), {
+    spawn(sshExecutable, getSshArgs(location, controlPath, allowCompatible), {
       stdio: ['pipe', 'pipe', 'pipe'],
     }),
   )
@@ -757,6 +805,7 @@ const spawnConnection = async (
     onClose,
     (message) => setConnectionProgress(location, message),
     signal,
+    allowCompatible,
   )
   await connection.waitUntilReady()
   return connection
@@ -772,7 +821,55 @@ const createConnection = async (
     'Establishing connection to the Remote SSH host…',
   )
   try {
-    return await spawnConnection(location, onClose, signal)
+    const owner: { session?: ConnectionSession } = {}
+    const initial = await spawnConnection(
+      location,
+      () => {
+        if (owner.session) owner.session.connectionClosed(initial)
+        else onClose()
+      },
+      signal,
+      state.updateMode === 'background',
+    )
+    if (initial.version === manifest.serverVersion) return initial
+    const router = await BackendRouter.create(
+      await initial.getWorkspaceBackend(),
+      signal,
+    )
+    const session = new ConnectionSession(initial, router, signal, onClose)
+    owner.session = session
+    const selectedSession = session
+    void (async (): Promise<void> => {
+      const controller = new AbortController()
+      const updateSignal = AbortSignal.any([signal, controller.signal])
+      try {
+        await installServer(location, manifest, updateSignal)
+        updateSignal.throwIfAborted()
+        const updated = await spawnConnection(
+          location,
+          () => selectedSession.connectionClosed(updated),
+          updateSignal,
+        )
+        // Readiness includes SSH forwarding; also probe the real backend before
+        // publishing it. A failed probe must leave the original route untouched.
+        await updated.invokeBackend('file-system-process', 'FileSystem.stat', [
+          'file:///',
+        ])
+        await selectedSession.switchTo(updated)
+        setConnectionProgress(
+          location,
+          'Remote SSH server updated in the background.',
+        )
+      } catch (error) {
+        controller.abort()
+        if (!signal.aborted)
+          setConnectionProgress(
+            location,
+            `Remote SSH background update failed; continuing with the previous server: ${error instanceof Error ? error.message : String(error)}`,
+          )
+      }
+    })()
+    return session
   } catch (error) {
     if (signal.aborted) {
       connectionProgress.delete(location.identity)
@@ -818,6 +915,7 @@ const getConnection = async (
   if (!setup) {
     const controller = new AbortController()
     const onClose = (): void => {
+      controller.abort()
       connectionProgress.delete(location.identity)
       if (connections.get(location.identity) === setup) {
         connections.delete(location.identity)
@@ -840,6 +938,7 @@ const getConnection = async (
       },
       () => {
         created.settled = true
+        controller.abort()
         if (connections.get(location.identity) === created) {
           connections.delete(location.identity)
         }
@@ -941,13 +1040,16 @@ export const waitForOpenRequest = async (
   return connection.waitForOpenRequest()
 }
 
+export const dispose = (): void => {
+  for (const setup of connections.values()) setup.controller.abort()
+  connections.clear()
+  connectionProgress.clear()
+}
+
 export const _getSshArgs = getSshArgs
 export const _getRemoteCommand = getRemoteCommand
 export const _getInstallProgressMessage = getInstallProgressMessage
 export const _validatePort = validatePort
 export const _resetConnections = (): void => {
-  for (const setup of connections.values()) {
-    setup.controller.abort()
-  }
-  connections.clear()
+  dispose()
 }
