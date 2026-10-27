@@ -1,4 +1,4 @@
-import { strictEqual } from 'node:assert/strict'
+import { rejects, strictEqual } from 'node:assert/strict'
 import { execFile, fork } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { once } from 'node:events'
@@ -78,6 +78,7 @@ if (process.platform === 'linux') {
       'foreground',
       'first-install',
       'incompatible',
+      'unavailable',
       'current',
     ]) {
       const remoteRoot = join(root, mode)
@@ -99,7 +100,9 @@ if (process.platform === 'linux') {
         await mkdir(metadata, { recursive: true })
         await writeFile(
           join(directory, 'lvce-remote-ssh-server.mjs'),
-          await readFile(join(source, 'lvce-remote-ssh-server.mjs')),
+          mode === 'unavailable'
+            ? 'process.exit(1)'
+            : await readFile(join(source, 'lvce-remote-ssh-server.mjs')),
         )
         await writeFile(
           join(directory, 'remote-ssh-installation.json'),
@@ -190,7 +193,22 @@ if (process.platform === 'linux') {
             response.writeHead(500).end('deliberate failure'),
           )
         }
-        if (mode === 'cancel') child.send('cancel')
+        if (mode === 'cancel') {
+          child.send('cancel')
+          const [cancelCode] = await exited
+          strictEqual(cancelCode, 0)
+          await rejects(
+            readFile(
+              join(
+                remoteRoot,
+                'servers',
+                current,
+                'lvce-remote-ssh-server.mjs',
+              ),
+            ),
+            { code: 'ENOENT' },
+          )
+        }
         releaseDownload()
         const [code] = await exited
         strictEqual(code, 0, `${mode}: client failed`)
