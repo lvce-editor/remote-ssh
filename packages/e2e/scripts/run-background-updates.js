@@ -55,6 +55,7 @@ if (process.platform === 'linux') {
     })
     await promisify(execFile)('tar', ['-czf', archive, '-C', source, '.'])
     const bytes = await readFile(archive)
+    const archiveSha256 = createHash('sha256').update(bytes).digest('hex')
     let releaseDownload
     let requested
     let failDownload = false
@@ -127,10 +128,13 @@ if (process.platform === 'linux') {
             LVCE_REMOTE_SSH_NODE_VERSION: 'test-node',
             LVCE_REMOTE_SSH_SERVER_VERSION: current,
             LVCE_REMOTE_SSH_SERVER_ARCHIVE_NAME: 'server.tar.gz',
-            LVCE_REMOTE_SSH_SERVER_ARCHIVE_SHA256: createHash('sha256')
-              .update(bytes)
-              .digest('hex'),
+            LVCE_REMOTE_SSH_SERVER_ARCHIVE_SHA256: archiveSha256,
             LVCE_REMOTE_SSH_SERVER_ARCHIVE_URL: url,
+            // The JS archive uses this runner's native backend. Advertise it
+            // for ARM as well so architecture detection tests the same fixture.
+            LVCE_REMOTE_SSH_ARM64_SERVER_ARCHIVE_NAME: 'server.tar.gz',
+            LVCE_REMOTE_SSH_ARM64_SERVER_ARCHIVE_SHA256: archiveSha256,
+            LVCE_REMOTE_SSH_ARM64_SERVER_ARCHIVE_URL: url,
             LVCE_REMOTE_SSH_BACKEND_SCRIPT: backendScript,
           },
           stdio: ['ignore', 'inherit', 'inherit', 'ipc'],
