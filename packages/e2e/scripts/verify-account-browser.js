@@ -1,19 +1,20 @@
 import { expect } from '@playwright/test'
+import { createFixture } from './remote-web-fixture.js'
 
 // Backend ownership and grant signing are covered by backend-2's integration
 // tests. This exercises the real HTTPS browser exchange and remote filesystem.
-export const verifyAccountBrowser = async (
-  context,
-  fixture,
-  contextOptions,
-) => {
-  const second = await context.browser().newContext(contextOptions)
+export const verifyAccountBrowser = async (context, contextOptions) => {
+  const fixture = await createFixture({ accountOnly: true })
+  let second
   try {
+    expect(fixture.gateway.pairingUrl).toBeUndefined()
+    expect(() => fixture.gateway.pair()).toThrow(/require LVCE account sign-in/)
+    second = await context.browser().newContext(contextOptions)
     const page = await second.newPage()
     await page.goto(new URL('account-browser-test.html', fixture.url).href)
     const result = await page.evaluate(
-      async ({ pairingUrl, authorization, workspace }) => {
-        const origin = new URL(pairingUrl).origin
+      async ({ publicUrl, authorization, workspace }) => {
+        const origin = new URL(publicUrl).origin
         const post = (path, token) =>
           fetch(new URL(path, origin), {
             method: 'POST',
@@ -22,6 +23,12 @@ export const verifyAccountBrowser = async (
               'x-lvce-protocol': '1',
             },
           })
+        const anonymous = await post('/auth/account', '')
+        const pairing = await post('/auth/pair', authorization)
+        const anonymousTicket = await post(
+          '/auth/websocket-ticket?process=file-system-process',
+          '',
+        )
         const response = await post('/auth/account', authorization)
         if (!response.ok)
           throw new Error(`Account exchange failed (${response.status})`)
@@ -68,23 +75,30 @@ export const verifyAccountBrowser = async (
         })
         const revoked = await post('/auth/revoke', session.sessionToken)
         return {
+          anonymousStatus: anonymous.status,
+          pairingStatus: pairing.status,
+          anonymousTicketStatus: anonymousTicket.status,
           text: type,
           replayStatus: replay.status,
           revokedStatus: revoked.status,
         }
       },
       {
-        pairingUrl: fixture.gateway.pairingUrl,
+        publicUrl: fixture.publicUrl,
         authorization: fixture.authorizeBrowser(),
         workspace: fixture.workspace,
       },
     )
     expect(result).toEqual({
+      anonymousStatus: 401,
+      pairingStatus: 403,
+      anonymousTicketStatus: 401,
       text: 'Hello from the remote machine\n',
       replayStatus: 401,
       revokedStatus: 200,
     })
   } finally {
-    await second.close()
+    await second?.close()
+    await fixture.dispose()
   }
 }

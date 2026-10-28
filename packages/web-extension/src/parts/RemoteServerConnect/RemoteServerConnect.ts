@@ -264,6 +264,7 @@ export const connectAccount = async (
   execute: typeof executeCommand = executeCommand,
   showPick: typeof showQuickPick = showQuickPick,
   setUri: SetWorkspaceUri = setWorkspaceUri,
+  getRemoteCliUrl?: () => Promise<string>,
 ): Promise<void> => {
   const result = (await execute('remote-server.getMachines')) as {
     machines: AccountMachine[]
@@ -295,6 +296,7 @@ export const connectAccount = async (
     setUri,
     () => authorizeAccount(selected.hostname, execute),
     true,
+    getRemoteCliUrl,
   )
 }
 

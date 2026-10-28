@@ -254,7 +254,7 @@ After extracting the Node and server release archives as described above, run on
 ./node/bin/node ./server/lvce-remote-ssh-server.mjs --disable-cloudflare-tunnel
 ```
 
-Enable stays in the foreground. Sign in at `https://lvce-editor.dev/cloudflare` and choose **Claim tunnel access** (one slot per user while capacity is available). Open the CLI approval URL, compare the code, approve the machine, then use the printed LVCE pairing URL with **Remote Server: Connect with Pairing URL** in the browser. No Cloudflare account, domain, inbound port, Caddy installation, or browser-machine daemon is required for managed access. Operators configure their Cloudflare account and zone; see [backend deployment setup](https://github.com/lvce-editor/backend-2/blob/main/docs/cloudflare.md).
+Enable stays in the foreground. Sign in at `https://lvce-editor.dev/cloudflare` and choose **Claim tunnel access** (one slot per user while capacity is available). Open the CLI approval URL, compare the code, approve the machine, then sign in to the same LVCE account in the editor and use **Remote Server: Connect from LVCE Account**. Managed tunnels do not issue or accept pairing URLs. No Cloudflare account, domain, inbound port, Caddy installation, or browser-machine daemon is required for managed access. Operators configure their Cloudflare account and zone; see [backend deployment setup](https://github.com/lvce-editor/backend-2/blob/main/docs/cloudflare.md).
 
 The default account backend is `https://lvce-editor.dev`; its Cloudflare connection page is `https://lvce-editor.dev/cloudflare`. Use `https://lvce-editor.dev/cloudflare/callback` as the OAuth redirect URI for this deployment. The old Render subdomain is disabled.
 
@@ -304,8 +304,9 @@ LVCE account on restore. Signing out or switching accounts disconnects that
 browser. Removing the tunnel or releasing its claim denies new access and closes
 account sessions within 45 seconds (30-second checks plus 15-second timeout).
 Backend outages also close account sessions on the next failed check; reconnect
-from your account once connectivity returns. Manual pairing URLs remain available
-for unmanaged servers, and `revoke-web` closes all sessions locally.
+from your account once connectivity returns. Managed tunnels require a grant from the owning LVCE account; manual pairing
+URLs are rejected even when supplied directly to the gateway. Manual pairing
+remains available only for unmanaged servers, and `revoke-web` closes all sessions locally.
 
 ### Background server updates
 

@@ -21,7 +21,7 @@ const close = async (server) => {
   await new Promise((resolve) => server.close(resolve))
 }
 
-export const createFixture = async () => {
+export const createFixture = async ({ accountOnly = false } = {}) => {
   const directory = await mkdtemp(join(tmpdir(), 'lvce-remote-web-'))
   const cleanups = [() => rm(directory, { force: true, recursive: true })]
   const dispose = async () => {
@@ -304,7 +304,9 @@ export const createFixture = async () => {
     })
     const accountKey = randomBytes(32).toString('hex')
     gateway = await createRemoteWebGateway({
-      accountAccess: { key: accountKey, check: async () => {} },
+      accountAccess: accountOnly
+        ? { key: accountKey, check: async () => {} }
+        : undefined,
       allowedOrigin: origin,
       backendPort,
       backendToken: 'fixture-backend',
@@ -326,6 +328,7 @@ export const createFixture = async () => {
         return `${payload}.${createHmac('sha256', Buffer.from(accountKey, 'hex')).update(`lvce-browser-access-v1.${payload}`).digest('base64url')}`
       },
       gateway,
+      publicUrl: `https://localhost:${ingressPort}`,
       getBackendLog: () => backendLog,
       diagnostics,
       directory,

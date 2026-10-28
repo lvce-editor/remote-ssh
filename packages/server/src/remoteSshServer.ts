@@ -711,6 +711,13 @@ const runRemoteWebServer = async (
     process.stdout.write(
       `${JSON.stringify({
         localUrl: `http://127.0.0.1:${gateway.localPort}`,
+        ...(tunnel?.accountAccess
+          ? {
+              message:
+                'Sign in to the owning LVCE account and use Remote Server: Connect from LVCE Account',
+              publicUrl,
+            }
+          : {}),
         pairingUrl: gateway.pairingUrl,
         type: 'remote-web-ready',
       })}\n`,

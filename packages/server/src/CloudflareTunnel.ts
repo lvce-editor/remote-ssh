@@ -113,7 +113,7 @@ export const disable = async (statePath: string): Promise<void> => {
   }
 }
 export interface Tunnel {
-  readonly accountAccess?: {
+  readonly accountAccess: {
     readonly key: string
     readonly check: () => Promise<void>
   }

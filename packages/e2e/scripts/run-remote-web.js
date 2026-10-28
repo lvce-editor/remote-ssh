@@ -69,6 +69,7 @@ if (process.argv.includes('--serve')) {
     }
     page = await context.newPage()
     const socketPaths = []
+    let remoteCliWaiterCount = 0
     page.on('console', (message) => {
       if (message.type() !== 'error') return
       const url = message.location().url
@@ -126,6 +127,9 @@ if (process.argv.includes('--serve')) {
       socket.on('framesent', (event) => {
         try {
           const message = JSON.parse(String(event.payload))
+          if (message.method === 'RemoteCli.waitForOpenRequest') {
+            remoteCliWaiterCount++
+          }
           diagnostics.push({
             process: new URL(socket.url()).pathname,
             method: message.method,
@@ -164,9 +168,10 @@ if (process.argv.includes('--serve')) {
       ).toBeVisible()
       await page.keyboard.press('Enter')
     }
-    const connectionsPage = page.waitForEvent('popup')
-    await command('Remote Server: Manage Tunnel Access')
-    const connections = await connectionsPage
+    const [connections] = await Promise.all([
+      page.waitForEvent('popup'),
+      command('Remote Server: Manage Tunnel Access'),
+    ])
     try {
       await expect(connections).toHaveURL(
         new URL('/cloudflare', fixture.url).href,
@@ -187,6 +192,7 @@ if (process.argv.includes('--serve')) {
     await expect(file).toBeVisible({ timeout: 30_000 })
     await expect.poll(() => socketPaths).toContain('/websocket/shared-process')
     const openRemoteFolder = async (path, expectedFile) => {
+      const previousWaiterCount = remoteCliWaiterCount
       const url = await page.evaluate(async () => {
         const { executeCommand } = await import(
           document.querySelector('script[type="module"][src]').src
@@ -238,6 +244,9 @@ if (process.argv.includes('--serve')) {
           `.TreeItem[aria-label="${expectedFile || `opened-by-cli-${cliFolders.indexOf(path) + 1}.txt`}"]`,
         ),
       ).toBeVisible({ timeout: 30_000 })
+      await expect
+        .poll(() => remoteCliWaiterCount)
+        .toBeGreaterThan(previousWaiterCount)
     }
     await openRemoteFolder(cliFolders[0])
     await openRemoteFolder(cliFolders[1])
@@ -259,7 +268,7 @@ if (process.argv.includes('--serve')) {
       await executeCommand('Workspace.setUri', uri, '/', connection)
     }, originalWorkspace.href)
     await expect(file).toBeVisible({ timeout: 30_000 })
-    await verifyAccountBrowser(context, fixture, contextOptions)
+    await verifyAccountBrowser(context, contextOptions)
     await command('Remote Server: Benchmark Connection')
     await expect(page.locator('.Editor')).toContainText('"roundTripMs"', {
       timeout: 15_000,
