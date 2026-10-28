@@ -1,4 +1,9 @@
-import { deepStrictEqual, rejects, strictEqual } from 'node:assert/strict'
+import {
+  deepStrictEqual,
+  rejects,
+  strictEqual,
+  throws,
+} from 'node:assert/strict'
 import { createHmac, randomBytes } from 'node:crypto'
 import { once } from 'node:events'
 import { setTimeout as delay } from 'node:timers/promises'
@@ -88,7 +93,7 @@ void test('pairs once and proxies an origin-authenticated ticket', async (contex
     workspacePath: '/home/test/project',
   })
   context.after(() => gateway.close())
-  const pairingToken = new URL(gateway.pairingUrl).hash.slice('#token='.length)
+  const pairingToken = new URL(gateway.pairingUrl!).hash.slice('#token='.length)
 
   strictEqual(
     (
@@ -191,7 +196,7 @@ const fixture = async (
     for (const client of backend.clients) client.terminate()
     await new Promise<void>((resolve) => backend.close(() => resolve()))
   })
-  const pair = async (url = gateway.pairingUrl): Promise<string> => {
+  const pair = async (url = gateway.pairingUrl || ''): Promise<string> => {
     const token =
       new URLSearchParams(new URL(url).hash.slice(1)).get('token') || ''
     const response = await post(gateway.localPort, '/auth/pair', token)
@@ -395,7 +400,7 @@ void test('expired pairing secrets and expired tickets cannot authorize a connec
   context.mock.timers.enable({ apis: ['Date'], now: Date.now() })
   const f = await fixture(context)
   const token = new URLSearchParams(
-    new URL(f.gateway.pairingUrl).hash.slice(1),
+    new URL(f.gateway.pairingUrl!).hash.slice(1),
   ).get('token')!
   context.mock.timers.tick(10 * 60 * 1000 + 1)
   strictEqual(
@@ -474,9 +479,6 @@ void test('account grants create independent browser sessions, reject replay and
     .sessionToken
   await f.ticket(firstSession, 'file-system-process')
   await f.ticket(secondSession, 'file-system-process')
-  const pairing = await f.pair()
-  await f.ticket(firstSession, 'file-system-process')
-  await f.ticket(pairing, 'file-system-process')
   strictEqual(
     (await post(f.gateway.localPort, '/auth/revoke', firstSession)).status,
     200,
@@ -510,7 +512,7 @@ void test('account grants create independent browser sessions, reject replay and
     403,
   )
 })
-void test('failed account ownership checks close account sockets, reject access, then recover without affecting manual pairing', async (context) => {
+void test('failed account ownership checks close account sockets, reject access, then recover without allowing manual pairing', async (context) => {
   const key = '34'.repeat(32)
   let permitted = true
   const f = await fixture(context, undefined, {
@@ -538,12 +540,62 @@ void test('failed account ownership checks close account sockets, reject access,
     (await post(f.gateway.localPort, '/auth/account', grant(key))).status,
     401,
   )
-  const manual = await f.pair()
-  await f.ticket(manual, 'file-system-process')
+  strictEqual(
+    (await post(f.gateway.localPort, '/auth/pair', grant(key))).status,
+    403,
+  )
   permitted = true
   await delay(40)
   strictEqual(
     (await post(f.gateway.localPort, '/auth/account', grant(key))).status,
     200,
   )
+})
+
+void test('managed tunnels never issue pairing URLs or accept anonymous or pairing credentials', async (context) => {
+  const key = '34'.repeat(32)
+  const f = await fixture(context, undefined, { key, check: async () => {} })
+  strictEqual(f.gateway.pairingUrl, undefined)
+  throws(() => f.gateway.pair(), /require LVCE account sign-in/)
+  for (const token of ['', randomBytes(32).toString('hex'), grant(key)]) {
+    strictEqual(
+      (await post(f.gateway.localPort, '/auth/pair', token)).status,
+      403,
+    )
+    strictEqual(
+      (await post(f.gateway.localPort, '/auth/session', token)).status,
+      401,
+    )
+    strictEqual(
+      (
+        await post(
+          f.gateway.localPort,
+          '/auth/websocket-ticket?process=file-system-process',
+          token,
+        )
+      ).status,
+      401,
+    )
+  }
+  strictEqual(
+    (await post(f.gateway.localPort, '/auth/account', '')).status,
+    401,
+  )
+  strictEqual(
+    (await post(f.gateway.localPort, '/auth/account', grant('56'.repeat(32))))
+      .status,
+    401,
+  )
+  strictEqual(
+    await expectRejectedWebSocket(
+      f.socketUrl('file-system-process', 'anonymous'),
+      allowedOrigin,
+    ),
+    401,
+  )
+  strictEqual(f.requests.length, 0)
+  const owner = await post(f.gateway.localPort, '/auth/account', grant(key))
+  strictEqual(owner.status, 200)
+  const { sessionToken } = (await owner.json()) as { sessionToken: string }
+  await f.ticket(sessionToken, 'file-system-process')
 })

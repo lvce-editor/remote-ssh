@@ -173,7 +173,7 @@ if (process.argv.includes('--serve')) {
     await page.keyboard.press('Enter')
     const file = page.locator('.TreeItem[aria-label="hello.txt"]')
     await expect(file).toBeVisible({ timeout: 30_000 })
-    await verifyAccountBrowser(context, fixture, contextOptions)
+    await verifyAccountBrowser(context, contextOptions)
     await command('Remote Server: Benchmark Connection')
     await expect(page.locator('.Editor')).toContainText('"roundTripMs"', {
       timeout: 15_000,
