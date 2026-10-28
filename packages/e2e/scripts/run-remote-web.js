@@ -1,6 +1,7 @@
-import { readFile, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { chromium, firefox, webkit, expect } from '@playwright/test'
+import { WebSocket } from 'ws'
 import { verifyAccountBrowser } from './verify-account-browser.js'
 import { createFixture } from './remote-web-fixture.js'
 
@@ -29,6 +30,17 @@ if (process.argv.includes('--serve')) {
   const expectedSearchFailures = new Map()
   let page
   try {
+    const cliFolders = [
+      join(fixture.workspace, 'cli-first'),
+      join(fixture.workspace, 'cli folder with spaces'),
+    ]
+    for (const [index, path] of cliFolders.entries()) {
+      await mkdir(path)
+      await writeFile(
+        join(path, `opened-by-cli-${index + 1}.txt`),
+        'opened remotely',
+      )
+    }
     const browserName = process.env.LVCE_REMOTE_WEB_BROWSER || 'chromium'
     const launchOptions = {
       headless: true,
@@ -57,6 +69,7 @@ if (process.argv.includes('--serve')) {
     }
     page = await context.newPage()
     const socketPaths = []
+    let remoteCliWaiterCount = 0
     page.on('console', (message) => {
       if (message.type() !== 'error') return
       const url = message.location().url
@@ -114,6 +127,9 @@ if (process.argv.includes('--serve')) {
       socket.on('framesent', (event) => {
         try {
           const message = JSON.parse(String(event.payload))
+          if (message.method === 'RemoteCli.waitForOpenRequest') {
+            remoteCliWaiterCount++
+          }
           diagnostics.push({
             process: new URL(socket.url()).pathname,
             method: message.method,
@@ -173,6 +189,84 @@ if (process.argv.includes('--serve')) {
     await input.fill(fixture.gateway.pairingUrl)
     await page.keyboard.press('Enter')
     const file = page.locator('.TreeItem[aria-label="hello.txt"]')
+    await expect(file).toBeVisible({ timeout: 30_000 })
+    await expect.poll(() => socketPaths).toContain('/websocket/shared-process')
+    const openRemoteFolder = async (path, expectedFile) => {
+      const previousWaiterCount = remoteCliWaiterCount
+      const url = await page.evaluate(async () => {
+        const { executeCommand } = await import(
+          document.querySelector('script[type="module"][src]').src
+        )
+        return executeCommand(
+          'ExtensionHost.executeCommand',
+          'remote-server.getWebSocketUrl',
+          'shared-process',
+        )
+      })
+      const socket = new WebSocket(url, {
+        origin: new URL(fixture.url).origin,
+        rejectUnauthorized: false,
+      })
+      await new Promise((resolve, reject) => {
+        socket.once('open', resolve)
+        socket.once('error', reject)
+      })
+      try {
+        const response = new Promise((resolve, reject) => {
+          const timeout = setTimeout(
+            () => reject(new Error('Remote CLI request timed out')),
+            10_000,
+          )
+          socket.on('message', (data) => {
+            if (String(data) === 'ready') return
+            const message = JSON.parse(String(data))
+            if (message.id !== 1) return
+            clearTimeout(timeout)
+            if (message.error) reject(new Error(message.error.message))
+            else resolve(message.result)
+          })
+        })
+        socket.send(
+          JSON.stringify({
+            id: 1,
+            jsonrpc: '2.0',
+            method: 'RemoteCli.open',
+            params: [{ kind: 'folder', path, type: 'open' }],
+          }),
+        )
+        if (!(await response))
+          throw new Error('Remote CLI request was rejected')
+      } finally {
+        socket.close()
+      }
+      await expect(
+        page.locator(
+          `.TreeItem[aria-label="${expectedFile || `opened-by-cli-${cliFolders.indexOf(path) + 1}.txt`}"]`,
+        ),
+      ).toBeVisible({ timeout: 30_000 })
+      await expect
+        .poll(() => remoteCliWaiterCount)
+        .toBeGreaterThan(previousWaiterCount)
+    }
+    await openRemoteFolder(cliFolders[0])
+    await openRemoteFolder(cliFolders[1])
+    await openRemoteFolder(cliFolders[0])
+    const originalWorkspace = new URL(
+      `remote-server://${new URL(fixture.gateway.pairingUrl).host}`,
+    )
+    originalWorkspace.pathname = fixture.workspace
+    await page.evaluate(async (uri) => {
+      const { executeCommand } = await import(
+        document.querySelector('script[type="module"][src]').src
+      )
+      const connection = await executeCommand(
+        'ExtensionHost.executeCommand',
+        'remote-server.prepareWorkspace',
+        uri,
+        false,
+      )
+      await executeCommand('Workspace.setUri', uri, '/', connection)
+    }, originalWorkspace.href)
     await expect(file).toBeVisible({ timeout: 30_000 })
     await verifyAccountBrowser(context, contextOptions)
     await command('Remote Server: Benchmark Connection')

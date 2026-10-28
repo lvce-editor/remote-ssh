@@ -36,6 +36,7 @@ export type SetWorkspaceUri = (
     readonly command: string
     readonly workspacePath: string
     readonly disposeCommand: string
+    readonly remoteCliUrl: string
   },
 ) => Promise<void>
 
@@ -182,6 +183,7 @@ export const connect = async (
   showInput: ShowQuickInput = showQuickInput,
   setUri: SetWorkspaceUri = setWorkspaceUri,
   pairServer: (value: string) => Promise<PairingResult> = pair,
+  getRemoteCliUrl?: () => Promise<string>,
 ): Promise<void> => {
   const value = await showInput({
     placeholder: 'Paste the HTTPS pairing URL from the remote LVCE server',
@@ -189,7 +191,7 @@ export const connect = async (
   if (!value) {
     return
   }
-  await connectWithPairingUrl(value, setUri, pairServer)
+  await connectWithPairingUrl(value, setUri, pairServer, false, getRemoteCliUrl)
 }
 
 const state = { pairingAttempt: 0 }
@@ -199,6 +201,8 @@ export const connectWithPairingUrl = async (
   setUri: SetWorkspaceUri = setWorkspaceUri,
   pairServer: (value: string) => Promise<PairingResult> = pair,
   account = false,
+  getRemoteCliUrl: () => Promise<string> = () =>
+    RemoteServerConnection.getWebSocketUrl('shared-process'),
 ): Promise<void> => {
   const attempt = ++state.pairingAttempt
   const generation = RemoteServerConnection.getGeneration()
@@ -215,9 +219,11 @@ export const connectWithPairingUrl = async (
   const options = getConnectionOptions(result, workspaceUri, account)
   RemoteServerConnection.set(options)
   try {
+    const remoteCliUrl = await getRemoteCliUrl()
     await setUri(workspaceUri, '/', {
       command: RemoteServerConnection.commandId,
       disposeCommand: 'remote-server.releaseWorkspace',
+      remoteCliUrl,
       workspacePath: result.workspacePath,
     })
     if (RemoteServerConnection.getOptions() === options) {
@@ -274,6 +280,7 @@ export const connectAccount = async (
   execute: typeof executeCommand = executeCommand,
   showPick: typeof showQuickPick = showQuickPick,
   setUri: SetWorkspaceUri = setWorkspaceUri,
+  getRemoteCliUrl?: () => Promise<string>,
 ): Promise<void> => {
   const result = (await execute('remote-server.getMachines')) as {
     machines: AccountMachine[]
@@ -305,6 +312,7 @@ export const connectAccount = async (
     setUri,
     () => authorizeAccount(selected.hostname, execute),
     true,
+    getRemoteCliUrl,
   )
 }
 
@@ -312,6 +320,8 @@ export const prepareWorkspace = async (
   uri: string,
   promptForPairing = true,
   authorize: (hostname: string) => Promise<PairingResult> = authorizeAccount,
+  getRemoteCliUrl: () => Promise<string> = () =>
+    RemoteServerConnection.getWebSocketUrl('shared-process'),
 ): Promise<Parameters<SetWorkspaceUri>[2] | undefined> => {
   if (!RemoteServerConnection.getOptions())
     await RemoteServerConnection.restore()
@@ -362,6 +372,7 @@ export const prepareWorkspace = async (
   return {
     command: RemoteServerConnection.commandId,
     disposeCommand: 'remote-server.releaseWorkspace',
+    remoteCliUrl: await getRemoteCliUrl(),
     workspacePath: decodeURIComponent(url.pathname),
   }
 }

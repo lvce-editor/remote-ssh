@@ -26,6 +26,8 @@ const result = {
   websocketUrl: 'wss://remote.test/',
   workspacePath: '/project',
 }
+const remoteCliUrl = 'wss://remote.test/websocket/shared-process?ticket=cli'
+const getRemoteCliUrl = async (): Promise<string> => remoteCliUrl
 afterEach(async () => {
   jest.restoreAllMocks()
   jest.resetAllMocks()
@@ -55,7 +57,12 @@ test('a fresh browser connects from its LVCE account with no pairing input', asy
   const fetchSpy = jest
     .spyOn(globalThis, 'fetch')
     .mockResolvedValue(Response.json(result))
-  await Connect.connectAccount(executeCommand, showQuickPick, setUri)
+  await Connect.connectAccount(
+    executeCommand,
+    showQuickPick,
+    setUri,
+    getRemoteCliUrl,
+  )
   expect(showQuickPick).not.toHaveBeenCalled()
   expect(fetchSpy).toHaveBeenCalledWith(
     new URL('https://remote.test/auth/account'),
@@ -75,7 +82,7 @@ test('a fresh browser connects from its LVCE account with no pairing input', asy
   expect(setUri).toHaveBeenCalledWith(
     'remote-server://remote.test/project',
     '/',
-    expect.objectContaining({ workspacePath: '/project' }),
+    expect.objectContaining({ remoteCliUrl, workspacePath: '/project' }),
   )
 })
 test('opening a workspace link in a new browser authorizes through its account without changing the workspace recursively', async () => {
@@ -86,6 +93,7 @@ test('opening a workspace link in a new browser authorizes through its account w
       'remote-server://remote.test/project',
       false,
       (host) => Connect.authorizeAccount(host, executeCommand),
+      getRemoteCliUrl,
     ),
   ).resolves.toMatchObject({ workspacePath: '/project' })
   expect(setUri).not.toHaveBeenCalled()
@@ -125,6 +133,7 @@ test('a restarted server replaces the expired local session using the account', 
       'remote-server://remote.test/project',
       false,
       (host) => Connect.authorizeAccount(host, executeCommand),
+      getRemoteCliUrl,
     ),
   ).resolves.toMatchObject({ workspacePath: '/project' })
   expect(Connection.getOptions()?.sessionToken).toBe(result.sessionToken)
@@ -152,7 +161,12 @@ test('selects among account machines using the quick pick value', async () => {
   })
   showQuickPick.mockResolvedValue('remote.test')
   jest.spyOn(globalThis, 'fetch').mockResolvedValue(Response.json(result))
-  await Connect.connectAccount(executeCommand, showQuickPick, setUri)
+  await Connect.connectAccount(
+    executeCommand,
+    showQuickPick,
+    setUri,
+    getRemoteCliUrl,
+  )
   expect(executeCommand).toHaveBeenCalledWith(
     'remote-server.authorizeBrowser',
     'remote.test',

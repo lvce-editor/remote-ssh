@@ -19,6 +19,9 @@ const pairingResult = {
 }
 
 test('opens the paired remote workspace', async () => {
+  const remoteCliUrl =
+    'wss://remote.example.com/websocket/shared-process?ticket=cli'
+  const getRemoteCliUrl = jest.fn(async () => remoteCliUrl)
   const showInput = jest.fn<RemoteServerConnect.ShowQuickInput>(
     async () => 'https://remote.example.com/#token=pair',
   )
@@ -27,7 +30,12 @@ test('opens the paired remote workspace', async () => {
     async () => pairingResult,
   )
 
-  await RemoteServerConnect.connect(showInput, setUri, pairServer)
+  await RemoteServerConnect.connect(
+    showInput,
+    setUri,
+    pairServer,
+    getRemoteCliUrl,
+  )
 
   expect(pairServer).toHaveBeenCalledWith(
     'https://remote.example.com/#token=pair',
@@ -38,12 +46,17 @@ test('opens the paired remote workspace', async () => {
     {
       command: 'remote-server.getWebSocketUrl',
       disposeCommand: 'remote-server.releaseWorkspace',
+      remoteCliUrl,
       workspacePath: '/home/test/project with spaces',
     },
   )
+  expect(getRemoteCliUrl).toHaveBeenCalledTimes(1)
 })
 
 test('opens a supplied pairing URL without prompting', async () => {
+  const remoteCliUrl =
+    'wss://remote.example.com/websocket/shared-process?ticket=cli'
+  const getRemoteCliUrl = jest.fn(async () => remoteCliUrl)
   const setUri = jest.fn<RemoteServerConnect.SetWorkspaceUri>(async () => {})
   const pairServer = jest.fn<(value: string) => Promise<typeof pairingResult>>(
     async () => pairingResult,
@@ -53,6 +66,8 @@ test('opens a supplied pairing URL without prompting', async () => {
     'https://remote.example.com/#token=pair',
     setUri,
     pairServer,
+    false,
+    getRemoteCliUrl,
   )
 
   expect(pairServer).toHaveBeenCalledWith(
@@ -64,9 +79,11 @@ test('opens a supplied pairing URL without prompting', async () => {
     {
       command: 'remote-server.getWebSocketUrl',
       disposeCommand: 'remote-server.releaseWorkspace',
+      remoteCliUrl,
       workspacePath: '/home/test/project with spaces',
     },
   )
+  expect(getRemoteCliUrl).toHaveBeenCalledTimes(1)
 })
 
 test('exchanges only the URL fragment pairing token', async () => {
@@ -196,6 +213,9 @@ test('restores the prior connection when workspace switching is cancelled', asyn
       'https://remote.example.com/#token=pair',
       setUri,
       async () => pairingResult,
+      false,
+      async () =>
+        'wss://remote.example.com/websocket/shared-process?ticket=cli',
     ),
   ).rejects.toThrow('cancelled')
   expect(connection.getOptions()).toBe(previous)
@@ -234,6 +254,8 @@ test('a cancelled old workspace switch cannot restore its session over a newer c
     'https://remote.example.com/#token=pair',
     () => promise,
     async () => pairingResult,
+    false,
+    async () => 'wss://remote.example.com/websocket/shared-process?ticket=cli',
   )
   void pending.catch(() => {})
   await Promise.resolve()
@@ -247,6 +269,8 @@ test('a cancelled old workspace switch cannot restore its session over a newer c
 test('prepares a recently opened folder using the existing session without pairing again', async () => {
   const connection =
     await import('../src/parts/RemoteServerConnection/RemoteServerConnection.ts')
+  const remoteCliUrl =
+    'wss://remote.example.com/websocket/shared-process?ticket=cli'
   connection.set({
     sessionToken: 'session-secret',
     websocketUrl: 'wss://remote.example.com/',
@@ -255,10 +279,14 @@ test('prepares a recently opened folder using the existing session without pairi
   await expect(
     RemoteServerConnect.prepareWorkspace(
       'remote-server://remote.example.com/home/test/other%20folder',
+      true,
+      undefined,
+      async () => remoteCliUrl,
     ),
   ).resolves.toEqual({
     command: 'remote-server.getWebSocketUrl',
     disposeCommand: 'remote-server.releaseWorkspace',
+    remoteCliUrl,
     workspacePath: '/home/test/other folder',
   })
 })
