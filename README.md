@@ -189,11 +189,13 @@ Generate a new link or revoke browser access over an existing SSH session:
 These commands use an owner-only Unix socket in the server's private runtime
 directory. New links invalidate earlier unused links; redeeming a new link
 revokes the previous browser session. Pairing links expire after ten minutes;
-sessions expire after 24 hours; process-specific tickets expire after one
-minute and work once. Revocation and expiry close live connections, including
-remote extension processes. Restarting the gateway forgets all credentials.
-Reloading reuses the valid session saved in extension secret storage. Pair again
-after session expiration, revocation, or a gateway restart.
+process-specific tickets expire after one minute and work once. Revocation and
+expiry close live connections, including remote extension processes. Manual
+pairing sessions expire after 24 hours; account-authorized tunnel sessions last
+until tunnel access is revoked.
+Restarting the gateway forgets all credentials. Reloading reuses the session
+saved in extension secret storage. Pair again after manual session expiration,
+revocation, or a gateway restart.
 If the backend stops, the gateway exits too. Start `serve-web` again and use its
 fresh pairing link.
 

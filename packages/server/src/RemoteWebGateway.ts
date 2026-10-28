@@ -32,7 +32,7 @@ interface GatewayOptions {
   /** Shorter lifetimes can be used by deterministic integration tests. */
   readonly accountAccess?: {
     readonly key: string
-    readonly check: () => Promise<void>
+    readonly check: () => Promise<boolean>
   }
   readonly accountCheckInterval?: number
   readonly sessionTtl?: number
@@ -40,9 +40,9 @@ interface GatewayOptions {
 
 interface Session {
   readonly account: boolean
-  readonly expiresAt: number
+  readonly expiresAt: number | undefined
   readonly clients: Set<WebSocket>
-  readonly timer: ReturnType<typeof setTimeout>
+  readonly timer: ReturnType<typeof setTimeout> | undefined
 }
 
 interface Ticket {
@@ -192,7 +192,7 @@ export const createRemoteWebGateway = async (
   }
   const getSession = (token: string): Session | undefined => {
     const session = sessions.get(token)
-    if (session && Date.now() >= session.expiresAt) {
+    if (session?.expiresAt !== undefined && Date.now() >= session.expiresAt) {
       revokeSession(token)
       return undefined
     }
@@ -202,12 +202,14 @@ export const createRemoteWebGateway = async (
     if (!options.accountAccess || checkingAccount || closed) return
     checkingAccount = true
     try {
-      await options.accountAccess.check()
-      if (!closed) accountAvailable = true
+      const available = await options.accountAccess.check()
+      if (!closed) accountAvailable = available
+      if (!available) {
+        for (const [token, session] of sessions)
+          if (session.account) revokeSession(token)
+      }
     } catch {
       accountAvailable = false
-      for (const [token, session] of sessions)
-        if (session.account) revokeSession(token)
     } finally {
       checkingAccount = false
     }
@@ -338,10 +340,16 @@ export const createRemoteWebGateway = async (
         }
         if (!account) pairingToken = ''
         const sessionToken = randomBytes(32).toString('hex')
-        const lifetime = options.sessionTtl ?? sessionTtl
-        const expiresAt = Date.now() + lifetime
-        const timer = setTimeout(() => revokeSession(sessionToken), lifetime)
-        timer.unref()
+        const lifetime = account
+          ? undefined
+          : (options.sessionTtl ?? sessionTtl)
+        const expiresAt =
+          lifetime === undefined ? undefined : Date.now() + lifetime
+        const timer =
+          lifetime !== undefined
+            ? setTimeout(() => revokeSession(sessionToken), lifetime)
+            : undefined
+        timer?.unref()
         sessions.set(sessionToken, {
           account,
           clients: new Set(),
@@ -352,7 +360,8 @@ export const createRemoteWebGateway = async (
           authentication: 'websocket-ticket',
           capabilities: [...allowedProcesses],
           protocolVersion: 1,
-          sessionExpiresAt: new Date(expiresAt).toISOString(),
+          sessionExpiresAt:
+            expiresAt === undefined ? null : new Date(expiresAt).toISOString(),
           sessionToken,
           websocketUrl: websocketUrl.href,
           workspacePath: options.workspacePath,
@@ -394,7 +403,10 @@ export const createRemoteWebGateway = async (
           return
         }
         const ticket = randomBytes(32).toString('hex')
-        const expiresAt = Math.min(Date.now() + ticketTtl, session.expiresAt)
+        const expiresAt = Math.min(
+          Date.now() + ticketTtl,
+          session.expiresAt ?? Number.POSITIVE_INFINITY,
+        )
         tickets.set(ticket, { expiresAt, sessionToken: token, target })
         writeJson(response, 200, {
           expiresAt: new Date(expiresAt).toISOString(),

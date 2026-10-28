@@ -34,12 +34,15 @@ void test(
       token = 'tunnel-only-secret'
     const calls: { path: string; authorization?: string }[] = []
     let credentialHash = ''
+    let browserAccessStatus = 200
     const server = createServer(async (req, res) => {
       const chunks: Buffer[] = []
       for await (const chunk of req) chunks.push(chunk)
       const body = JSON.parse(Buffer.concat(chunks).toString('utf8'))
       calls.push({ path: req.url!, authorization: req.headers.authorization })
       res.setHeader('Content-Type', 'application/json')
+      if (req.url?.endsWith('/browser-access/check'))
+        res.statusCode = browserAccessStatus
       if (req.url === '/cloudflare/requests') {
         credentialHash = body.secretHash
         res.end(
@@ -97,6 +100,11 @@ void test(
       strictEqual(await readFile(`${statePath}.token`, 'utf8'), token)
       strictEqual(output.join('').includes(token), false)
       strictEqual(output.join('').includes('ABCDEF12'), true)
+      strictEqual(await tunnel.accountAccess.check(), true)
+      browserAccessStatus = 503
+      await rejects(tunnel.accountAccess.check())
+      browserAccessStatus = 403
+      strictEqual(await tunnel.accountAccess.check(), false)
       await rejects(
         enable({
           backendUrl,
@@ -140,6 +148,9 @@ void test(
         '/cloudflare/requests',
         `/cloudflare/requests/${id}/poll`,
         `/cloudflare/requests/${id}/browser-access/register`,
+        `/cloudflare/requests/${id}/browser-access/check`,
+        `/cloudflare/requests/${id}/browser-access/check`,
+        `/cloudflare/requests/${id}/browser-access/check`,
         `/cloudflare/requests/${id}/poll`,
         `/cloudflare/requests/${id}/browser-access/register`,
         `/cloudflare/requests/${id}/disable`,

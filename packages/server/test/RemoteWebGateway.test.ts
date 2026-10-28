@@ -168,7 +168,10 @@ void test('pairs once and proxies an origin-authenticated ticket', async (contex
 const fixture = async (
   context: import('node:test').TestContext,
   lifetime?: number,
-  accountAccess?: { readonly key: string; readonly check: () => Promise<void> },
+  accountAccess?: {
+    readonly key: string
+    readonly check: () => Promise<boolean>
+  },
 ) => {
   const backend = new WebSocketServer({ host: '127.0.0.1', port: 0 })
   await once(backend, 'listening')
@@ -463,12 +466,16 @@ const grant = (key: string, fields: object = {}): string => {
 }
 void test('account grants create independent browser sessions, reject replay and revoke only the signing-out browser', async (context) => {
   const key = '34'.repeat(32)
-  const f = await fixture(context, undefined, { key, check: async () => {} })
+  const f = await fixture(context, undefined, { key, check: async () => true })
   const firstGrant = grant(key)
   const first = await post(f.gateway.localPort, '/auth/account', firstGrant)
   strictEqual(first.status, 200)
-  const firstSession = ((await first.json()) as { sessionToken: string })
-    .sessionToken
+  const firstValue = (await first.json()) as {
+    sessionExpiresAt: string | null
+    sessionToken: string
+  }
+  strictEqual(firstValue.sessionExpiresAt, null)
+  const firstSession = firstValue.sessionToken
   strictEqual(
     (await post(f.gateway.localPort, '/auth/account', firstGrant)).status,
     401,
@@ -512,14 +519,26 @@ void test('account grants create independent browser sessions, reject replay and
     403,
   )
 })
+void test('managed account sessions last beyond 24 hours until tunnel access is revoked', async (context) => {
+  context.mock.timers.enable({ apis: ['Date'], now: Date.now() })
+  const key = '34'.repeat(32)
+  const f = await fixture(context, 300, { key, check: async () => true })
+  const response = await post(f.gateway.localPort, '/auth/account', grant(key))
+  const session = ((await response.json()) as { sessionToken: string })
+    .sessionToken
+  context.mock.timers.tick(24 * 60 * 60 * 1000 + 1)
+  strictEqual(
+    (await post(f.gateway.localPort, '/auth/session', session)).status,
+    200,
+  )
+  await f.ticket(session, 'file-system-process')
+})
 void test('failed account ownership checks close account sockets, reject access, then recover without allowing manual pairing', async (context) => {
   const key = '34'.repeat(32)
   let permitted = true
   const f = await fixture(context, undefined, {
     key,
-    check: async () => {
-      if (!permitted) throw new Error('revoked or offline')
-    },
+    check: async () => permitted,
   })
   const response = await post(f.gateway.localPort, '/auth/account', grant(key))
   const session = ((await response.json()) as { sessionToken: string })
@@ -552,9 +571,40 @@ void test('failed account ownership checks close account sockets, reject access,
   )
 })
 
+void test('temporary account-check failures preserve existing sessions and block new authorizations', async (context) => {
+  const key = '34'.repeat(32)
+  let unavailable = false
+  const failedCheck = Promise.withResolvers<void>()
+  const f = await fixture(context, undefined, {
+    key,
+    check: async () => {
+      if (unavailable) {
+        failedCheck.resolve()
+        throw new Error('backend unavailable')
+      }
+      return true
+    },
+  })
+  const response = await post(f.gateway.localPort, '/auth/account', grant(key))
+  const session = ((await response.json()) as { sessionToken: string })
+    .sessionToken
+  unavailable = true
+  await failedCheck.promise
+  await delay(0)
+  strictEqual(
+    (await post(f.gateway.localPort, '/auth/session', session)).status,
+    200,
+  )
+  await f.ticket(session, 'file-system-process')
+  strictEqual(
+    (await post(f.gateway.localPort, '/auth/account', grant(key))).status,
+    401,
+  )
+})
+
 void test('managed tunnels never issue pairing URLs or accept anonymous or pairing credentials', async (context) => {
   const key = '34'.repeat(32)
-  const f = await fixture(context, undefined, { key, check: async () => {} })
+  const f = await fixture(context, undefined, { key, check: async () => true })
   strictEqual(f.gateway.pairingUrl, undefined)
   throws(() => f.gateway.pair(), /require LVCE account sign-in/)
   for (const token of ['', randomBytes(32).toString('hex'), grant(key)]) {

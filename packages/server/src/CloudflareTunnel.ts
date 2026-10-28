@@ -115,7 +115,7 @@ export const disable = async (statePath: string): Promise<void> => {
 export interface Tunnel {
   readonly accountAccess: {
     readonly key: string
-    readonly check: () => Promise<void>
+    readonly check: () => Promise<boolean>
   }
   readonly persistent: boolean
   readonly publicUrl: string
@@ -285,13 +285,20 @@ export const enable = async (options: {
     )
     const accountAccess = {
       key: browserKey,
-      check: async (): Promise<void> => {
-        await request(
-          state,
-          `/cloudflare/requests/${state.id}/browser-access/check`,
-          { key: browserKey },
-          options.signal,
-        )
+      check: async (): Promise<boolean> => {
+        try {
+          await request(
+            state,
+            `/cloudflare/requests/${state.id}/browser-access/check`,
+            { key: browserKey },
+            options.signal,
+          )
+          return true
+        } catch (error) {
+          if (error instanceof CloudflareRequestError && error.status === 403)
+            return false
+          throw error
+        }
       },
     }
     // A dead process can leave an old token file; this process owns the setup lock.

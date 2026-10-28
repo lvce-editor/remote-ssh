@@ -21,7 +21,7 @@ const result = {
     'extension-node-process',
   ],
   protocolVersion: 1,
-  sessionExpiresAt: new Date(Date.now() + 3_600_000).toISOString(),
+  sessionExpiresAt: null,
   sessionToken: 'a'.repeat(64),
   websocketUrl: 'wss://remote.test/',
   workspacePath: '/project',
