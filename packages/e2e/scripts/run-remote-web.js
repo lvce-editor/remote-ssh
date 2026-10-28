@@ -152,9 +152,10 @@ if (process.argv.includes('--serve')) {
       ).toBeVisible()
       await page.keyboard.press('Enter')
     }
-    const connectionsPage = page.waitForEvent('popup')
-    await command('Remote Server: Manage Tunnel Access')
-    const connections = await connectionsPage
+    const [connections] = await Promise.all([
+      page.waitForEvent('popup'),
+      command('Remote Server: Manage Tunnel Access'),
+    ])
     try {
       await expect(connections).toHaveURL(
         new URL('/cloudflare', fixture.url).href,
