@@ -54,7 +54,7 @@ interface Ticket {
 export interface RemoteWebGateway {
   readonly close: () => Promise<void>
   readonly localPort: number
-  readonly pairingUrl: string
+  readonly pairingUrl?: string
   readonly pair: () => string
   readonly revoke: () => void
 }
@@ -159,6 +159,10 @@ export const createRemoteWebGateway = async (
   let attemptWindow = Date.now()
 
   const pair = (): string => {
+    if (options.accountAccess)
+      throw new Error(
+        'Managed tunnels require LVCE account sign-in; use Remote Server: Connect from LVCE Account',
+      )
     pairingToken = randomBytes(32).toString('hex')
     pairingExpires = Date.now() + pairingTtl
     const url = new URL(publicUrl)
@@ -299,6 +303,12 @@ export const createRemoteWebGateway = async (
       const token = getBearerToken(request)
       if (url.pathname === '/auth/pair' || url.pathname === '/auth/account') {
         const account = url.pathname === '/auth/account'
+        if (!account && options.accountAccess) {
+          writeJson(response, 403, {
+            error: 'Managed tunnels require LVCE account sign-in',
+          })
+          return
+        }
         if (request.headers['x-lvce-protocol'] !== '1') {
           writeJson(response, 426, {
             error:
@@ -539,7 +549,7 @@ export const createRemoteWebGateway = async (
     },
     localPort: address.port,
     pair,
-    pairingUrl: pair(),
+    pairingUrl: options.accountAccess ? undefined : pair(),
     revoke,
   }
 }

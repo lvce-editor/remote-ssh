@@ -27,9 +27,13 @@ export const listen = async (
         gateway.revoke()
         stopCloudflare()
         socket.end('{"ok":true}\n')
-      } else if (command === 'pair')
-        socket.end(`${JSON.stringify({ pairingUrl: gateway.pair() })}\n`)
-      else if (command === 'revoke') {
+      } else if (command === 'pair') {
+        try {
+          socket.end(`${JSON.stringify({ pairingUrl: gateway.pair() })}\n`)
+        } catch (error) {
+          socket.end(`${JSON.stringify({ error: (error as Error).message })}\n`)
+        }
+      } else if (command === 'revoke') {
         gateway.revoke()
         socket.end('{"ok":true}\n')
       } else socket.destroy()
@@ -63,7 +67,15 @@ export const request = async (
     socket.on('data', (data) => {
       response += data.toString('utf8')
     })
-    socket.once('end', () => resolve(response))
+    socket.once('end', () => {
+      try {
+        const value = JSON.parse(response)
+        if (value.error) reject(new Error(value.error))
+        else resolve(response)
+      } catch (error) {
+        reject(error)
+      }
+    })
     socket.once('error', reject)
   })
 }

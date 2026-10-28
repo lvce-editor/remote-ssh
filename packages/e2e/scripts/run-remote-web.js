@@ -152,9 +152,10 @@ if (process.argv.includes('--serve')) {
       ).toBeVisible()
       await page.keyboard.press('Enter')
     }
-    const connectionsPage = page.waitForEvent('popup')
-    await command('Remote Server: Manage Tunnel Access')
-    const connections = await connectionsPage
+    const [connections] = await Promise.all([
+      page.waitForEvent('popup'),
+      command('Remote Server: Manage Tunnel Access'),
+    ])
     try {
       await expect(connections).toHaveURL(
         new URL('/cloudflare', fixture.url).href,
@@ -173,7 +174,7 @@ if (process.argv.includes('--serve')) {
     await page.keyboard.press('Enter')
     const file = page.locator('.TreeItem[aria-label="hello.txt"]')
     await expect(file).toBeVisible({ timeout: 30_000 })
-    await verifyAccountBrowser(context, fixture, contextOptions)
+    await verifyAccountBrowser(context, contextOptions)
     await command('Remote Server: Benchmark Connection')
     await expect(page.locator('.Editor')).toContainText('"roundTripMs"', {
       timeout: 15_000,
