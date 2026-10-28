@@ -52,9 +52,14 @@ const isValid = (value: unknown): value is ConnectionOptions => {
   if (
     typeof options.sessionToken !== 'string' ||
     !/^[a-f0-9]{64}$/.test(options.sessionToken) ||
-    typeof options.expiresAt !== 'number' ||
-    !Number.isFinite(options.expiresAt) ||
-    options.expiresAt <= Date.now() ||
+    (!options.account &&
+      (typeof options.expiresAt !== 'number' ||
+        !Number.isFinite(options.expiresAt) ||
+        options.expiresAt <= Date.now())) ||
+    (options.account &&
+      options.expiresAt !== undefined &&
+      (!Number.isFinite(options.expiresAt) ||
+        options.expiresAt <= Date.now())) ||
     typeof options.websocketUrl !== 'string' ||
     typeof options.workspaceUri !== 'string'
   )

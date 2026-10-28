@@ -12,11 +12,21 @@ export interface PairingResult {
   readonly authentication: 'websocket-ticket'
   readonly capabilities: readonly string[]
   readonly protocolVersion: 1
-  readonly sessionExpiresAt: string
+  readonly sessionExpiresAt: string | null
   readonly sessionToken: string
   readonly websocketUrl: string
   readonly workspacePath: string
 }
+
+const hasValidSessionExpiry = (
+  value: string | null | undefined,
+  account: boolean,
+): boolean =>
+  account
+    ? value === null
+    : typeof value === 'string' &&
+      Number.isFinite(Date.parse(value)) &&
+      Date.parse(value) > Date.now()
 
 export type ShowQuickInput = typeof showQuickInput
 export type SetWorkspaceUri = (
@@ -137,9 +147,7 @@ export const pair = async (
     typeof result.workspacePath !== 'string' ||
     !result.workspacePath.startsWith('/') ||
     result.sessionToken.length === 0 ||
-    typeof result.sessionExpiresAt !== 'string' ||
-    !Number.isFinite(Date.parse(result.sessionExpiresAt)) ||
-    Date.parse(result.sessionExpiresAt) <= Date.now()
+    !hasValidSessionExpiry(result.sessionExpiresAt, account)
   ) {
     throw new TypeError('Remote server returned an invalid pairing response')
   }
@@ -155,6 +163,20 @@ const toWorkspaceUri = (
   url.pathname = workspacePath
   return url.href
 }
+
+const getConnectionOptions = (
+  result: PairingResult,
+  workspaceUri: string,
+  account = false,
+): RemoteServerConnection.ConnectionOptions => ({
+  ...(account && { account: true, accountId: result.accountId }),
+  ...(result.sessionExpiresAt && {
+    expiresAt: Date.parse(result.sessionExpiresAt),
+  }),
+  sessionToken: result.sessionToken,
+  websocketUrl: result.websocketUrl,
+  workspaceUri,
+})
 
 export const connect = async (
   showInput: ShowQuickInput = showQuickInput,
@@ -190,13 +212,7 @@ export const connectWithPairingUrl = async (
     )
   const workspaceUri = toWorkspaceUri(result.websocketUrl, result.workspacePath)
   const previous = RemoteServerConnection.getOptions()
-  const options = {
-    ...(account && { account: true, accountId: result.accountId }),
-    expiresAt: Date.parse(result.sessionExpiresAt),
-    sessionToken: result.sessionToken,
-    websocketUrl: result.websocketUrl,
-    workspaceUri,
-  }
+  const options = getConnectionOptions(result, workspaceUri, account)
   RemoteServerConnection.set(options)
   try {
     await setUri(workspaceUri, '/', {
@@ -319,14 +335,11 @@ export const prepareWorkspace = async (
         attempt !== state.pairingAttempt
       )
         throw new Error('Remote workspace changed while authorizing')
-      const options = {
-        account: true,
-        accountId: result.accountId,
-        expiresAt: Date.parse(result.sessionExpiresAt),
-        sessionToken: result.sessionToken,
-        websocketUrl: result.websocketUrl,
-        workspaceUri: toWorkspaceUri(result.websocketUrl, result.workspacePath),
-      }
+      const options = getConnectionOptions(
+        result,
+        toWorkspaceUri(result.websocketUrl, result.workspacePath),
+        true,
+      )
       RemoteServerConnection.set(options)
       await Session.save(options)
     } catch (error) {

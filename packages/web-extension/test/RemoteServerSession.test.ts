@@ -43,6 +43,29 @@ test('a valid pairing can restore after the extension runtime is recreated', asy
   expect(() => Connection.assertWorkspace(paired.workspaceUri)).not.toThrow()
 })
 
+test('an account session without a fixed expiry restores after the extension runtime is recreated', async () => {
+  const values = new Map<string, string>()
+  Session.configure({
+    deleteSecret: async (key) => {
+      values.delete(key)
+    },
+    getAccountId: async () => 'owner',
+    getSecret: async (key) => values.get(key),
+    storeSecret: async (key, value) => {
+      values.set(key, value)
+    },
+  })
+  const paired = {
+    account: true,
+    accountId: 'owner',
+    sessionToken: 'a'.repeat(64),
+    websocketUrl: 'wss://remote.example/',
+    workspaceUri: 'remote-server://remote.example/home/test/project',
+  }
+  await Session.save(paired)
+  expect(await Session.load()).toEqual(paired)
+})
+
 test('switching away closes workspace connections without revoking the session needed by Open Recent', async () => {
   jest.spyOn(globalThis, 'fetch').mockResolvedValue(Response.json({}))
   configure()
