@@ -57,7 +57,8 @@ export const verifyDirectoryCache = async (page, fixture, diagnostics) => {
     await folder.click()
   }
   await expect(first).toBeVisible()
-  expect(count('FileSystem.readDirWithFileTypes')).toBe(listings)
+  const restoredListings = count('FileSystem.readDirWithFileTypes')
+  expect(restoredListings).toBe(listings)
   expect(count('FileSystem.getDirectoryVersion')).toBeGreaterThan(validations)
 
   // Filesystem changes bypass renderer mutation invalidation and must still
@@ -75,8 +76,20 @@ export const verifyDirectoryCache = async (page, fixture, diagnostics) => {
   await rm(join(directory, 'cached-renamed.txt'))
   await expect(renamed).toBeHidden({ timeout: 30_000 })
   const beforeRefresh = count('FileSystem.readDirWithFileTypes')
-  await execute('Explorer.refresh')
+  await page
+    .getByRole('button', { exact: true, name: 'Refresh Explorer' })
+    .click()
   await expect
     .poll(() => count('FileSystem.readDirWithFileTypes'))
     .toBeGreaterThan(beforeRefresh)
+  console.log(
+    'PASS remote directory cache:',
+    JSON.stringify({
+      initialListings: listings,
+      restoredListings,
+      listingsBeforeRefresh: beforeRefresh,
+      listingsAfterRefresh: count('FileSystem.readDirWithFileTypes'),
+      validatorRequests: count('FileSystem.getDirectoryVersion'),
+    }),
+  )
 }
