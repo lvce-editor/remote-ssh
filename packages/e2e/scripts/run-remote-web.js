@@ -446,9 +446,9 @@ if (process.argv.includes('--serve')) {
       await reloadedTerminal
         .locator('.xterm-helper-textarea')
         .pressSequentially(
-          "pwd; printf 'reloaded remotely\\n' > reload-terminal-created.txt; printf 'RELOAD_OK\\n'\n",
+          "pwd; printf 'reloaded remotely\\n' > reload-terminal-created.txt; printf 'RELOAD_%s_OK\\n' REMOTE\n",
         )
-      await expect(reloadedTerminal).toContainText('RELOAD_OK')
+      await expect(reloadedTerminal).toContainText('RELOAD_REMOTE_OK')
       await expect(reloadedTerminal).toContainText(fixture.workspace)
       expect(
         await readFile(
