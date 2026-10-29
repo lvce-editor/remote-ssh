@@ -48,6 +48,25 @@ export const verifyDirectoryCache = async (page, fixture, diagnostics) => {
   expect(count('FileSystem.readDirWithFileTypes')).toBe(listings)
   expect(count('FileSystem.getDirectoryVersion')).toBeGreaterThan(validations)
 
+  // Recreate the workspace view while preserving the remote provider session.
+  const workspaceUri = await execute('Workspace.getUri')
+  const connection = await execute(
+    'ExtensionHost.executeCommand',
+    'remote-server.prepareWorkspace',
+    workspaceUri,
+    false,
+  )
+  await execute('Workspace.setUri', remoteUri.href, '/', connection)
+  await expect(first).toBeVisible()
+  await execute('Workspace.setUri', workspaceUri, '/', connection)
+  await expect(folder).toBeVisible()
+  if ((await folder.getAttribute('aria-expanded')) !== 'true') {
+    await folder.click()
+  }
+  await expect(first).toBeVisible()
+  expect(count('FileSystem.readDirWithFileTypes')).toBe(listings)
+  expect(count('FileSystem.getDirectoryVersion')).toBeGreaterThan(validations)
+
   // Filesystem changes bypass renderer mutation invalidation and must still
   // appear after the cached folder is refreshed by the real remote watcher.
   await writeFile(join(directory, 'cached-created.txt'), 'external create')
