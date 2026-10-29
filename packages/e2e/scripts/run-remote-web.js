@@ -437,6 +437,7 @@ if (process.argv.includes('--serve')) {
       await expect(file).toBeVisible({ timeout: 30_000 })
       await page.getByRole('menuitem', { name: 'View', exact: true }).click()
       await page
+        .getByRole('menu')
         .getByRole('menuitem', { name: 'Terminal', exact: true })
         .click()
       const reloadedTerminal = page.locator('.XtermTerminal')
