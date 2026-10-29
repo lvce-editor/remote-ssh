@@ -140,6 +140,10 @@ export const readFile = async (uri: string): Promise<string> => {
   return result
 }
 
+export const getDirectoryVersion = (uri: string): Promise<unknown> => {
+  return invoke('FileSystem.getDirectoryVersion', uri)
+}
+
 export const stat = (uri: string): Promise<unknown> => {
   return invoke('FileSystem.stat', uri)
 }

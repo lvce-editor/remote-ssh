@@ -193,3 +193,26 @@ test('measures overlapping reads independently', async () => {
     'Read file /second.txt completed in 19.0 ms',
   ])
 })
+
+test('directory versions are requested without a remote directory transfer', async () => {
+  const invoke = jest.fn(async (_method: string, ..._params: readonly unknown[]) => 'connection:version')
+  const fileSystem = createRemoteFileSystem(invoke)
+  await expect(
+    fileSystem.getDirectoryVersion('remote-ssh://host/workspace'),
+  ).resolves.toBe('connection:version')
+  expect(invoke).toHaveBeenCalledTimes(1)
+  expect(invoke).toHaveBeenCalledWith(
+    'SshFileSystem.getDirectoryVersion',
+    'remote-ssh://host/workspace',
+  )
+})
+
+test.each([null, 3, ''])(
+  'invalid directory version %s is treated as unsupported',
+  async (value) => {
+    const fileSystem = createRemoteFileSystem(async () => value)
+    await expect(
+      fileSystem.getDirectoryVersion('remote-ssh://host/workspace'),
+    ).resolves.toBeNull()
+  },
+)

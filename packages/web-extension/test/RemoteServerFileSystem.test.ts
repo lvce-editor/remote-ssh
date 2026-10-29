@@ -96,3 +96,15 @@ test('sends Unicode, newlines and NUL as JSON text without base64 expansion', as
     'utf8',
   )
 })
+
+test('directory versions use the remote backend filesystem', async () => {
+  invoke.mockResolvedValueOnce('connection:version')
+  await expect(
+    fileSystem.getDirectoryVersion('remote-server://host/workspace'),
+  ).resolves.toBe('connection:version')
+  expect(invoke).toHaveBeenCalledWith(
+    'FileSystem.getDirectoryVersion',
+    'file:///workspace',
+  )
+  expect(invoke).toHaveBeenCalledTimes(1)
+})

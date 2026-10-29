@@ -14,6 +14,7 @@ export type Invoke = (
 ) => Promise<unknown>
 
 export interface RemoteFileSystem extends FileSystemProvider {
+  readonly getDirectoryVersion: (uri: string) => Promise<string | null>
   readonly mkdir: (uri: string) => Promise<void>
   readonly readDirWithFileTypes: (
     uri: string,
@@ -122,6 +123,10 @@ export const createRemoteFileSystem = (
   readLogDependencies: ReadLogDependencies = defaultReadLogDependencies,
 ): RemoteFileSystem => {
   return {
+    getDirectoryVersion: async (uri): Promise<string | null> => {
+      const value = await invoke('SshFileSystem.getDirectoryVersion', uri)
+      return typeof value === 'string' && value.length > 0 ? value : null
+    },
     id: 'remote-ssh',
     isReadonly: () => false,
     mkdir: async (uri): Promise<void> => {

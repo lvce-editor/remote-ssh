@@ -7,6 +7,7 @@ export type Invoke = (
 ) => Promise<unknown>
 
 export interface RemoteServerFileSystem extends FileSystemProvider {
+  readonly getDirectoryVersion: (uri: string) => Promise<string | null>
   readonly mkdir: (uri: string) => Promise<void>
   readonly readDirWithFileTypes: (
     uri: string,
@@ -62,6 +63,14 @@ export const createRemoteServerFileSystem = (
   invoke: Invoke = RemoteServerConnection.invoke,
 ): RemoteServerFileSystem => {
   return {
+    getDirectoryVersion: async (uri): Promise<string | null> => {
+      const value = await invokeFileSystem(
+        invoke,
+        'FileSystem.getDirectoryVersion',
+        uri,
+      )
+      return typeof value === 'string' && value.length > 0 ? value : null
+    },
     id: 'remote-server',
     isReadonly: (): boolean => false,
     mkdir: async (uri): Promise<void> => {
