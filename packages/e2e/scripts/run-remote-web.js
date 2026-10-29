@@ -1,3 +1,4 @@
+import { verifyDirectoryCache } from './verify-directory-cache.js'
 import { verifyHttpPreview } from './verify-http-preview.js'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -139,6 +140,7 @@ if (process.argv.includes('--serve')) {
             params: [
               'Terminal.create',
               'FileSystem.readDirWithFileTypes',
+              'FileSystem.getDirectoryVersion',
             ].includes(message.method)
               ? message.params
               : undefined,
@@ -194,6 +196,7 @@ if (process.argv.includes('--serve')) {
     const file = page.locator('.TreeItem[aria-label="hello.txt"]')
     await expect(file).toBeVisible({ timeout: 30_000 })
     await expect.poll(() => socketPaths).toContain('/websocket/shared-process')
+    await verifyDirectoryCache(page, fixture, diagnostics)
     const openRemoteFolder = async (path, expectedFile) => {
       const previousWaiterCount = remoteCliWaiterCount
       const url = await page.evaluate(async () => {
@@ -443,9 +446,9 @@ if (process.argv.includes('--serve')) {
       await reloadedTerminal
         .locator('.xterm-helper-textarea')
         .pressSequentially(
-          "pwd; printf 'reloaded remotely\\n' > reload-terminal-created.txt; printf 'RELOAD_OK\\n'\n",
+          "pwd; printf 'reloaded remotely\\n' > reload-terminal-created.txt; printf 'RELOAD_%s_OK\\n' REMOTE\n",
         )
-      await expect(reloadedTerminal).toContainText('RELOAD_OK')
+      await expect(reloadedTerminal).toContainText('RELOAD_REMOTE_OK')
       await expect(reloadedTerminal).toContainText(fixture.workspace)
       expect(
         await readFile(
