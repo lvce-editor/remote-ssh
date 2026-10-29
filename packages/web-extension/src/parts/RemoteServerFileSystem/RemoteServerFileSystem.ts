@@ -1,4 +1,5 @@
 import type { FileSystemDirent, FileSystemProvider } from '@lvce-editor/api'
+import * as ContainerWorkspace from '../ContainerWorkspace/ContainerWorkspace.ts'
 import * as RemoteServerConnection from '../RemoteServerConnection/RemoteServerConnection.ts'
 
 export type Invoke = (
@@ -28,7 +29,7 @@ const getLocation = (
   }
   return {
     authority: url.host,
-    path: decodeURIComponent(url.pathname),
+    path: ContainerWorkspace.getPath(uri),
   }
 }
 

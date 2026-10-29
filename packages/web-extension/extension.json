@@ -33,6 +33,8 @@
     "onCommand:remote-server.authorizeBrowser",
     "onCommand:remote-server.accountWillChange",
     "onCommand:remote-server.accountDidChange",
+    "onCommand:remote-server.reopenInContainer",
+    "onCommand:remote-server.reopenOnHost",
     "onCommand:remote-server.resolveHttpPreview"
   ],
   "commands": [
@@ -99,6 +101,14 @@
     {
       "id": "remote-server.accountDidChange",
       "internal": true
+    },
+    {
+      "id": "remote-server.reopenInContainer",
+      "internal": true
+    },
+    {
+      "id": "remote-server.reopenOnHost",
+      "label": "Dev Containers: Reopen on Remote Host"
     },
     {
       "id": "remote-server.resolveHttpPreview",

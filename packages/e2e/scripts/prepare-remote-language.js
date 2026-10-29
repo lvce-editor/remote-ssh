@@ -3,7 +3,12 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { bundleJs } from '../../build/src/bundleJs.ts'
 
-export const prepareLanguage = async (repository, directory, workspace) => {
+export const prepareLanguage = async (
+  repository,
+  directory,
+  workspace,
+  container = false,
+) => {
   const directoryPath = join(directory, 'language-extension')
   await mkdir(directoryPath)
   const manifest = {
@@ -28,6 +33,11 @@ export const prepareLanguage = async (repository, directory, workspace) => {
         label: 'Remote Language Test: Validate TypeScript',
       },
     ],
+  }
+  if (container) {
+    manifest.compatibility.web = true
+    manifest.activation.push('onCommand:e2e.remote-language.probe')
+    manifest.commands.push({ id: 'e2e.remote-language.probe', internal: true })
   }
   await writeFile(
     join(directoryPath, 'extension.json'),
@@ -55,6 +65,24 @@ export const prepareLanguage = async (repository, directory, workspace) => {
       ),
     },
   })
+  if (container) {
+    await bundleJs({
+      input: join(
+        repository,
+        'packages/e2e/fixtures/remote-language/container-browser.js',
+      ),
+      outfile: join(directoryPath, 'browser.js'),
+      platform: 'browser',
+    })
+    await bundleJs({
+      input: join(
+        repository,
+        'packages/e2e/fixtures/remote-language/container-server.js',
+      ),
+      outfile: join(directoryPath, 'server.mjs'),
+      platform: 'node',
+    })
+  }
   const installedExtensions = join(directory, 'data', 'lvce-oss', 'extensions')
   await mkdir(installedExtensions, { recursive: true })
   await cp(directoryPath, join(installedExtensions, manifest.id), {

@@ -129,6 +129,20 @@ const installBuiltinExtensions = async (
   await cp(gitPath, path.join(staticExtensionsPath, 'builtin.git'), {
     recursive: true,
   })
+
+  const containerPath = path.join(extensionsPath, 'builtin.devcontainer')
+  const containerArchive = await downloadVerified(
+    'https://github.com/lvce-editor/devcontainer/releases/download/v0.19.0/devcontainer-v0.19.0.tar.br',
+    'd84c0e97b6ed0c50884cb5658ba37ee6791102c5dcb9c193da3c13004469da60',
+  )
+  const containerTar = path.join(
+    serverBuildDirectory,
+    'devcontainer-extension.tar',
+  )
+  await mkdir(containerPath, { recursive: true })
+  await writeFile(containerTar, brotliDecompressSync(containerArchive))
+  await execFileAsync('tar', ['-xf', containerTar, '-C', containerPath])
+  await rm(containerTar, { force: true })
 }
 
 export const buildServer = async () => {

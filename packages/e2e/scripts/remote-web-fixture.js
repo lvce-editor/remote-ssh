@@ -1,7 +1,7 @@
 import { spawn, execFileSync } from 'node:child_process'
 import { createHmac, randomBytes } from 'node:crypto'
 import { once } from 'node:events'
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { cp, mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { request as httpRequest } from 'node:http'
 import { createServer } from 'node:https'
 import { tmpdir } from 'node:os'
@@ -9,6 +9,7 @@ import { resolve, join, extname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { prepareLanguage } from './prepare-remote-language.js'
 import { createRemoteWebGateway } from '../../server/src/RemoteWebGateway.ts'
+import { openContainer } from '../../server/src/RemoteContainer.ts'
 
 const repository = fileURLToPath(new URL('../../..', import.meta.url))
 const listen = async (server) => {
@@ -21,7 +22,10 @@ const close = async (server) => {
   await new Promise((resolve) => server.close(resolve))
 }
 
-export const createFixture = async ({ accountOnly = false } = {}) => {
+export const createFixture = async ({
+  accountOnly = false,
+  containers = false,
+} = {}) => {
   const directory = await mkdtemp(join(tmpdir(), 'lvce-remote-web-'))
   const cleanups = [() => rm(directory, { force: true, recursive: true })]
   const dispose = async () => {
@@ -86,7 +90,16 @@ export const createFixture = async ({ accountOnly = false } = {}) => {
       process.env.LVCE_REMOTE_WEB_FRONTEND_DIR || join(repository, 'dist'),
     )
     const prefix = process.env.LVCE_REMOTE_WEB_PATH_PREFIX || ''
-    const language = await prepareLanguage(repository, directory, workspace)
+    const language = await prepareLanguage(
+      repository,
+      directory,
+      workspace,
+      containers,
+    )
+    if (containers)
+      await cp(language.directoryPath, join(workspace, '.probe-extension'), {
+        recursive: true,
+      })
     const diagnostics = []
     const sockets = new Set()
     const frontend = createServer(tls, async (request, response) => {
@@ -312,6 +325,16 @@ export const createFixture = async ({ accountOnly = false } = {}) => {
     })
     const accountKey = randomBytes(32).toString('hex')
     gateway = await createRemoteWebGateway({
+      ...(containers
+        ? {
+            openContainer: (workspace, signal) =>
+              openContainer(
+                join(repository, '.tmp', 'remote-ssh-server'),
+                workspace,
+                signal,
+              ),
+          }
+        : {}),
       accountAccess: accountOnly
         ? { key: accountKey, check: async () => {} }
         : undefined,
