@@ -530,8 +530,49 @@ const openSshOutput = async (page) => {
   await expect(select.locator('option[value="remote-ssh"]')).toHaveText(
     'Remote SSH',
   )
-  await select.selectOption('remote-ssh')
-  await expect(select).toHaveValue('remote-ssh')
+  // Capture only channel selection metadata: no workspace paths or log text.
+  await page.evaluate(() => {
+    const entries = []
+    const record = (kind) => {
+      if (entries.length >= 100) return
+      const element = document.querySelector('[name="output"]')
+      entries.push({ kind, time: performance.now(), value: element?.value })
+    }
+    const onChange = (event) => {
+      if (event.target.matches('[name="output"]')) record(event.type)
+    }
+    document.addEventListener('input', onChange, true)
+    document.addEventListener('change', onChange, true)
+    const observer = new MutationObserver(() => record('mutation'))
+    observer.observe(document.querySelector('[name="output"]').parentElement, {
+      attributes: true,
+      childList: true,
+      subtree: true,
+    })
+    record('before-select')
+    globalThis.sshOutputDiagnostic = {
+      entries,
+      dispose() {
+        observer.disconnect()
+        document.removeEventListener('input', onChange, true)
+        document.removeEventListener('change', onChange, true)
+      },
+    }
+  })
+  try {
+    await select.selectOption('remote-ssh')
+    await expect(select).toHaveValue('remote-ssh')
+  } finally {
+    console.log(
+      'SSH output selection:',
+      await page.evaluate(() => {
+        const diagnostic = globalThis.sshOutputDiagnostic
+        diagnostic.dispose()
+        delete globalThis.sshOutputDiagnostic
+        return diagnostic.entries
+      }),
+    )
+  }
   return page.locator('.OutputContent')
 }
 

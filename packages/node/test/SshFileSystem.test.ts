@@ -159,3 +159,23 @@ void test('maps remote CLI files and their workspace folder', async () => {
     workspaceUri: 'remote-ssh://example.com/home/user',
   })
 })
+
+void test('directory version requests use the same remote filesystem connection as listings', async () => {
+  const calls: unknown[][] = []
+  const result = await _invoke(
+    'FileSystem.getDirectoryVersion',
+    'remote-ssh://user@host/workspace',
+    [],
+    async (...args) => {
+      calls.push(args)
+      return 'connection:version'
+    },
+  )
+  strictEqual(result, 'connection:version')
+  strictEqual(calls.length, 1)
+  deepStrictEqual(calls[0].slice(1), [
+    'file-system-process',
+    'FileSystem.getDirectoryVersion',
+    'file:///workspace',
+  ])
+})

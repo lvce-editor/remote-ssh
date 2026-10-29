@@ -57,6 +57,11 @@ export const createFixture = async ({
       'origin',
       'https://github.com/lvce-editor/lvce-editor',
     ])
+    await mkdir(join(workspace, 'cache-directory'))
+    await writeFile(
+      join(workspace, 'cache-directory', 'cached-first.txt'),
+      'cached',
+    )
     const key = join(directory, 'key.pem')
     const cert = join(directory, 'cert.pem')
     execFileSync(

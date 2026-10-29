@@ -13,6 +13,7 @@ export const commandMap = {
   'SshConfigHosts.get': SshConfigHosts.getSshConfigHosts,
   'SshFileSystem.cancelConnect': SshFileSystem.cancelConnect,
   'SshFileSystem.connect': SshFileSystem.connect,
+  'SshFileSystem.getDirectoryVersion': SshFileSystem.getDirectoryVersion,
   'SshFileSystem.getProgress': SshFileSystem.getProgress,
   'SshFileSystem.mkdir': SshFileSystem.mkdir,
   'SshFileSystem.readDirWithFileTypes': SshFileSystem.readDirWithFileTypes,
