@@ -1,3 +1,4 @@
+import * as ContainerWorkspace from '../ContainerWorkspace/ContainerWorkspace.ts'
 import { RemoteServerError } from '../RemoteServerError/RemoteServerError.ts'
 import * as Session from '../RemoteServerSession/RemoteServerSession.ts'
 import { revokePreviews } from './RemoteHttpPreview.ts'
@@ -6,6 +7,7 @@ export interface ConnectionOptions {
   readonly account?: boolean
   readonly accountId?: string
   readonly expiresAt?: number
+  readonly hostWorkspaceUri?: string
   readonly sessionToken: string
   readonly websocketUrl: string
   readonly workspaceUri?: string
@@ -185,6 +187,10 @@ const createWebSocketUrl = async (
   params: Readonly<Record<string, string>> = {},
   signal?: AbortSignal,
 ): Promise<string> => {
+  const container =
+    options.workspaceUri &&
+    ContainerWorkspace.getContainer(options.workspaceUri)
+  if (container) params = { ...params, container }
   const { generation } = state
   const url = new URL(
     `/websocket/${encodeURIComponent(type)}`,
@@ -408,12 +414,16 @@ export const assertWorkspace = (uri: string): void => {
       'Remote server is not paired; connect with a new pairing URL',
     )
   const actual = new URL(uri)
-  const expected = new URL(state.options.websocketUrl)
   if (
     actual.protocol !== 'remote-server:' ||
-    actual.host !== expected.host ||
+    actual.host !==
+      new URL(state.options.workspaceUri || state.options.websocketUrl).host ||
     actual.username ||
-    actual.password
+    actual.password ||
+    ContainerWorkspace.getContainer(uri) !==
+      (state.options.workspaceUri
+        ? ContainerWorkspace.getContainer(state.options.workspaceUri)
+        : '')
   ) {
     throw new Error('Remote resource belongs to a different server')
   }
@@ -540,4 +550,42 @@ export const validateAccountSession = async (): Promise<void> => {
     throw new Error(
       'Remote session unavailable. Check the server and retry connecting from your LVCE account.',
     )
+}
+
+export const openContainer = async (
+  workspace: string,
+): Promise<{ id: string; workspacePath: string }> => {
+  if (!state.options) await restore()
+  const { generation, options } = state
+  if (!options)
+    throw new Error(
+      'Connect to a remote server before reopening in a container',
+    )
+  assertWorkspace(workspace)
+  const endpoint = new URL('/devcontainer/open', options.websocketUrl)
+  endpoint.protocol = endpoint.protocol === 'wss:' ? 'https:' : 'http:'
+  endpoint.searchParams.set('workspace', ContainerWorkspace.getPath(workspace))
+  const response = await fetch(endpoint, {
+    headers: { authorization: `Bearer ${options.sessionToken}` },
+    method: 'POST',
+    redirect: 'error',
+    signal: AbortSignal.any([
+      state.authorizationController.signal,
+      AbortSignal.timeout(600_000),
+    ]),
+  })
+  const result = await response.json()
+  if (generation !== state.generation)
+    throw new Error('Remote workspace changed while starting the container')
+  if (!response.ok)
+    throw new Error(
+      result.error || 'Update the remote server to enable Dev Containers',
+    )
+  if (
+    !/^[a-f0-9]{32}$/.test(result.id) ||
+    typeof result.workspacePath !== 'string' ||
+    !result.workspacePath.startsWith('/')
+  )
+    throw new Error('Invalid container workspace response')
+  return result
 }

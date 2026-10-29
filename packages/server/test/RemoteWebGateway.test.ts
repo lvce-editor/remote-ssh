@@ -649,3 +649,192 @@ void test('managed tunnels never issue pairing URLs or accept anonymous or pairi
   const { sessionToken } = (await owner.json()) as { sessionToken: string }
   await f.ticket(sessionToken, 'file-system-process')
 })
+
+void test('container workspaces reuse startup per session and bind tickets to their backend', async (context) => {
+  const backend = new WebSocketServer({ host: '127.0.0.1', port: 0 })
+  await once(backend, 'listening')
+  context.after(() => backend.close())
+  const address = backend.address()
+  if (!address || typeof address === 'string')
+    throw new Error('Expected TCP port')
+  let starts = 0
+  let closes = 0
+  const gateway = await createRemoteWebGateway({
+    allowedOrigin,
+    backendPort: 1,
+    backendToken: 'host-secret',
+    port: 0,
+    publicUrl: 'https://remote.example.com',
+    workspacePath: '/project',
+    openContainer: async (workspace, signal) => {
+      strictEqual(workspace, '/project')
+      strictEqual(signal.aborted, false)
+      starts++
+      return {
+        port: address.port,
+        token: 'container-secret',
+        workspacePath: '/container',
+        close: async () => {
+          closes++
+        },
+      }
+    },
+  })
+  context.after(() => gateway.close())
+  const pairingToken = new URL(gateway.pairingUrl!).hash.slice('#token='.length)
+  const paired = await (
+    await post(gateway.localPort, '/auth/pair', pairingToken)
+  ).json()
+  const token = (paired as { sessionToken: string }).sessionToken
+  strictEqual(
+    (
+      await post(
+        gateway.localPort,
+        '/devcontainer/open?workspace=/project',
+        'wrong',
+      )
+    ).status,
+    401,
+  )
+  const [first, second] = await Promise.all(
+    [1, 2].map(async () =>
+      (
+        await post(
+          gateway.localPort,
+          '/devcontainer/open?workspace=/project',
+          token,
+        )
+      ).json(),
+    ),
+  )
+  deepStrictEqual(first, second)
+  strictEqual(starts, 1)
+  const container = first as { id: string; workspacePath: string }
+  strictEqual(container.workspacePath, '/container')
+  strictEqual(
+    (
+      await post(
+        gateway.localPort,
+        `/auth/http-preview?port=${address.port}`,
+        token,
+      )
+    ).status,
+    400,
+  )
+  const target = `/auth/websocket-ticket?process=file-system-process&container=${container.id}`
+  const ticket = await (await post(gateway.localPort, target, token)).json()
+  strictEqual(
+    await expectRejectedWebSocket(
+      `ws://127.0.0.1:${gateway.localPort}/websocket/file-system-process?ticket=${(ticket as { ticket: string }).ticket}`,
+      allowedOrigin,
+    ),
+    401,
+  )
+  const valid = await (await post(gateway.localPort, target, token)).json()
+  const connected = new Promise<string>((resolve) =>
+    backend.once('connection', (socket, request) => {
+      resolve(request.url!)
+      socket.close()
+    }),
+  )
+  const client = new WebSocket(
+    `ws://127.0.0.1:${gateway.localPort}/websocket/file-system-process?container=${container.id}&ticket=${(valid as { ticket: string }).ticket}`,
+    { origin: allowedOrigin },
+  )
+  client.on('error', () => {})
+  strictEqual(
+    new URL(await connected, 'http://localhost').searchParams.get('token'),
+    'container-secret',
+  )
+  await post(gateway.localPort, '/auth/revoke', token)
+  strictEqual(closes, 1)
+})
+
+void test('failed container startup leaves the host session usable and can be retried', async (context) => {
+  let attempts = 0
+  const gateway = await createRemoteWebGateway({
+    allowedOrigin,
+    backendPort: 1,
+    backendToken: 'host',
+    port: 0,
+    publicUrl: 'https://remote.example.com',
+    workspacePath: '/project',
+    openContainer: async () => {
+      attempts++
+      throw new Error('Docker is unavailable')
+    },
+  })
+  context.after(() => gateway.close())
+  const pairing = new URL(gateway.pairingUrl!).hash.slice('#token='.length)
+  const { sessionToken } = (await (
+    await post(gateway.localPort, '/auth/pair', pairing)
+  ).json()) as { sessionToken: string }
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const result = await post(
+      gateway.localPort,
+      '/devcontainer/open?workspace=/project',
+      sessionToken,
+    )
+    strictEqual(result.status, 503)
+    deepStrictEqual(await result.json(), { error: 'Docker is unavailable' })
+    strictEqual(
+      (await post(gateway.localPort, '/auth/session', sessionToken)).status,
+      200,
+    )
+    strictEqual(
+      (
+        await post(
+          gateway.localPort,
+          '/auth/websocket-ticket?process=file-system-process',
+          sessionToken,
+        )
+      ).status,
+      200,
+    )
+  }
+  strictEqual(attempts, 2)
+})
+
+void test('disconnect during startup aborts the operation and disposes a late backend', async (context) => {
+  const started = Promise.withResolvers<AbortSignal>()
+  const complete =
+    Promise.withResolvers<
+      import('../src/RemoteContainer.ts').ContainerBackend
+    >()
+  let disposed = 0
+  const gateway = await createRemoteWebGateway({
+    allowedOrigin,
+    backendPort: 1,
+    backendToken: 'host',
+    port: 0,
+    publicUrl: 'https://remote.example.com',
+    workspacePath: '/project',
+    openContainer: async (_workspace, signal) => {
+      started.resolve(signal)
+      return complete.promise
+    },
+  })
+  context.after(() => gateway.close())
+  const pairing = new URL(gateway.pairingUrl!).hash.slice('#token='.length)
+  const { sessionToken } = (await (
+    await post(gateway.localPort, '/auth/pair', pairing)
+  ).json()) as { sessionToken: string }
+  const opening = post(
+    gateway.localPort,
+    '/devcontainer/open?workspace=/project',
+    sessionToken,
+  )
+  const signal = await started.promise
+  await post(gateway.localPort, '/auth/revoke', sessionToken)
+  strictEqual(signal.aborted, true)
+  complete.resolve({
+    port: 1,
+    token: 'unused',
+    workspacePath: '/container',
+    close: async () => {
+      disposed++
+    },
+  })
+  strictEqual((await opening).status, 503)
+  strictEqual(disposed, 1)
+})

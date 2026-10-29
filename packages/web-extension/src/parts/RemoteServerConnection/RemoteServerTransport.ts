@@ -1,3 +1,4 @@
+import * as ContainerWorkspace from '../ContainerWorkspace/ContainerWorkspace.ts'
 import * as Connection from './RemoteServerConnection.ts'
 
 export const connect = async (
@@ -112,7 +113,7 @@ export const getTerminalMessage = (
     throw new Error('Remote terminal directory belongs to a different server')
   return {
     ...message,
-    params: [id, decodeURIComponent(location.pathname), ...rest],
+    params: [id, ContainerWorkspace.getPath(location.href), ...rest],
   }
 }
 
@@ -123,7 +124,7 @@ export const request = async (
 ): Promise<unknown> => {
   if (!Connection.getOptions()) await Connection.restore()
   Connection.assertWorkspace(uri)
-  const path = decodeURIComponent(new URL(uri).pathname)
+  const path = ContainerWorkspace.getPath(uri)
   switch (type) {
     case 'file-search': {
       const result = await Connection.invokeProcess(

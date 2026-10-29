@@ -4,6 +4,7 @@ import {
   showQuickPick,
   showNotification,
 } from '@lvce-editor/api'
+import * as ContainerWorkspace from '../ContainerWorkspace/ContainerWorkspace.ts'
 import * as RemoteServerConnection from '../RemoteServerConnection/RemoteServerConnection.ts'
 import * as Session from '../RemoteServerSession/RemoteServerSession.ts'
 
@@ -373,7 +374,7 @@ export const prepareWorkspace = async (
     command: RemoteServerConnection.commandId,
     disposeCommand: 'remote-server.releaseWorkspace',
     remoteCliUrl: await getRemoteCliUrl(),
-    workspacePath: decodeURIComponent(url.pathname),
+    workspacePath: ContainerWorkspace.getPath(uri),
   }
 }
 
@@ -384,4 +385,85 @@ export const disconnectAccount = async (): Promise<void> => {
   const options = RemoteServerConnection.getOptions()
   if (options?.account) await RemoteServerConnection.revoke()
   else if (!options) await RemoteServerConnection.dispose()
+}
+
+const containerState = { changing: false }
+
+const switchContainerWorkspace = async (
+  previous: RemoteServerConnection.ConnectionOptions,
+  next: RemoteServerConnection.ConnectionOptions,
+  setUri: SetWorkspaceUri,
+): Promise<void> => {
+  RemoteServerConnection.set(next)
+  const generation = RemoteServerConnection.getGeneration()
+  try {
+    await Session.save(next)
+    const connection = await prepareWorkspace(next.workspaceUri!, false)
+    if (!connection) throw new Error('Container workspace is unavailable')
+    await setUri(next.workspaceUri!, '/', connection)
+  } catch (error) {
+    if (generation === RemoteServerConnection.getGeneration()) {
+      RemoteServerConnection.set(previous)
+      await Session.save(previous)
+    }
+    throw error
+  }
+}
+
+export const reopenInContainer = async (
+  getUri: () => Promise<string>,
+  setUri: SetWorkspaceUri = setWorkspaceUri,
+): Promise<void> => {
+  if (containerState.changing)
+    throw new Error('A container workspace change is already in progress')
+  containerState.changing = true
+  try {
+    const original = await getUri()
+    if (!RemoteServerConnection.getOptions())
+      await RemoteServerConnection.restore()
+    RemoteServerConnection.assertWorkspace(original)
+    if (ContainerWorkspace.getContainer(original)) return
+    const previous = RemoteServerConnection.getOptions()!
+    const result = await RemoteServerConnection.openContainer(original)
+    if (original !== (await getUri()))
+      throw new Error('Workspace changed while the container was starting')
+    await switchContainerWorkspace(
+      previous,
+      {
+        ...previous,
+        hostWorkspaceUri: original,
+        workspaceUri: ContainerWorkspace.create(
+          original,
+          result.id,
+          result.workspacePath,
+        ),
+      },
+      setUri,
+    )
+  } finally {
+    containerState.changing = false
+  }
+}
+
+export const reopenOnHost = async (
+  setUri: SetWorkspaceUri = setWorkspaceUri,
+): Promise<void> => {
+  if (containerState.changing)
+    throw new Error('A container workspace change is already in progress')
+  if (!RemoteServerConnection.getOptions())
+    await RemoteServerConnection.restore()
+  const previous = RemoteServerConnection.getOptions()
+  if (!previous?.hostWorkspaceUri)
+    throw new Error('The workspace is already on the host')
+  containerState.changing = true
+  try {
+    const { hostWorkspaceUri, ...options } = previous
+    await switchContainerWorkspace(
+      previous,
+      { ...options, workspaceUri: hostWorkspaceUri },
+      setUri,
+    )
+  } finally {
+    containerState.changing = false
+  }
 }

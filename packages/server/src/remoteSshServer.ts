@@ -21,6 +21,7 @@ import * as CloudflareTunnel from './CloudflareTunnel.ts'
 import * as RemoteWebControl from './RemoteWebControl.ts'
 import * as RemoteCli from './parts/RemoteCli/RemoteCli.ts'
 import { createRemoteWebGateway } from './RemoteWebGateway.ts'
+import * as RemoteContainer from './RemoteContainer.ts'
 
 declare const __LVCE_REMOTE_SSH_SERVER_VERSION__: string
 declare const __LVCE_REMOTE_SSH_EDITOR_VERSION__: string
@@ -690,6 +691,12 @@ const runRemoteWebServer = async (
   let closeControl: (() => Promise<void>) | undefined
   try {
     const gateway = await createRemoteWebGateway({
+      openContainer: (workspace, signal) =>
+        RemoteContainer.openContainer(
+          RemoteContainer.getInstallationDirectory(),
+          workspace,
+          signal,
+        ),
       accountAccess: tunnel?.accountAccess,
       allowedOrigin,
       backendPort: state.backendPort,
