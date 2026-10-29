@@ -32,7 +32,8 @@
     "onCommand:remote-server.getMachines",
     "onCommand:remote-server.authorizeBrowser",
     "onCommand:remote-server.accountWillChange",
-    "onCommand:remote-server.accountDidChange"
+    "onCommand:remote-server.accountDidChange",
+    "onCommand:remote-server.resolveHttpPreview"
   ],
   "commands": [
     {
@@ -97,6 +98,10 @@
     },
     {
       "id": "remote-server.accountDidChange",
+      "internal": true
+    },
+    {
+      "id": "remote-server.resolveHttpPreview",
       "internal": true
     }
   ],
