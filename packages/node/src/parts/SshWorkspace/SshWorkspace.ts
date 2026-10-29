@@ -1,4 +1,5 @@
 import * as RemoteSshUri from '../RemoteSshUri/RemoteSshUri.ts'
+import { disposeWorkspace as disposeSshWorkspace } from '../SshTransport/SshTransport.ts'
 import {
   invokeWorkspaceBackend,
   forwardPort as forwardSshPort,
@@ -66,6 +67,20 @@ export const stopForwardPort = async (
   port: number,
 ): Promise<void> => {
   await stopSshForwardPort(RemoteSshUri.parse(uri), port)
+}
+
+export const disposeWorkspace = async (
+  uri: string,
+  nextWorkspaceUri = '',
+): Promise<void> => {
+  const location = RemoteSshUri.parse(uri)
+  if (nextWorkspaceUri.startsWith('remote-ssh://')) {
+    const nextLocation = RemoteSshUri.parse(nextWorkspaceUri)
+    if (location.identity === nextLocation.identity) {
+      return
+    }
+  }
+  await disposeSshWorkspace(location)
 }
 
 export const getForwardedPorts = async (

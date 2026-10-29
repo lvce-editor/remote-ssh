@@ -18,6 +18,27 @@ const state = {
   portProviderRegistration: undefined as { dispose: () => void } | undefined,
 }
 
+const prepareWorkspace = async (workspaceUri: string): Promise<unknown> => {
+  const prepared = await Connect.prepare(workspaceUri)
+  if (!prepared) {
+    return false
+  }
+  return { disposeCommand: 'remote-ssh.disposeWorkspace' }
+}
+
+const disposeWorkspace = async (
+  workspaceUri: string,
+  nextWorkspaceUri: string,
+): Promise<void> => {
+  ProcessConnection.disposeWorkspace(workspaceUri)
+  RemoteCli.stopWorkspace(workspaceUri)
+  await Rpc.invoke(
+    'SshWorkspace.disposeWorkspace',
+    workspaceUri,
+    nextWorkspaceUri,
+  )
+}
+
 export const activate = async (): Promise<void> => {
   if (state.activated) {
     return
@@ -65,8 +86,12 @@ export const activate = async (): Promise<void> => {
       id: 'remote-ssh.stopForwardPort',
     })
     registerCommand({
-      execute: (workspaceUri: string) => Connect.prepare(workspaceUri),
+      execute: prepareWorkspace,
       id: 'remote-ssh.prepareWorkspace',
+    })
+    registerCommand({
+      execute: disposeWorkspace,
+      id: 'remote-ssh.disposeWorkspace',
     })
     registerCommand({
       execute: ProcessConnection.connect,

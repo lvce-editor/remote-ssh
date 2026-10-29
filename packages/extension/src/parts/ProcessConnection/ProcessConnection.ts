@@ -3,13 +3,14 @@ import * as WorkspaceConnection from '../WorkspaceConnection/WorkspaceConnection
 
 const state = { generation: 0 }
 
-const connections = new Set<() => void>()
+const connections = new Map<string, Set<() => void>>()
 const connectionTimeout = 30_000
 
 export const bridge = (
   port: MessagePort,
   socket: WebSocket,
   mapMessage: (message: unknown) => unknown = (message) => message,
+  workspaceUri = '',
 ): Promise<void> => {
   return new Promise<void>((resolve, reject) => {
     let opened = false
@@ -20,7 +21,11 @@ export const bridge = (
       }
       disposed = true
       clearTimeout(timeout)
-      connections.delete(close)
+      const workspaceConnections = connections.get(workspaceUri)
+      workspaceConnections?.delete(close)
+      if (workspaceConnections?.size === 0) {
+        connections.delete(workspaceUri)
+      }
       socket.onopen = null
       socket.onmessage = null
       socket.onerror = null
@@ -35,7 +40,12 @@ export const bridge = (
       }
     }
     const timeout = setTimeout(close, connectionTimeout)
-    connections.add(close)
+    let workspaceConnections = connections.get(workspaceUri)
+    if (!workspaceConnections) {
+      workspaceConnections = new Set()
+      connections.set(workspaceUri, workspaceConnections)
+    }
+    workspaceConnections.add(close)
     port.addEventListener('close', close)
     port.onmessageerror = close
     socket.onerror = close
@@ -107,6 +117,7 @@ export const connect = async (
       type === 'terminal-process'
         ? (message): unknown => getTerminalMessage(message, workspaceUri)
         : undefined,
+      workspaceUri,
     )
   } catch (error) {
     port.close()
@@ -116,7 +127,19 @@ export const connect = async (
 
 export const dispose = (): void => {
   state.generation++
-  for (const close of connections) {
+  for (const workspaceConnections of connections.values()) {
+    for (const close of workspaceConnections) {
+      close()
+    }
+  }
+}
+
+export const disposeWorkspace = (workspaceUri: string): void => {
+  const workspaceConnections = connections.get(workspaceUri)
+  if (!workspaceConnections) {
+    return
+  }
+  for (const close of workspaceConnections) {
     close()
   }
 }

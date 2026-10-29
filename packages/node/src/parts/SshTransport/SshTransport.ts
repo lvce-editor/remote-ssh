@@ -44,6 +44,7 @@ interface OpenMessage extends OpenRequest {
 type ServerMessage = OpenMessage | ReadyMessage
 
 export interface Connection {
+  readonly dispose?: () => Promise<void>
   readonly forwardPort: (
     workspacePath: string,
     remotePort: number,
@@ -332,6 +333,9 @@ class RemoteConnection implements Connection {
     WorkspaceBackendRpc.WorkspaceBackendRpc
   >()
   private readonly child: ChildProcessWithoutNullStreams
+  private readonly childClosed: Promise<void>
+  private childHasClosed = false
+  private resolveChildClosed: () => void = () => {}
   private readonly controlPath: string
   private readonly localPort: number
   private readonly location: RemoteLocation
@@ -374,6 +378,9 @@ class RemoteConnection implements Connection {
   ) {
     this.allowCompatible = allowCompatible
     this.child = child
+    this.childClosed = new Promise((resolve) => {
+      this.resolveChildClosed = resolve
+    })
     this.location = location
     this.controlPath = controlPath
     this.localPort = localPort
@@ -411,6 +418,8 @@ class RemoteConnection implements Connection {
       const stderr = Buffer.concat(this.stderr).toString('utf8').trim()
       const suffix = code === null ? '' : ` (status ${code})`
       this.close(new Error(stderr || `Remote SSH connection closed${suffix}`))
+      this.childHasClosed = true
+      this.resolveChildClosed()
     })
   }
 
@@ -592,6 +601,26 @@ class RemoteConnection implements Connection {
     } catch (error) {
       this.close(error instanceof Error ? error : new Error(String(error)))
       this.child.kill()
+    }
+  }
+
+  async dispose(): Promise<void> {
+    if (!this.closed) {
+      this.handleAbort()
+    }
+    let timeout: ReturnType<typeof setTimeout> | undefined
+    await Promise.race([
+      this.childClosed,
+      new Promise<void>((resolve) => {
+        timeout = setTimeout(resolve, 5000)
+      }),
+    ])
+    if (timeout) {
+      clearTimeout(timeout)
+    }
+    if (!this.childHasClosed) {
+      this.child.kill('SIGKILL')
+      await this.childClosed
     }
   }
 
@@ -998,6 +1027,24 @@ export const connectWorkspaceBackend = async (
 ): Promise<WorkspaceBackend> => {
   const connection = await getConnection(location, operationId)
   return connection.getWorkspaceBackend()
+}
+
+export const disposeWorkspace = async (
+  location: RemoteLocation,
+): Promise<void> => {
+  const setup = connections.get(location.identity)
+  if (!setup) {
+    return
+  }
+  connections.delete(location.identity)
+  connectionProgress.delete(location.identity)
+  setup.controller.abort()
+  try {
+    const connection = await setup.promise
+    await connection.dispose?.()
+  } catch {
+    // An in-progress connection rejects when its abort signal is handled.
+  }
 }
 
 export const forwardPort = async (

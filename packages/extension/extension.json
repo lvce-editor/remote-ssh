@@ -30,11 +30,16 @@
     "onFileSystem:remote-ssh",
     "onCommand:remote-ssh.request",
     "onPorts:remote-ssh",
-    "onCommand:remote-ssh.cloudflare"
+    "onCommand:remote-ssh.cloudflare",
+    "onCommand:remote-ssh.disposeWorkspace"
   ],
   "commands": [
     {
       "id": "remote-ssh.prepareWorkspace",
+      "internal": true
+    },
+    {
+      "id": "remote-ssh.disposeWorkspace",
       "internal": true
     },
     {

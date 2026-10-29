@@ -24,7 +24,7 @@
   "devDependencies": {
     "@lvce-editor/api": "^9.54.0",
     "@lvce-editor/eslint-config": "^18.7.1",
-    "@lvce-editor/server": "0.126.22",
+    "@lvce-editor/server": "0.126.23",
     "@types/node": "^26.0.1",
     "eslint": "^10.9.0",
     "jest": "^30.4.2",

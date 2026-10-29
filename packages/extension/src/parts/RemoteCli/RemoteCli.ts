@@ -137,4 +137,8 @@ export const stop = (): void => {
   watcherTokens.clear()
 }
 
+export const stopWorkspace = (workspaceUri: string): void => {
+  watcherTokens.delete(workspaceUri)
+}
+
 export const _reset = stop
