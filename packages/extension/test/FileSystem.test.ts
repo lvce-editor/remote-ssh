@@ -195,7 +195,10 @@ test('measures overlapping reads independently', async () => {
 })
 
 test('directory versions are requested without a remote directory transfer', async () => {
-  const invoke = jest.fn(async (_method: string, ..._params: readonly unknown[]) => 'connection:version')
+  const invoke = jest.fn(
+    async (_method: string, ..._params: readonly unknown[]) =>
+      'connection:version',
+  )
   const fileSystem = createRemoteFileSystem(invoke)
   await expect(
     fileSystem.getDirectoryVersion('remote-ssh://host/workspace'),
