@@ -132,8 +132,8 @@ const installBuiltinExtensions = async (
 
   const containerPath = path.join(extensionsPath, 'builtin.devcontainer')
   const containerArchive = await downloadVerified(
-    'https://github.com/lvce-editor/devcontainer/releases/download/v0.18.5/devcontainer-v0.18.5.tar.br',
-    '4ef98d128a076951ee9250897da7614f99f69600cda871e18ccbeee883dce1cd',
+    'https://github.com/lvce-editor/devcontainer/releases/download/v0.19.0/devcontainer-v0.19.0.tar.br',
+    'd84c0e97b6ed0c50884cb5658ba37ee6791102c5dcb9c193da3c13004469da60',
   )
   const containerTar = path.join(
     serverBuildDirectory,
