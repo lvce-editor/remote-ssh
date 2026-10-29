@@ -1,6 +1,7 @@
 import * as ContainerWorkspace from '../ContainerWorkspace/ContainerWorkspace.ts'
 import { RemoteServerError } from '../RemoteServerError/RemoteServerError.ts'
 import * as Session from '../RemoteServerSession/RemoteServerSession.ts'
+import { revokePreviews } from './RemoteHttpPreview.ts'
 
 export interface ConnectionOptions {
   readonly account?: boolean
@@ -516,8 +517,10 @@ export const getOptions = (): ConnectionOptions | undefined => state.options
 
 export const releaseWorkspace = async (uri: string): Promise<void> => {
   const { options } = state
-  if (options && new URL(uri).host === new URL(options.websocketUrl).host)
+  if (options && new URL(uri).host === new URL(options.websocketUrl).host) {
     set(options)
+    await revokePreviews(options)
+  }
 }
 
 export const getGeneration = (): number => state.generation

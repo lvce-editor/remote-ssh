@@ -255,7 +255,10 @@ export const createFixture = async ({
       response.once('finish', () =>
         diagnostics.push({
           method: request.method,
-          path: new URL(request.url, 'https://localhost').pathname,
+          path: new URL(request.url, 'https://localhost').pathname.replace(
+            /\/preview\/[a-f0-9]{64}/g,
+            '/preview/<redacted>',
+          ),
           status: response.statusCode,
         }),
       )

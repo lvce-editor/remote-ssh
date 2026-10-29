@@ -1,3 +1,4 @@
+import { verifyHttpPreview } from './verify-http-preview.js'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { chromium, firefox, webkit, expect } from '@playwright/test'
@@ -6,7 +7,9 @@ import { verifyAccountBrowser } from './verify-account-browser.js'
 import { createFixture } from './remote-web-fixture.js'
 
 const redact = (value = '') =>
-  String(value).replace(/(ticket|token)=[^&\s"']+/g, '$1=<redacted>')
+  String(value)
+    .replace(/(ticket|token)=[^&\s"']+/g, '$1=<redacted>')
+    .replace(/\/preview\/[a-f0-9]{64}/g, '/preview/<redacted>')
 
 const fixture = await createFixture()
 if (process.argv.includes('--serve')) {
@@ -369,6 +372,7 @@ if (process.argv.includes('--serve')) {
     ).toContain('created remotely')
     await expect(terminal).toContainText(fixture.workspace)
     expect(socketPaths).toContain('/websocket/terminal-process')
+    await verifyHttpPreview(page, fixture, terminalInput, terminal)
     await page.keyboard.press('Control+Shift+E')
     await expect(
       page.locator('.TreeItem[aria-label="terminal-created.txt"]'),
@@ -430,6 +434,7 @@ if (process.argv.includes('--serve')) {
       await expect(file).toBeVisible({ timeout: 30_000 })
       await page.getByRole('menuitem', { name: 'View', exact: true }).click()
       await page
+        .getByRole('menu')
         .getByRole('menuitem', { name: 'Terminal', exact: true })
         .click()
       const reloadedTerminal = page.locator('.XtermTerminal')

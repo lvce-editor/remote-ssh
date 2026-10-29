@@ -225,6 +225,22 @@ The gateway limits each session to 32 workspace connections, 64 outstanding
 tickets, 120 HTTP/upgrade attempts per minute, and 8 MiB WebSocket payloads and
 queues. The payload limit includes JSON and base64 encoding overhead.
 
+### HTTP previews
+
+The web connector resolves terminal loopback HTTP(S) links through
+`POST /auth/http-preview`, authenticated with the current workspace session.
+The returned `/preview/<grant>/` URL authorizes only the requested loopback
+port and protocol for up to one hour. It does not contain the workspace bearer.
+The native gateway and backend ports are excluded. Disconnecting the workspace,
+revoking the session or stopping the gateway invalidates its previews and closes
+active requests. Reopen the terminal link after expiry.
+
+Preview paths, queries and fragments are retained. Root-relative resources use
+same-origin redirects inside the grant, and cross-origin referrers omit the
+grant. Authentication headers and cookies are not passed to the loopback app;
+this HTTP preview does not support WebSocket upgrades or service workers with
+scope outside the grant. Existing Cloudflare hostnames and ingress remain valid.
+
 ### Browser acceptance tests
 
 Build the static editor and bundled remote backend, then run a browser against

@@ -711,6 +711,16 @@ void test('container workspaces reuse startup per session and bind tickets to th
   strictEqual(starts, 1)
   const container = first as { id: string; workspacePath: string }
   strictEqual(container.workspacePath, '/container')
+  strictEqual(
+    (
+      await post(
+        gateway.localPort,
+        `/auth/http-preview?port=${address.port}`,
+        token,
+      )
+    ).status,
+    400,
+  )
   const target = `/auth/websocket-ticket?process=file-system-process&container=${container.id}`
   const ticket = await (await post(gateway.localPort, target, token)).json()
   strictEqual(

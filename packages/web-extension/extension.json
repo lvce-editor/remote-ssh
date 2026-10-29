@@ -34,7 +34,8 @@
     "onCommand:remote-server.accountWillChange",
     "onCommand:remote-server.accountDidChange",
     "onCommand:remote-server.reopenInContainer",
-    "onCommand:remote-server.reopenOnHost"
+    "onCommand:remote-server.reopenOnHost",
+    "onCommand:remote-server.resolveHttpPreview"
   ],
   "commands": [
     {
@@ -108,6 +109,10 @@
     {
       "id": "remote-server.reopenOnHost",
       "label": "Dev Containers: Reopen on Remote Host"
+    },
+    {
+      "id": "remote-server.resolveHttpPreview",
+      "internal": true
     }
   ],
   "fileSystemProviders": [

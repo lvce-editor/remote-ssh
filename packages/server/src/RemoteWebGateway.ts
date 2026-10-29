@@ -7,6 +7,7 @@ import {
 import type { Duplex } from 'node:stream'
 import type { ContainerBackend } from './RemoteContainer.ts'
 import { WebSocket, WebSocketServer } from 'ws'
+import { createRemoteHttpPreview } from './RemoteHttpPreview.ts'
 
 const pairingTtl = 10 * 60 * 1000
 const sessionTtl = 24 * 60 * 60 * 1000
@@ -191,6 +192,7 @@ export const createRemoteWebGateway = async (
     cleanups.add(cleanup)
     void cleanup.finally(() => cleanups.delete(cleanup))
     sessions.delete(token)
+    previews.revoke(token)
     for (const [ticket, value] of tickets) {
       if (value.sessionToken === token) tickets.delete(ticket)
     }
@@ -215,6 +217,19 @@ export const createRemoteWebGateway = async (
     }
     return session
   }
+  const previews = createRemoteHttpPreview({
+    publicUrl,
+    allowedOrigin,
+    validSession: (token) => !!getSession(token),
+    blockedPorts: () => [
+      options.backendPort,
+      ...[...sessions.values()].flatMap((session) =>
+        [...session.containers.values()].map((backend) => backend.port),
+      ),
+      options.port,
+      (server.address() as { port: number } | null)?.port || 0,
+    ],
+  })
   const checkAccount = async (): Promise<void> => {
     if (!options.accountAccess || checkingAccount || closed) return
     checkingAccount = true
@@ -279,6 +294,7 @@ export const createRemoteWebGateway = async (
   const server = createServer(
     { maxHeaderSize: 8192, requestTimeout: 10_000, headersTimeout: 10_000 },
     (request, response) => {
+      if (previews.handle(request, response)) return
       if (request.headers.origin !== allowedOrigin) {
         writeJson(response, 403, { error: 'Origin is not allowed' })
         return
@@ -434,6 +450,24 @@ export const createRemoteWebGateway = async (
               error: error instanceof Error ? error.message : String(error),
             }),
         )
+        return
+      }
+      if (url.pathname === '/auth/http-preview') {
+        try {
+          const previewUrl = previews.create(
+            token,
+            Number(url.searchParams.get('port')),
+            url.searchParams.get('protocol') || 'http:',
+          )
+          writeJson(response, 200, { previewUrl })
+        } catch (error) {
+          writeJson(response, 400, { error: (error as Error).message })
+        }
+        return
+      }
+      if (url.pathname === '/auth/revoke-previews') {
+        previews.revoke(token)
+        writeJson(response, 200, { ok: true })
         return
       }
       if (url.pathname === '/auth/session') {
@@ -688,6 +722,7 @@ export const createRemoteWebGateway = async (
       clearInterval(accountTimer)
       revoke()
       await Promise.allSettled(cleanups)
+      previews.close()
       for (const client of clients) client.terminate()
       await new Promise<void>((resolve, reject) =>
         server.close((error) => (error ? reject(error) : resolve())),
