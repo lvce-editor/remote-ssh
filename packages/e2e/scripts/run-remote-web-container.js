@@ -79,15 +79,17 @@ try {
   await expect(
     page.getByRole('tab', { name: 'Explorer', exact: true }),
   ).toBeVisible({ timeout: 30000 })
-  const command = async (label) => {
+  const command = async (label, opensInput = false) => {
     await page.keyboard.press('Control+Shift+P')
     const input = page.locator('.QuickPick input')
     await expect(input).toBeVisible()
+    await expect(input).toHaveValue('>')
     await input.fill(`>${label}`)
     await expect(
       page.getByRole('option', { name: label, exact: true }),
     ).toBeVisible()
     await page.keyboard.press('Enter')
+    if (!opensInput) await expect(page.locator('.QuickPick')).toHaveCount(0)
   }
   const executeCommand = async (...args) =>
     page.evaluate(async (args) => {
@@ -96,7 +98,7 @@ try {
       )
       return executeCommand(...args)
     }, args)
-  await command('Remote Server: Connect with Pairing URL')
+  await command('Remote Server: Connect with Pairing URL', true)
   const input = page.locator('.QuickPick input')
   await expect(input).toHaveAttribute(
     'placeholder',
