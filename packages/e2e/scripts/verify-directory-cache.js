@@ -48,17 +48,10 @@ export const verifyDirectoryCache = async (page, fixture, diagnostics) => {
   expect(count('FileSystem.readDirWithFileTypes')).toBe(listings)
   expect(count('FileSystem.getDirectoryVersion')).toBeGreaterThan(validations)
 
-  // Recreate the workspace view while preserving the remote provider session.
-  const workspaceUri = await execute('Workspace.getUri')
-  const connection = await execute(
-    'ExtensionHost.executeCommand',
-    'remote-server.prepareWorkspace',
-    workspaceUri,
-    false,
-  )
-  await execute('Workspace.setUri', remoteUri.href, '/', connection)
-  await expect(first).toBeVisible()
-  await execute('Workspace.setUri', workspaceUri, '/', connection)
+  // Recreate Explorer without changing the workspace or its provider session.
+  await execute('Layout.openSideBarViewlet', 'Search')
+  await expect(folder).toBeHidden()
+  await execute('Layout.openSideBarViewlet', 'Explorer')
   await expect(folder).toBeVisible()
   if ((await folder.getAttribute('aria-expanded')) !== 'true') {
     await folder.click()
