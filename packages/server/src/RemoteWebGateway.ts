@@ -5,6 +5,7 @@ import {
   type ServerResponse,
 } from 'node:http'
 import type { Duplex } from 'node:stream'
+import type { ContainerBackend } from './RemoteContainer.ts'
 import { WebSocket, WebSocketServer } from 'ws'
 
 const pairingTtl = 10 * 60 * 1000
@@ -23,6 +24,10 @@ const allowedProcesses = new Set([
 ])
 
 interface GatewayOptions {
+  readonly openContainer?: (
+    workspace: string,
+    signal: AbortSignal,
+  ) => Promise<ContainerBackend>
   readonly allowedOrigin: string
   readonly backendPort: number
   readonly backendToken: string
@@ -39,6 +44,9 @@ interface GatewayOptions {
 }
 
 interface Session {
+  readonly controller: AbortController
+  readonly containers: Map<string, ContainerBackend>
+  readonly opening: Map<string, Promise<{ id: string; workspacePath: string }>>
   readonly account: boolean
   readonly expiresAt: number | undefined
   readonly clients: Set<WebSocket>
@@ -49,6 +57,7 @@ interface Ticket {
   readonly sessionToken: string
   readonly expiresAt: number
   readonly target: string
+  readonly container: string
 }
 
 export interface RemoteWebGateway {
@@ -147,6 +156,7 @@ export const createRemoteWebGateway = async (
   const websocketUrl = new URL(publicUrl)
   websocketUrl.protocol = publicUrl.protocol === 'https:' ? 'wss:' : 'ws:'
   const sessions = new Map<string, Session>()
+  const cleanups = new Set<Promise<unknown>>()
   const tickets = new Map<string, Ticket>()
   const clients = new Set<WebSocket>()
   const usedAuthorizations = new Map<string, number>()
@@ -173,6 +183,13 @@ export const createRemoteWebGateway = async (
     const session = sessions.get(token)
     if (!session) return
     clearTimeout(session.timer)
+    session.controller.abort()
+    const cleanup = Promise.allSettled([
+      ...[...session.containers.values()].map((backend) => backend.close()),
+      ...session.opening.values(),
+    ])
+    cleanups.add(cleanup)
+    void cleanup.finally(() => cleanups.delete(cleanup))
     sessions.delete(token)
     for (const [ticket, value] of tickets) {
       if (value.sessionToken === token) tickets.delete(ticket)
@@ -351,6 +368,9 @@ export const createRemoteWebGateway = async (
             : undefined
         timer?.unref()
         sessions.set(sessionToken, {
+          controller: new AbortController(),
+          containers: new Map(),
+          opening: new Map(),
           account,
           clients: new Set(),
           expiresAt,
@@ -373,6 +393,47 @@ export const createRemoteWebGateway = async (
         writeJson(response, 401, {
           error: 'Session expired or revoked; pair again',
         })
+        return
+      }
+      if (url.pathname === '/devcontainer/open' && options.openContainer) {
+        const workspace = url.searchParams.get('workspace') || ''
+        if (
+          !workspace.startsWith('/') ||
+          workspace.includes('\0') ||
+          workspace.length > 4096
+        ) {
+          writeJson(response, 400, {
+            error: 'Invalid container workspace path',
+          })
+          return
+        }
+        let opening = session.opening.get(workspace)
+        if (!opening) {
+          if (session.opening.size >= 4) {
+            writeJson(response, 429, { error: 'Too many container workspaces' })
+            return
+          }
+          opening = options
+            .openContainer(workspace, session.controller.signal)
+            .then(async (backend) => {
+              if (session.controller.signal.aborted) {
+                await backend.close()
+                throw new Error('Remote session was disconnected')
+              }
+              const id = randomBytes(16).toString('hex')
+              session.containers.set(id, backend)
+              return { id, workspacePath: backend.workspacePath }
+            })
+          session.opening.set(workspace, opening)
+          void opening.catch(() => session.opening.delete(workspace))
+        }
+        void opening.then(
+          (result) => writeJson(response, 200, result),
+          (error: unknown) =>
+            writeJson(response, 503, {
+              error: error instanceof Error ? error.message : String(error),
+            }),
+        )
         return
       }
       if (url.pathname === '/auth/session') {
@@ -407,7 +468,20 @@ export const createRemoteWebGateway = async (
           Date.now() + ticketTtl,
           session.expiresAt ?? Number.POSITIVE_INFINITY,
         )
-        tickets.set(ticket, { expiresAt, sessionToken: token, target })
+        const container = url.searchParams.get('container') || ''
+        if (container && !session.containers.has(container)) {
+          writeJson(response, 404, {
+            error:
+              'Container connection is no longer available; reopen from the host workspace',
+          })
+          return
+        }
+        tickets.set(ticket, {
+          container,
+          expiresAt,
+          sessionToken: token,
+          target,
+        })
         writeJson(response, 200, {
           expiresAt: new Date(expiresAt).toISOString(),
           ticket,
@@ -454,7 +528,9 @@ export const createRemoteWebGateway = async (
       !ticket ||
       !session ||
       Date.now() >= ticket.expiresAt ||
-      ticket.target !== target
+      ticket.target !== target ||
+      ticket.container !== (url.searchParams.get('container') || '') ||
+      (ticket.container && !session.containers.has(ticket.container))
     ) {
       rejectUpgrade(socket, '401 Unauthorized')
       return
@@ -464,11 +540,18 @@ export const createRemoteWebGateway = async (
       return
     }
     webSocketServer.handleUpgrade(request, socket, head, (client) => {
+      const container = session.containers.get(ticket.container)
+      const containerBackend = !target.startsWith('/websocket/terminal-process')
+        ? container
+        : undefined
       const backendUrl = new URL(
         target,
-        `ws://127.0.0.1:${options.backendPort}`,
+        `ws://127.0.0.1:${containerBackend?.port ?? options.backendPort}`,
       )
-      backendUrl.searchParams.set('token', options.backendToken)
+      backendUrl.searchParams.set(
+        'token',
+        containerBackend?.token ?? options.backendToken,
+      )
       const backend = new WebSocket(backendUrl, {
         handshakeTimeout: 10_000,
         maxPayload: 8 * 1024 * 1024,
@@ -478,6 +561,9 @@ export const createRemoteWebGateway = async (
         session.clients.add(connection)
       }
       let disposed = false
+      const terminalDisposals = new Set<() => Promise<void>>()
+      let serial = Promise.resolve()
+      let serialBytes = 0
       const pending: Array<{
         readonly data: Buffer
         readonly isBinary: boolean
@@ -488,6 +574,12 @@ export const createRemoteWebGateway = async (
         disposed = true
         clearTimeout(openTimeout)
         pending.length = 0
+        for (const dispose of terminalDisposals) {
+          const cleanup = dispose().catch(() => {})
+          cleanups.add(cleanup)
+          void cleanup.finally(() => cleanups.delete(cleanup))
+        }
+        terminalDisposals.clear()
         for (const connection of [client, backend]) {
           clients.delete(connection)
           session.clients.delete(connection)
@@ -508,16 +600,58 @@ export const createRemoteWebGateway = async (
           if (error) closeBoth()
         })
       }
-      client.on('message', (data, isBinary) => {
-        const value = Buffer.from(data as ArrayBuffer)
+      const forward = (value: Buffer, isBinary: boolean): void => {
+        if (disposed) return
         if (backend.readyState === WebSocket.OPEN) {
           send(backend, value, isBinary)
         } else if (pendingBytes + value.byteLength <= maxBufferedBytes) {
           pendingBytes += value.byteLength
           pending.push({ data: value, isBinary })
-        } else {
-          closeBoth()
+        } else closeBoth()
+      }
+      client.on('message', (data, isBinary) => {
+        const value = Buffer.from(data as ArrayBuffer)
+        if (
+          !container?.terminal ||
+          !target.startsWith('/websocket/terminal-process')
+        ) {
+          forward(value, isBinary)
+          return
         }
+        serialBytes += value.byteLength
+        if (serialBytes > maxBufferedBytes) {
+          closeBoth()
+          return
+        }
+        serial = serial
+          .then(async () => {
+            if (disposed) return
+            const message = JSON.parse(value.toString())
+            if (message.method === 'Terminal.create') {
+              if (
+                !Array.isArray(message.params) ||
+                typeof message.params[1] !== 'string'
+              )
+                throw new Error('Invalid terminal creation')
+              const options = await container.terminal!(message.params[1])
+              if (disposed) {
+                await options.dispose()
+                return
+              }
+              terminalDisposals.add(options.dispose)
+              message.params = [
+                message.params[0],
+                options.cwd,
+                options.command,
+                options.args,
+              ]
+            }
+            forward(Buffer.from(JSON.stringify(message)), false)
+          })
+          .catch(closeBoth)
+          .finally(() => {
+            serialBytes -= value.byteLength
+          })
       })
       backend.on('open', () => {
         clearTimeout(openTimeout)
@@ -553,11 +687,13 @@ export const createRemoteWebGateway = async (
       closed = true
       clearInterval(accountTimer)
       revoke()
+      await Promise.allSettled(cleanups)
       for (const client of clients) client.terminate()
       await new Promise<void>((resolve, reject) =>
         server.close((error) => (error ? reject(error) : resolve())),
       )
       webSocketServer.close()
+      await Promise.allSettled(cleanups)
     },
     localPort: address.port,
     pair,

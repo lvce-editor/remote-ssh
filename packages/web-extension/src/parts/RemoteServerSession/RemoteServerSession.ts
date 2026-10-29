@@ -1,4 +1,5 @@
 import type { ConnectionOptions } from '../RemoteServerConnection/RemoteServerConnection.ts'
+import * as ContainerWorkspace from '../ContainerWorkspace/ContainerWorkspace.ts'
 
 export interface Storage {
   readonly deleteSecret: (key: string) => Promise<void>
@@ -78,7 +79,11 @@ const isValid = (value: unknown): value is ConnectionOptions => {
       !endpoint.search &&
       !endpoint.hash &&
       workspace.protocol === 'remote-server:' &&
-      workspace.host === endpoint.host &&
+      (ContainerWorkspace.getContainer(options.workspaceUri)
+        ? typeof options.hostWorkspaceUri === 'string' &&
+          new URL(options.hostWorkspaceUri).host === endpoint.host &&
+          new URL(options.hostWorkspaceUri).protocol === 'remote-server:'
+        : workspace.host === endpoint.host) &&
       !workspace.username &&
       !workspace.password &&
       !workspace.search &&

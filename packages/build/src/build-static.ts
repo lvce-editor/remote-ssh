@@ -80,12 +80,30 @@ await cp(
   path.join(root, 'dist', commitHash, 'extensions', gitExtensionManifest.id),
   { force: true, recursive: true },
 )
-const extraExtensions = [webExtensionManifest, gitExtensionManifest].map(
-  (manifest) => ({
-    ...manifest,
-    path: `${process.env.PATH_PREFIX || ''}/${commitHash}/extensions/${manifest.id}`,
-  }),
+const containerExtensionPath = path.join(
+  root,
+  '.tmp',
+  'remote-ssh-server',
+  'lvce-server',
+  'extensions',
+  'builtin.devcontainer',
 )
+const containerManifest = await readJson<ExtensionManifest>(
+  path.join(containerExtensionPath, 'extension.json'),
+)
+await cp(
+  containerExtensionPath,
+  path.join(root, 'dist', commitHash, 'extensions', containerManifest.id),
+  { force: true, recursive: true },
+)
+const extraExtensions = [
+  webExtensionManifest,
+  gitExtensionManifest,
+  containerManifest,
+].map((manifest) => ({
+  ...manifest,
+  path: `${process.env.PATH_PREFIX || ''}/${commitHash}/extensions/${manifest.id}`,
+}))
 const extraIds = new Set(extraExtensions.map(({ id }) => id))
 for (const file of ['extensions.json', 'webExtensions.json']) {
   const location = path.join(configDirectory, file)

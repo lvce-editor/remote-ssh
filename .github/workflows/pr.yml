@@ -102,3 +102,22 @@ jobs:
         env:
           LVCE_REMOTE_WEB_BROWSER: ${{ matrix.browser }}
           LVCE_REMOTE_WEB_PATH_PREFIX: /lvce-editor
+  remote-container:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: '.nvmrc'
+      - run: npm ci
+      - run: npm run build:static
+      - name: Install Chromium
+        working-directory: packages/e2e
+        run: npx playwright install --with-deps chromium
+      - name: Pull container integration image
+        run: docker pull mcr.microsoft.com/devcontainers/base:ubuntu24.04
+      - name: Container backend lifecycle
+        run: node --test packages/server/test/RemoteContainer.e2e.ts
+      - name: Reopen in container through an authenticated tunnel
+        run: node packages/e2e/scripts/run-remote-web-container.js

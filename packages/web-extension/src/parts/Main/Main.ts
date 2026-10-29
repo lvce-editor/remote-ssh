@@ -1,6 +1,7 @@
 import {
   activate as activateExtensionApi,
   registerCommand,
+  getWorkspaceUri,
   registerFileSystemProvider,
   showNotification,
   getSecret,
@@ -26,6 +27,14 @@ export const activate = async (): Promise<void> => {
   state.activated = true
   try {
     await activateExtensionApi()
+    registerCommand({
+      execute: () => RemoteServerConnect.reopenInContainer(getWorkspaceUri),
+      id: 'remote-server.reopenInContainer',
+    })
+    registerCommand({
+      execute: () => RemoteServerConnect.reopenOnHost(),
+      id: 'remote-server.reopenOnHost',
+    })
     Session.configure({
       deleteSecret,
       getAccountId: Cloudflare.client.getAccountId,
