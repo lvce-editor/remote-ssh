@@ -10,6 +10,7 @@ import {
 import * as Cloudflare from '../../../../shared/src/parts/Cloudflare/Cloudflare.ts'
 import * as Benchmark from '../RemoteServerBenchmark/RemoteServerBenchmark.ts'
 import * as RemoteServerConnect from '../RemoteServerConnect/RemoteServerConnect.ts'
+import * as HttpPreview from '../RemoteServerConnection/RemoteHttpPreview.ts'
 import * as RemoteServerConnection from '../RemoteServerConnection/RemoteServerConnection.ts'
 import * as Transport from '../RemoteServerConnection/RemoteServerTransport.ts'
 import { fileSystem } from '../RemoteServerFileSystem/RemoteServerFileSystem.ts'
@@ -66,6 +67,10 @@ export const activate = async (): Promise<void> => {
     registerCommand({
       execute: Cloudflare.client.resume,
       id: 'remote-server.accountDidChange',
+    })
+    registerCommand({
+      execute: HttpPreview.resolveHttpPreview,
+      id: 'remote-server.resolveHttpPreview',
     })
     registerFileSystemProvider(fileSystem)
     registerFileSystemProvider(Benchmark.reportProvider)
