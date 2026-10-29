@@ -2,6 +2,7 @@ import { afterEach, expect, jest, test } from '@jest/globals'
 import {
   bridge,
   dispose,
+  disposeWorkspace,
   getTerminalMessage,
 } from '../src/parts/ProcessConnection/ProcessConnection.ts'
 
@@ -105,6 +106,35 @@ test('deactivation closes all sockets including connections still opening', asyn
   dispose()
   expect(socket.close).toHaveBeenCalledTimes(1)
   port2.close()
+})
+
+test('workspace disposal closes only process bridges owned by that workspace', async () => {
+  const first = new MessageChannel()
+  const second = new MessageChannel()
+  const firstSocket = createSocket()
+  const secondSocket = createSocket()
+  const uri = 'remote-ssh://user@host/work'
+  const firstOpened = bridge(
+    first.port1,
+    firstSocket as unknown as WebSocket,
+    undefined,
+    uri,
+  )
+  const secondOpened = bridge(
+    second.port1,
+    secondSocket as unknown as WebSocket,
+    undefined,
+    'remote-ssh://user@other/work',
+  )
+  firstSocket.onopen?.()
+  secondSocket.onopen?.()
+  await Promise.all([firstOpened, secondOpened])
+
+  disposeWorkspace(uri)
+  expect(firstSocket.close).toHaveBeenCalledTimes(1)
+  expect(secondSocket.close).not.toHaveBeenCalled()
+  first.port2.close()
+  second.port2.close()
 })
 
 test('terminal requests use a decoded directory on the connected host', () => {

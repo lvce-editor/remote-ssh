@@ -159,4 +159,11 @@ export class ConnectionSession implements Connection {
       this.waiters.push({ reject, resolve })
     })
   }
+
+  async dispose(): Promise<void> {
+    const transports = new Set([this.original, this.active, ...this.closed])
+    for (const transport of transports) {
+      await transport.dispose?.()
+    }
+  }
 }

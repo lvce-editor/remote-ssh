@@ -16,6 +16,9 @@ const fixture = (
   const calls: string[] = []
   return {
     calls,
+    dispose: async (): Promise<void> => {
+      calls.push('terminate')
+    },
     disposeBackendRpcs: (): void => {
       calls.push('dispose')
     },
@@ -114,4 +117,24 @@ void test('failed handover retains original requests and cancellation rejects CL
   const cli = session.waitForOpenRequest()
   controller.abort()
   await rejects(cli, /closed/)
+})
+
+void test('waits for original and active SSH transports to terminate', async () => {
+  const controller = new AbortController()
+  const original = fixture('original')
+  const updated = fixture('updated')
+  const session = new ConnectionSession(
+    original,
+    {
+      backend: { token: 'original', url: 'ws://original' },
+      setBackend: (): void => {},
+    },
+    controller.signal,
+    () => {},
+  )
+  await session.switchTo(updated)
+  controller.abort()
+  await session.dispose()
+  deepStrictEqual(original.calls, ['dispose', 'terminate'])
+  deepStrictEqual(updated.calls, ['terminate'])
 })
