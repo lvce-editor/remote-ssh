@@ -73,6 +73,14 @@ export const createRemoteHttpPreview = (options: {
         throw new TypeError('Invalid preview port or protocol')
       if (!options.validSession(session))
         throw new Error('Session expired or revoked')
+      for (const [key, grant] of grants) {
+        if (
+          grant.session === session &&
+          grant.port === port &&
+          grant.protocol === protocol
+        )
+          return new URL(`/preview/${key}/`, options.publicUrl).href
+      }
       if (
         grants.size >= 64 ||
         [...grants.values()].filter((grant) => grant.session === session)

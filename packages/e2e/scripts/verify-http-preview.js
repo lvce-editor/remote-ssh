@@ -29,12 +29,12 @@ export const verifyHttpPreview = async (
       // This integrated regression is enabled by the consuming LVCE workflow once
       // its renderer includes the iframe host. The producer also runs gateway
       // iframe coverage below against the currently released frontend.
-      await terminalInput.pressSequentially(`printf '\\n${target}\\n'`)
+      await terminalInput.pressSequentially(`printf '%s\\n' '${target}'`)
       await terminalInput.press('Enter')
       const link = terminal.getByText(target, { exact: true }).last()
       await expect(link).toBeVisible()
-      await link.hover()
-      await link.click()
+      await link.hover({ force: true })
+      await link.click({ force: true })
       const frame = page.locator('.SimpleBrowserHtmlPreview iframe')
       await expect(frame).toBeVisible({ timeout: 30_000 })
       await expect(frame.contentFrame().getByRole('heading')).toHaveText(
@@ -89,7 +89,9 @@ export const verifyHttpPreview = async (
       expect(requests).toContain('/asset.js')
       await probe.evaluate(() => window.revokePreviewProbe())
       await frame.evaluate((iframe) => {
-        iframe.src = iframe.src
+        const url = new URL(iframe.src)
+        url.searchParams.set('revoked', '1')
+        iframe.src = url.href
       })
       await expect(frame.contentFrame().locator('body')).toContainText(
         'Preview expired or disconnected',

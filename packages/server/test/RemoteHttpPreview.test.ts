@@ -116,3 +116,56 @@ void test('HTTP previews preserve targets, isolate grants and revoke with the se
   strictEqual(expired.status, 401)
   match(await expired.text(), /expired or disconnected/)
 })
+
+void test('session expiry invalidates previews and revocation closes active streams', async (t) => {
+  const { rejects } = await import('node:assert/strict')
+  const app = createServer((_request, response) => {
+    response.writeHead(200)
+    response.write('streaming')
+  }).listen(0, '127.0.0.1')
+  await once(app, 'listening')
+  t.after(() => {
+    app.closeAllConnections()
+    app.close()
+  })
+  const port = (app.address() as { port: number }).port
+  const gateway = await createRemoteWebGateway({
+    allowedOrigin: origin,
+    backendPort: 1,
+    backendToken: 'internal',
+    port: 0,
+    publicUrl: 'https://remote.example.com',
+    workspacePath: '/workspace',
+    sessionTtl: 60_000,
+  })
+  t.after(() => gateway.close())
+  const local = `http://127.0.0.1:${gateway.localPort}`
+  const post = (path: string, token: string) =>
+    fetch(local + path, {
+      method: 'POST',
+      headers: {
+        origin,
+        authorization: `Bearer ${token}`,
+        'x-lvce-protocol': '1',
+      },
+    })
+  const pair = await post(
+    '/auth/pair',
+    new URL(gateway.pairingUrl!).hash.slice(7),
+  )
+  const { sessionToken } = (await pair.json()) as { sessionToken: string }
+  const grant = await post(`/auth/http-preview?port=${port}`, sessionToken)
+  const { previewUrl } = (await grant.json()) as { previewUrl: string }
+  const path = new URL(previewUrl).pathname
+  const streamed = await fetch(local + path)
+  const body = streamed.text()
+  // Attach the rejection assertion before closing the live response.
+  const rejected = rejects(body)
+  await post('/auth/revoke-previews', sessionToken)
+  await rejected
+  const next = await post(`/auth/http-preview?port=${port}`, sessionToken)
+  const { previewUrl: nextUrl } = (await next.json()) as { previewUrl: string }
+  t.mock.timers.enable({ apis: ['Date'], now: Date.now() })
+  t.mock.timers.tick(60_001)
+  strictEqual((await fetch(local + new URL(nextUrl).pathname)).status, 401)
+})

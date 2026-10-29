@@ -1,9 +1,9 @@
 import { afterEach, expect, jest, test } from '@jest/globals'
-import * as Connection from '../src/parts/RemoteServerConnection/RemoteServerConnection.ts'
 import {
   resolveHttpPreview,
   revokePreviews,
 } from '../src/parts/RemoteServerConnection/RemoteHttpPreview.ts'
+import * as Connection from '../src/parts/RemoteServerConnection/RemoteServerConnection.ts'
 
 const workspace = 'remote-server://remote.example.com/workspace'
 const base = `https://remote.example.com/preview/${'a'.repeat(64)}/`
@@ -11,7 +11,7 @@ afterEach(async () => {
   jest.restoreAllMocks()
   await Connection.dispose()
 })
-const connect = () =>
+const connect = (): void =>
   Connection.set({
     sessionToken: 'workspace-secret',
     websocketUrl: 'wss://remote.example.com/',
@@ -20,12 +20,10 @@ const connect = () =>
 
 test('preserves loopback path, query and fragment without exposing the workspace bearer', async () => {
   connect()
-  const fetchMock = jest
-    .spyOn(globalThis, 'fetch')
-    .mockResolvedValue({
-      ok: true,
-      json: async () => ({ previewUrl: base }),
-    } as Response)
+  const fetchMock = jest.spyOn(globalThis, 'fetch').mockResolvedValue({
+    json: async () => ({ previewUrl: base }),
+    ok: true,
+  } as Response)
   await expect(
     resolveHttpPreview(
       workspace + '/nested',
@@ -37,9 +35,9 @@ test('preserves loopback path, query and fragment without exposing the workspace
       'https://remote.example.com/auth/http-preview?port=8080&protocol=http%3A',
     ),
     expect.objectContaining({
+      headers: { authorization: 'Bearer workspace-secret' },
       method: 'POST',
       redirect: 'error',
-      headers: { authorization: 'Bearer workspace-secret' },
     }),
   )
   fetchMock.mockResolvedValue({ ok: true } as Response)
@@ -76,20 +74,18 @@ test('rejects another workspace and non-loopback targets before requesting a gra
 
 test('rejects an untrusted preview endpoint and a changed workspace', async () => {
   connect()
-  const spy = jest
-    .spyOn(globalThis, 'fetch')
-    .mockResolvedValue({
-      ok: true,
-      json: async () => ({
-        previewUrl: base.replace('remote.example.com', 'evil.example.com'),
-      }),
-    } as Response)
+  const spy = jest.spyOn(globalThis, 'fetch').mockResolvedValue({
+    json: async () => ({
+      previewUrl: base.replace('remote.example.com', 'evil.example.com'),
+    }),
+    ok: true,
+  } as Response)
   await expect(
     resolveHttpPreview(workspace, 'http://127.0.0.1:8080'),
   ).rejects.toThrow('Invalid remote preview endpoint')
   spy.mockImplementation(async () => {
     connect()
-    return { ok: true, json: async () => ({ previewUrl: base }) } as Response
+    return { json: async () => ({ previewUrl: base }), ok: true } as Response
   })
   await expect(
     resolveHttpPreview(workspace, 'http://[::1]:8080'),
