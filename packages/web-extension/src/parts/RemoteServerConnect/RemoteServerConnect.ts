@@ -282,17 +282,35 @@ export const connectAccount = async (
   showPick: typeof showQuickPick = showQuickPick,
   setUri: SetWorkspaceUri = setWorkspaceUri,
   getRemoteCliUrl?: () => Promise<string>,
+  hostname?: string,
 ): Promise<void> => {
+  if (
+    hostname !== undefined &&
+    (typeof hostname !== 'string' ||
+      hostname.length > 253 ||
+      !/^[a-z0-9.-]+$/.test(hostname))
+  )
+    throw new Error('Invalid remote hostname')
   const result = (await execute('remote-server.getMachines')) as {
     machines: AccountMachine[]
   }
   const machines = result.machines.filter((machine) => !machine.disabled)
+  if (
+    hostname !== undefined &&
+    machines.every((machine) => machine.hostname !== hostname)
+  )
+    throw new Error(
+      'This remote machine is disabled or does not belong to your active LVCE account.',
+    )
   if (machines.length === 0)
     throw new Error(
       'No remote machines belong to your LVCE account. Run Remote Server: Manage Tunnel Access to approve a machine.',
     )
-  let selected = machines[0]
-  if (machines.length > 1) {
+  let selected =
+    hostname === undefined
+      ? machines[0]
+      : machines.find((machine) => machine.hostname === hostname)!
+  if (hostname === undefined && machines.length > 1) {
     const choice = (await showPick({
       items: machines.map((machine) => ({
         description: 'LVCE account',

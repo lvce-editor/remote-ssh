@@ -47,7 +47,14 @@ export const activate = async (): Promise<void> => {
       id: 'remote-server.prepareWorkspace',
     })
     registerCommand({
-      execute: RemoteServerConnect.connectAccount,
+      execute: (hostname?: string) =>
+        RemoteServerConnect.connectAccount(
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          hostname,
+        ),
       id: 'remote-server.connectAccount',
     })
     registerCommand({

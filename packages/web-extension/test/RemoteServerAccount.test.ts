@@ -207,3 +207,95 @@ test('signing out revokes an account session saved before the current runtime wa
   expect(values.size).toBe(0)
   expect(Connection.getOptions()).toBeUndefined()
 })
+
+for (const hostname of ['first.test', 'remote.test']) {
+  test(`launch connects to exactly ${hostname} and uses its configured workspace`, async () => {
+    executeCommand.mockImplementation(async (command, target) => {
+      if (command === 'remote-server.getMachines')
+        return {
+          machines: ['first.test', 'remote.test'].map((hostname) => ({
+            browserAccess: true,
+            disabled: false,
+            hostname,
+          })),
+        }
+      if (command === 'remote-server.authorizeBrowser')
+        return {
+          accountId: 'owner',
+          authorization: 'grant',
+          publicUrl: `https://${target}`,
+        }
+      throw new Error('unexpected command')
+    })
+    const workspacePath = `/projects/${hostname}`
+    jest.spyOn(globalThis, 'fetch').mockResolvedValue(
+      Response.json({
+        ...result,
+        websocketUrl: `wss://${hostname}/`,
+        workspacePath,
+      }),
+    )
+    await Connect.connectAccount(
+      executeCommand,
+      showQuickPick,
+      setUri,
+      getRemoteCliUrl,
+      hostname,
+    )
+    expect(showQuickPick).not.toHaveBeenCalled()
+    expect(executeCommand).toHaveBeenCalledWith(
+      'remote-server.authorizeBrowser',
+      hostname,
+    )
+    expect(setUri).toHaveBeenCalledWith(
+      `remote-server://${hostname}${workspacePath}`,
+      '/',
+      expect.objectContaining({ workspacePath }),
+    )
+  })
+}
+
+test.each([
+  { browserAccess: true, disabled: false, hostname: 'other.test' },
+  { browserAccess: true, disabled: true, hostname: 'remote.test' },
+  { browserAccess: false, disabled: false, hostname: 'remote.test' },
+])(
+  'launch never falls back to a different machine when the target is unavailable: %j',
+  async (machine) => {
+    executeCommand.mockResolvedValue({
+      machines: [
+        machine,
+        { browserAccess: true, disabled: false, hostname: 'fallback.test' },
+      ],
+    })
+    await expect(
+      Connect.connectAccount(
+        executeCommand,
+        showQuickPick,
+        setUri,
+        getRemoteCliUrl,
+        'remote.test',
+      ),
+    ).rejects.toThrow()
+    expect(showQuickPick).not.toHaveBeenCalled()
+    expect(setUri).not.toHaveBeenCalled()
+    expect(executeCommand).toHaveBeenCalledTimes(1)
+  },
+)
+
+test('launch propagates unavailable server errors without opening an empty workspace', async () => {
+  configure()
+  jest
+    .spyOn(globalThis, 'fetch')
+    .mockRejectedValue(new TypeError('Failed to fetch'))
+  await expect(
+    Connect.connectAccount(
+      executeCommand,
+      showQuickPick,
+      setUri,
+      getRemoteCliUrl,
+      'remote.test',
+    ),
+  ).rejects.toThrow('Could not reach the remote server')
+  expect(setUri).not.toHaveBeenCalled()
+})
