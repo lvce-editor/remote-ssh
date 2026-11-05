@@ -297,7 +297,7 @@ export const connectAccount = async (
   const machines = result.machines.filter((machine) => !machine.disabled)
   if (
     hostname !== undefined &&
-    !machines.some((machine) => machine.hostname === hostname)
+    machines.every((machine) => machine.hostname !== hostname)
   )
     throw new Error(
       'This remote machine is disabled or does not belong to your active LVCE account.',

@@ -214,9 +214,9 @@ for (const hostname of ['first.test', 'remote.test']) {
       if (command === 'remote-server.getMachines')
         return {
           machines: ['first.test', 'remote.test'].map((hostname) => ({
-            hostname,
-            disabled: false,
             browserAccess: true,
+            disabled: false,
+            hostname,
           })),
         }
       if (command === 'remote-server.authorizeBrowser')
@@ -228,15 +228,13 @@ for (const hostname of ['first.test', 'remote.test']) {
       throw new Error('unexpected command')
     })
     const workspacePath = `/projects/${hostname}`
-    jest
-      .spyOn(globalThis, 'fetch')
-      .mockResolvedValue(
-        Response.json({
-          ...result,
-          websocketUrl: `wss://${hostname}/`,
-          workspacePath,
-        }),
-      )
+    jest.spyOn(globalThis, 'fetch').mockResolvedValue(
+      Response.json({
+        ...result,
+        websocketUrl: `wss://${hostname}/`,
+        workspacePath,
+      }),
+    )
     await Connect.connectAccount(
       executeCommand,
       showQuickPick,
@@ -258,16 +256,16 @@ for (const hostname of ['first.test', 'remote.test']) {
 }
 
 test.each([
-  { hostname: 'other.test', disabled: false, browserAccess: true },
-  { hostname: 'remote.test', disabled: true, browserAccess: true },
-  { hostname: 'remote.test', disabled: false, browserAccess: false },
+  { browserAccess: true, disabled: false, hostname: 'other.test' },
+  { browserAccess: true, disabled: true, hostname: 'remote.test' },
+  { browserAccess: false, disabled: false, hostname: 'remote.test' },
 ])(
   'launch never falls back to a different machine when the target is unavailable: %j',
   async (machine) => {
     executeCommand.mockResolvedValue({
       machines: [
         machine,
-        { hostname: 'fallback.test', disabled: false, browserAccess: true },
+        { browserAccess: true, disabled: false, hostname: 'fallback.test' },
       ],
     })
     await expect(
